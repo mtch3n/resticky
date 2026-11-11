@@ -81,6 +81,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import dev.resticky.MARK_WINDOW_MS
 import dev.resticky.Session
+import dev.resticky.Conversation
+import dev.resticky.linkPhoto
+import dev.resticky.wallAt
 import dev.resticky.timeLabel
 import dev.resticky.TodoItem
 import dev.resticky.whenLabel
@@ -273,38 +276,61 @@ private fun RunRow(r: Run, now: Instant, first: Boolean) {
     ListRow(title, subtitle, first = first, lead = { Glyph(if (!speech && !speakers && r.seconds != null && r.error == null) R.drawable.ic_brain else icon) })
 }
 
-private fun sessionSubtitle(s: Session): String {
-    val todos = when (s.todos.size) {
+data class Spot(val session: String, val ms: Long)
+
+private class Said(val session: Session, val line: Line, val at: Long)
+
+private class Shot(val session: Session, val photo: Photo, val at: Long)
+
+private fun Conversation.at(s: Session, ms: Long): Long = (s.wallAt(ms) - start).inWholeMilliseconds
+
+private fun Conversation.end(): Instant = parts.last().let { it.session.wallAt(it.toMs) }
+
+private fun Conversation.sessions(): List<Session> = parts.map { it.session }.distinctBy { it.id }
+
+private fun Conversation.shots(): List<Shot> = parts.flatMap { p -> p.session.photos.filter { p.covers(it.offsetMs) }.map { Shot(p.session, it, at(p.session, it.offsetMs)) } }
+
+private fun clock(t: Instant): String = whenLabel(t).substringAfterLast(' ')
+
+private fun conversationTitle(v: ConversationView): String = v.recap.title.ifEmpty { "Untitled session" }
+
+private fun conversationSubtitle(v: ConversationView): String {
+    val n = v.recap.todos.size
+    val todos = when (n) {
         0 -> "no to-dos"
         1 -> "1 to-do"
-        else -> "${s.todos.size} to-dos"
+        else -> "$n to-dos"
     }
-    return listOfNotNull(whenLabel(s.started).substringAfterLast(' '), placeLabel(s), duration(s.durationMs), if (s.ready) todos else "summarizing").joinToString(" · ")
+    val c = v.conversation
+    return listOfNotNull("${clock(c.start)}–${clock(c.end())}", placeLabel(c.head.session), if (v.ready) todos else "summarizing").joinToString(" · ")
 }
 
 @Composable
-fun TranscriptsScreen(sessions: List<SessionView>, open: (SessionView) -> Unit) = Page("Transcripts") {
-    if (sessions.isEmpty()) item { CardList { ListRow("No transcripts yet", "Sessions show here after the Sticky records", first = true) } }
-    sessions.groupBy { it.session.started.date() }.entries.forEachIndexed { g, (day, list) ->
+fun TranscriptsScreen(conversations: List<ConversationView>, open: (ConversationView) -> Unit) = Page("Transcripts") {
+    if (conversations.isEmpty()) item { CardList { ListRow("No transcripts yet", "Sessions show here after the Sticky records", first = true) } }
+    conversations.groupBy { it.conversation.start.date() }.entries.forEachIndexed { g, (day, list) ->
         if (g > 0) gap()
         item { Section(dayLabel(day)) }
         gap()
         item {
             CardList {
                 list.forEachIndexed { i, v ->
-                    val s = v.session
+                    val c = v.conversation
                     if (v.live) {
-                        val tail = s.transcript().takeLast(80).substringAfter(' ').trim()
+                        val tail = c.transcript().takeLast(80).substringAfter(' ').trim()
                         ListRow(
-                            listOfNotNull("Live · started ${whenLabel(s.started).substringAfterLast(' ')}", placeLabel(s)).joinToString(" · "),
+                            listOfNotNull("Live · started ${clock(c.start)}", placeLabel(c.head.session)).joinToString(" · "),
                             if (tail.isEmpty()) "Listening" else "“…$tail…”",
                             first = i == 0,
                             subtitleLines = 2,
                             onClick = { open(v) },
                         ) { Pill("Live", Ink.black, Ink.white) }
                     } else {
-                        ListRow(s.title.ifEmpty { "Untitled session" }, sessionSubtitle(s), first = i == 0, onClick = { open(v) }) {
-                            if (s.marks.isNotEmpty()) Pill("${s.marks.size}") { Glyph(R.drawable.ic_star_filled, 13.dp) }
+                        ListRow(conversationTitle(v), conversationSubtitle(v), first = i == 0, onClick = { open(v) }) {
+                            val marks = c.marks()
+                            val photos = c.photos()
+                            if (marks > 0) Pill("$marks") { Glyph(R.drawable.ic_star_filled, 13.dp) }
+                            if (photos > 0) Pill("$photos") { Glyph(R.drawable.ic_photo, 13.dp) }
                             Chevron()
                         }
                     }
@@ -315,7 +341,7 @@ fun TranscriptsScreen(sessions: List<SessionView>, open: (SessionView) -> Unit) 
 }
 
 @Composable
-private fun TimedLine(line: Line, who: String?, cleanUp: Boolean, now: Boolean, near: Boolean, marked: Boolean, onWho: () -> Unit, onClick: () -> Unit) {
+private fun TimedLine(line: Line, at: Long, who: String?, cleanUp: Boolean, now: Boolean, near: Boolean, marked: Boolean, onWho: () -> Unit, onClick: () -> Unit) {
     val shape = if (now) RoundedCornerShape(14.dp) else RectangleShape
     val background = when {
         now -> Ink.black
@@ -327,7 +353,7 @@ private fun TimedLine(line: Line, who: String?, cleanUp: Boolean, now: Boolean, 
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.width(66.dp).height(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(timeLabel(line.atMs), style = Type.pill.copy(fontSize = 13.sp, color = if (now) Ink.mutedDark else Ink.muted))
+            Text(timeLabel(at), style = Type.pill.copy(fontSize = 13.sp, color = if (now) Ink.mutedDark else Ink.muted))
             if (marked) Glyph(R.drawable.ic_star_filled, 13.dp, if (now) Ink.mutedDark else Ink.muted)
         }
         val style = if (now) Type.body.copy(color = Ink.white, fontWeight = FontWeight.SemiBold) else Type.body
@@ -375,14 +401,14 @@ fun Thumb(file: File, modifier: Modifier, maxPx: Int = 320) {
 }
 
 @Composable
-private fun PhotoRow(photo: Photo, file: File, near: Boolean, onClick: () -> Unit) {
+private fun PhotoRow(photo: Photo, at: Long, file: File, near: Boolean, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(if (near) Ink.card else Color.Transparent).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 9.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(Modifier.width(66.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(timeLabel(photo.offsetMs), style = Type.pill.copy(fontSize = 13.sp, color = Ink.muted))
+            Text(timeLabel(at), style = Type.pill.copy(fontSize = 13.sp, color = Ink.muted))
             Glyph(R.drawable.ic_camera, 13.dp, Ink.muted)
         }
         Thumb(file, Modifier.width(96.dp).height(68.dp))
@@ -394,10 +420,10 @@ private fun PhotoRow(photo: Photo, file: File, near: Boolean, onClick: () -> Uni
 }
 
 @Composable
-fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, show: () -> Unit, play: () -> Unit) {
+fun PhotoViewer(photo: Photo, at: Long, file: File, dismiss: () -> Unit, show: () -> Unit, play: () -> Unit) {
     androidx.compose.ui.window.Dialog(dismiss, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(Ink.white).navigationBarsPadding()) {
-            TopBar("Photo · ${timeLabel(photo.offsetMs)}", dismiss)
+            TopBar("Photo · ${timeLabel(at)}", dismiss)
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = MAIN) {
                 item { Thumb(file, Modifier.fillMaxWidth().height(420.dp), maxPx = 2048) }
                 gap()
@@ -413,7 +439,7 @@ fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, show: () -> Unit,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Glyph(R.drawable.ic_player_play, 20.dp, Ink.white)
-                    Text("Play from ${timeLabel(photo.offsetMs)}", style = Type.button.copy(color = Ink.white))
+                    Text("Play from ${timeLabel(at)}", style = Type.button.copy(color = Ink.white))
                 }
             }
         }
@@ -423,27 +449,28 @@ fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, show: () -> Unit,
 @Composable
 fun PhotosScreen(
     photos: List<Unlinked>,
-    sessions: List<SessionView>,
+    conversations: List<ConversationView>,
     photoFile: (Session, Photo) -> File,
-    play: (Session, Photo) -> Unit,
+    play: (ConversationView, Session, Photo) -> Unit,
     showOnSticky: (File) -> Unit,
     attach: (Unlinked, Session) -> Unit,
     back: () -> Unit,
 ) {
     var choosing by remember { mutableStateOf<Unlinked?>(null) }
-    var viewing by remember { mutableStateOf<Pair<Session, Photo>?>(null) }
-    val withPhotos = sessions.map { it.session }.filter { it.photos.isNotEmpty() }
+    var viewing by remember { mutableStateOf<Pair<ConversationView, Shot>?>(null) }
+    val withPhotos = conversations.mapNotNull { v -> v.conversation.shots().takeIf { it.isNotEmpty() }?.let { v to it } }
     Page("Photos", back) {
         if (withPhotos.isEmpty() && photos.isEmpty()) item { CardList { ListRow("No photos yet", "Tap Snap during a meeting", first = true) } }
-        withPhotos.forEachIndexed { k, s ->
+        withPhotos.forEachIndexed { k, (v, shots) ->
+            val start = v.conversation.start
             if (k > 0) gap()
-            item { Section("${s.title.ifEmpty { "Untitled session" }} · ${dayLabel(s.started.date()).lowercase().replaceFirstChar { it.uppercase() }} ${whenLabel(s.started).substringAfterLast(' ')}") }
+            item { Section("${conversationTitle(v)} · ${dayLabel(start.date()).lowercase().replaceFirstChar { it.uppercase() }} ${clock(start)}") }
             gap()
-            s.photos.chunked(3).forEachIndexed { r, row ->
+            shots.chunked(3).forEachIndexed { r, row ->
                 if (r > 0) item { Gap(8.dp) }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { p -> Thumb(photoFile(s, p), Modifier.weight(1f).aspectRatio(1f).clickable { viewing = s to p }) }
+                        row.forEach { s -> Thumb(photoFile(s.session, s.photo), Modifier.weight(1f).aspectRatio(1f).clickable { viewing = v to s }) }
                         repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
@@ -468,15 +495,17 @@ fun PhotosScreen(
             }
         }
     }
-    viewing?.let { (s, p) ->
-        PhotoViewer(p, photoFile(s, p), { viewing = null }, { showOnSticky(photoFile(s, p)) }) {
+    viewing?.let { (v, s) ->
+        val file = photoFile(s.session, s.photo)
+        PhotoViewer(s.photo, s.at, file, { viewing = null }, { showOnSticky(file) }) {
             viewing = null
-            play(s, p)
+            play(v, s.session, s.photo)
         }
     }
     choosing?.let { photo ->
-        AttachSheet(sessions, { choosing = null }) {
-            attach(photo, it)
+        AttachSheet(conversations, { choosing = null }) { v ->
+            val c = v.conversation
+            attach(photo, linkPhoto(c.sessions(), Instant.fromEpochMilliseconds(photo.takenMs)) ?: c.head.session)
             choosing = null
         }
     }
@@ -484,7 +513,7 @@ fun PhotosScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AttachSheet(sessions: List<SessionView>, dismiss: () -> Unit, pick: (Session) -> Unit) {
+private fun AttachSheet(conversations: List<ConversationView>, dismiss: () -> Unit, pick: (ConversationView) -> Unit) {
     ModalBottomSheet(
         dismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -496,8 +525,8 @@ private fun AttachSheet(sessions: List<SessionView>, dismiss: () -> Unit, pick: 
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Attach to a session", style = Type.heading.copy(fontSize = 20.sp), modifier = Modifier.padding(horizontal = 4.dp))
             CardList {
-                sessions.take(8).forEachIndexed { i, v ->
-                    ListRow(v.session.title.ifEmpty { "Untitled session" }, sessionSubtitle(v.session), first = i == 0, onClick = { pick(v.session) })
+                conversations.take(8).forEachIndexed { i, v ->
+                    ListRow(conversationTitle(v), conversationSubtitle(v), first = i == 0, onClick = { pick(v) })
                 }
             }
         }
@@ -528,53 +557,75 @@ private fun RenameSheet(label: String, quote: String?, dismiss: () -> Unit, save
 
 @Composable
 fun TranscriptScreen(
-    view: SessionView?,
+    view: ConversationView?,
     back: () -> Unit,
     audio: suspend (Session) -> SessionAudio?,
     denoiserModel: () -> String?,
     prefs: PlayerPrefs,
     setPrefs: (PlayerPrefs) -> Unit,
-    rename: (Int, String) -> Unit,
-    photoFile: (Photo) -> File,
+    rename: (Session, Int, String) -> Unit,
+    photoFile: (Session, Photo) -> File,
     showOnSticky: (File) -> Unit,
-    startAt: Long?,
+    startAt: Spot?,
     started: () -> Unit,
-    onTodo: (Int, Boolean) -> Unit,
+    onTodo: (String, Int, Boolean) -> Unit,
 ) {
-    val s = view?.session ?: return Page("Transcript", back) {}
-    var naming by remember { mutableStateOf<Int?>(null) }
-    var viewing by remember { mutableStateOf<Photo?>(null) }
-    val skips = remember(s, prefs) { s.skipRanges(prefs.cleanUp, prefs.skipSilence) }
-    val playback = rememberPlayback(s.device, s.id, skips, prefs.crisp, denoiserModel) { audio(s) }
-    val lines = remember(s) { s.lines() }
-    val marks = s.marks.toList()
-    val near = remember(s) {
-        lines.indices.filter { i ->
-            val next = lines.getOrNull(i + 1)?.atMs ?: Long.MAX_VALUE
-            marks.any { m -> lines[i].atMs <= m && next > m - MARK_WINDOW_MS }
+    val v = view ?: return Page("Transcript", back) {}
+    val c = v.conversation
+    val r = v.recap
+    val sessions = remember(c) { c.sessions() }
+    var naming by remember { mutableStateOf<Pair<Session, Int>?>(null) }
+    var viewing by remember { mutableStateOf<Shot?>(null) }
+    var playingId by remember(c.key) { mutableStateOf(startAt?.session ?: c.head.session.id) }
+    var pending by remember { mutableStateOf<Pair<Long, Boolean>?>(null) }
+    val playing = sessions.find { it.id == playingId } ?: c.head.session
+    val skips = remember(playing, prefs) { playing.skipRanges(prefs.cleanUp, prefs.skipSilence) }
+    val playback = rememberPlayback(playing.device, playing.id, skips, prefs.crisp, denoiserModel) { audio(playing) }
+    val ready = playback.audio == Audio.Ready
+    val go = { session: String, ms: Long, play: Boolean ->
+        if (session == playingId && ready) {
+            playback.seek(ms)
+            if (play && !playback.playing) playback.toggle()
+        } else {
+            playingId = session
+            pending = ms to play
+        }
+    }
+    val said = remember(c) { c.parts.flatMap { p -> p.lines().map { Said(p.session, it, c.at(p.session, it.atMs)) } } }
+    val marks = remember(c) { c.parts.flatMap { p -> p.session.marks.filter(p::covers).map { p.session to it } } }
+    val near = remember(c) {
+        said.indices.filter { i ->
+            val s = said[i]
+            val next = said.getOrNull(i + 1)?.takeIf { it.session.id == s.session.id }?.line?.atMs ?: Long.MAX_VALUE
+            marks.any { (ms, m) -> ms.id == s.session.id && s.line.atMs <= m && next > m - MARK_WINDOW_MS }
         }.toSet()
     }
-    val starred = remember(s) { marks.map { m -> lines.indexOfLast { it.atMs <= m } }.toSet() }
-    val ready = playback.audio == Audio.Ready
-    val current = if (ready && (playback.playing || playback.positionMs > 0)) lines.indexOfLast { it.atMs <= playback.positionMs } else -1
-    val photos = s.photos.toList()
-    val rows = remember(s) {
+    val starred = remember(c) { marks.map { (ms, m) -> said.indexOfLast { it.session.id == ms.id && it.line.atMs <= m } }.toSet() }
+    val current = if (ready && (playback.playing || playback.positionMs > 0)) said.indexOfLast { it.session.id == playing.id && it.line.atMs <= playback.positionMs } else -1
+    val shots = remember(c) { c.shots() }
+    val rows = remember(c) {
         val out = mutableListOf<Any>()
         var p = 0
-        lines.forEachIndexed { i, l ->
-            while (p < photos.size && photos[p].offsetMs < l.atMs) out += photos[p++]
+        said.forEachIndexed { i, l ->
+            while (p < shots.size && shots[p].at < l.at) out += shots[p++]
             out += i
         }
-        out.addAll(photos.drop(p))
+        out.addAll(shots.drop(p))
         out
     }
-    val lineRow = remember(rows) { IntArray(lines.size).also { a -> rows.forEachIndexed { r, v -> if (v is Int) a[v] = r } } }
+    val lineRow = remember(rows) { IntArray(said.size).also { a -> rows.forEachIndexed { k, x -> if (x is Int) a[x] = k } } }
     val list = rememberLazyListState()
-    LaunchedEffect(startAt, ready) {
-        if (startAt == null || !ready) return@LaunchedEffect
-        playback.seek(startAt)
-        if (!playback.playing) playback.toggle()
+    LaunchedEffect(startAt) {
+        val at = startAt ?: return@LaunchedEffect
+        go(at.session, at.ms, true)
         started()
+    }
+    LaunchedEffect(pending, ready) {
+        val (ms, play) = pending ?: return@LaunchedEffect
+        if (!ready) return@LaunchedEffect
+        playback.seek(ms)
+        if (play && !playback.playing) playback.toggle()
+        pending = null
     }
     LaunchedEffect(current) {
         if (current < 0 || !playback.playing) return@LaunchedEffect
@@ -585,34 +636,50 @@ fun TranscriptScreen(
         if (item == null || item.offset < 0 || item.offset + item.size > end - end / 4) list.animateScrollToItem((row - 2).coerceAtLeast(1))
     }
     Column(Modifier.fillMaxSize()) {
-        TopBar(s.title.ifEmpty { if (view.live) "Live session" else "Untitled session" }, back)
+        TopBar(r.title.ifEmpty { if (v.live) "Live session" else "Untitled session" }, back)
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = MAIN) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Pill(whenLabel(s.started), Ink.card)
-                        placeLabel(s)?.let { Pill(it, Ink.card) }
-                        Pill(duration(s.durationMs), Ink.card)
-                        if (s.engine.isNotEmpty()) Pill(s.engine, Ink.card)
-                        if (photos.isNotEmpty()) Pill("${photos.size}", Ink.card) { Glyph(R.drawable.ic_photo, 14.dp) }
+                        Pill(whenLabel(c.start), Ink.card)
+                        placeLabel(c.head.session)?.let { Pill(it, Ink.card) }
+                        Pill(duration((c.end() - c.start).inWholeMilliseconds), Ink.card)
+                        if (r.engine.isNotEmpty()) Pill(r.engine, Ink.card)
+                        if (shots.isNotEmpty()) Pill("${shots.size}", Ink.card) { Glyph(R.drawable.ic_photo, 14.dp) }
                     }
                     Card {
                         Text("SUMMARY", style = Type.section, modifier = Modifier.padding(bottom = 8.dp))
                         Text(
                             when {
-                                s.ready -> s.summary.ifEmpty { "No summary." }
-                                view.live -> "The summary comes when the session ends."
+                                v.ready -> r.summary.ifEmpty { "No summary." }
+                                v.live -> "The summary comes when the session ends."
                                 else -> "The summary is in progress."
                             },
                             style = Type.body,
                         )
                     }
-                    if (s.todos.isNotEmpty()) {
-                        Section("To-dos · ${s.todos.size}")
+                    if (r.todos.isNotEmpty()) {
+                        Section("To-dos · ${r.todos.size}")
                         CardList {
-                            s.todos.forEachIndexed { i, t ->
-                                val done = "$i" in s.done
-                                ListRow(t, first = i == 0, lead = { CheckBox(done) { onTodo(i, it) } }, titleStyle = if (done) Type.row.copy(color = Ink.struck, textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough) else Type.row)
+                            r.todos.forEachIndexed { i, t ->
+                                val done = "$i" in r.done
+                                val quote = r.quotes.getOrNull(i)?.takeIf { q -> q.atMs >= 0 && sessions.any { it.id == q.session } }
+                                ListRow(
+                                    t,
+                                    first = i == 0,
+                                    lead = {
+                                        CheckBox(done) {
+                                            val id = c.todoId(i)
+                                            onTodo(id.substringBeforeLast('-'), id.substringAfterLast('-').toInt(), it)
+                                        }
+                                    },
+                                    titleStyle = if (done) Type.row.copy(color = Ink.struck, textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough) else Type.row,
+                                    trail = quote?.let { q ->
+                                        {
+                                            Box(Modifier.clip(CircleShape).clickable { go(q.session, q.atMs, true) }.padding(6.dp)) { Glyph(R.drawable.ic_player_play, 18.dp) }
+                                        }
+                                    },
+                                )
                             }
                         }
                     }
@@ -620,42 +687,53 @@ fun TranscriptScreen(
                     if (marks.isNotEmpty()) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
                             Text("Marks", style = Type.small.copy(fontWeight = FontWeight.Bold))
-                            marks.forEach { m ->
-                                Pill(timeLabel(m), Ink.card, onClick = { playback.seek(m - MARK_LEAD_MS) }) { Glyph(R.drawable.ic_star_filled, 13.dp) }
+                            marks.forEach { (ms, m) ->
+                                Pill(timeLabel(c.at(ms, m)), Ink.card, onClick = { go(ms.id, m - MARK_LEAD_MS, false) }) { Glyph(R.drawable.ic_star_filled, 13.dp) }
                             }
                         }
                     }
+                    if (sessions.any { it.speakersFailed }) Text("Speakers not available", style = Type.small)
                     if (playback.audio == Audio.Missing) Text("The audio is deleted 7 days after the recording.", style = Type.small)
-                    if (lines.isEmpty()) Text(if (view.live) "Listening" else "No words yet.", style = Type.body)
+                    if (said.isEmpty()) Text(if (v.live) "Listening" else "No words yet.", style = Type.body)
                     Gap(0.dp)
                 }
             }
-            items(rows.size) { r ->
-                val row = rows[r]
-                if (row is Photo) {
-                    PhotoRow(row, photoFile(row), lines.any { it.atMs <= row.offsetMs && near.contains(lines.indexOf(it)) }) { viewing = row }
+            items(rows.size) { k ->
+                val row = rows[k]
+                if (row is Shot) {
+                    val nearPhoto = said.indices.any { it in near && said[it].session.id == row.session.id && said[it].line.atMs <= row.photo.offsetMs }
+                    PhotoRow(row.photo, row.at, photoFile(row.session, row.photo), nearPhoto) { viewing = row }
                     return@items
                 }
                 val i = row as Int
-                val speaker = lines[i].speaker
-                TimedLine(lines[i], if (speaker >= 0) s.speakerName(speaker) else null, prefs.cleanUp, i == current, i in near, i in starred, { naming = speaker }) {
-                    if (ready) playback.seek(lines[i].atMs)
+                val s = said[i]
+                val speaker = s.line.speaker
+                TimedLine(s.line, s.at, if (speaker >= 0) s.session.speakerName(speaker) else null, prefs.cleanUp, i == current, i in near, i in starred, { naming = s.session to speaker }) {
+                    go(s.session.id, s.line.atMs, false)
                 }
             }
         }
-        if (playback.audio != Audio.Missing) PlayerBar(playback, marks, photos.map { it.offsetMs }, prefs, setPrefs)
-    }
-    viewing?.let { photo ->
-        PhotoViewer(photo, photoFile(photo), { viewing = null }, { showOnSticky(photoFile(photo)) }) {
-            viewing = null
-            playback.seek(photo.offsetMs)
-            if (!playback.playing) playback.toggle()
+        if (playback.audio != Audio.Missing) {
+            PlayerBar(
+                playback,
+                marks.filter { it.first.id == playing.id }.map { it.second },
+                shots.filter { it.session.id == playing.id }.map { it.photo.offsetMs },
+                prefs,
+                setPrefs,
+            ) { c.at(playing, it) }
         }
     }
-    naming?.let { speaker ->
-        val quote = lines.filter { it.speaker == speaker }.maxByOrNull { it.text.length }?.text
-        RenameSheet(s.speakerName(speaker), quote, { naming = null }) {
-            rename(speaker, it)
+    viewing?.let { shot ->
+        val file = photoFile(shot.session, shot.photo)
+        PhotoViewer(shot.photo, shot.at, file, { viewing = null }, { showOnSticky(file) }) {
+            viewing = null
+            go(shot.session.id, shot.photo.offsetMs, true)
+        }
+    }
+    naming?.let { (session, speaker) ->
+        val quote = said.filter { it.session.id == session.id && it.line.speaker == speaker }.maxByOrNull { it.line.text.length }?.line?.text
+        RenameSheet(session.speakerName(speaker), quote, { naming = null }) {
+            rename(session, speaker, it)
             naming = null
         }
     }

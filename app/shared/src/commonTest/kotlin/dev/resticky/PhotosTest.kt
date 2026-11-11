@@ -36,6 +36,18 @@ class PhotosTest {
     }
 
     @Test
+    fun linkAndOffsetUseCaptureTime() {
+        val a = session("a", t0, 1)
+        a.lastChunk = t0 + 60.minutes
+        a.chunkStart["0"] = 1_000_000
+        a.chunkStart["1"] = 1_600_000
+        assertEquals(40_000L, photoOffset(a, t0 + 10.minutes + 10.seconds))
+        assertEquals(30_000L, photoOffset(a, t0 + 5.minutes))
+        assertEquals("a", linkPhoto(listOf(a), t0 + 12.minutes)?.id)
+        assertNull(linkPhoto(listOf(a), t0 + 25.minutes))
+    }
+
+    @Test
     fun photoTextGoesToTheSummary() {
         val a = session("a", t0, 30)
         a.photos += Photo(90_000, "photos/1.jpg", "Restore test env\nDNS Friday", 1)

@@ -16,15 +16,22 @@ data class Photo(
     @SerialName("taken_ms") val takenMs: Long = 0,
 )
 
-fun photoOffset(s: Session, taken: Instant): Long = (taken - s.started).inWholeMilliseconds.coerceIn(0, maxOf(s.durationMs, s.endMs()))
+fun photoOffset(s: Session, taken: Instant): Long {
+    val capture = (taken - s.started).inWholeMilliseconds
+    val offsets = s.offsets()
+    val seq = offsets.keys.filter { s.captureMs(offsets.getValue(it)) <= capture }.maxByOrNull { s.captureMs(offsets.getValue(it)) }
+        ?: return capture.coerceIn(0, s.endMs())
+    val at = offsets.getValue(seq)
+    return (at + capture - s.captureMs(at)).coerceAtMost(at + (s.chunkMs[seq] ?: CHUNK_MS)).coerceIn(0, s.endMs())
+}
 
 fun linkPhoto(sessions: List<Session>, taken: Instant): Session? {
     val withAudio = sessions.filter { it.chunks.isNotEmpty() }
-    withAudio.filter { taken >= it.started && taken <= it.lastChunk + SESSION_IDLE }.maxByOrNull { it.started }?.let { return it }
+    withAudio.filter { taken >= it.wallAt(0) && taken <= it.wallAt(it.endMs()) + SESSION_IDLE }.maxByOrNull { it.wallAt(0) }?.let { return it }
     return withAudio.map { s ->
         s to when {
-            taken < s.started -> s.started - taken
-            else -> taken - s.lastChunk
+            taken < s.wallAt(0) -> s.wallAt(0) - taken
+            else -> taken - s.wallAt(s.endMs())
         }
     }.filter { it.second <= PHOTO_NEAR }.minByOrNull { it.second }?.first
 }
