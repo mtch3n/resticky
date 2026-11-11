@@ -1,0 +1,6 @@
+dependencies:
+  lvgl/lvgl: "~9.2.2"
+  espressif/mdns: "~1.15.1"
+  espressif/esp_audio_codec: "~2.6.2"
+  joltwallet/littlefs: "~1.23.1"
+  espressif/esp-sr: "~2.1.0"

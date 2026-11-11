@@ -1,0 +1,553 @@
+# Hub protocol
+
+Status: 2026-11-10. This is the protocol between the Sticky and a hub on Wi-Fi (HTTP) and on Bluetooth LE
+(see "Bluetooth LE"). The contract tests in `app/contract` check the HTTP part against each hub.
+
+## Discovery
+
+A hub announces the mDNS service `_resticky._tcp` on its LAN interfaces only (not on docker, bridge, veth,
+virbr or loopback interfaces). The TXT record has `version=<hub version>`. The device uses the first IPv4
+address and port that it finds.
+
+## Identifiers
+
+A device ID and a session ID are lowercase hex, 1 to 16 characters (`^[0-9a-f]{1,16}$`). The device ID is
+the Wi-Fi MAC address (12 characters). A session ID is a random 32-bit number (8 characters). A request
+with a bad ID gets `400`.
+
+## Endpoints
+
+| Method and path | Request | Response |
+|---|---|---|
+| `GET /api/hello` | — | `200`, `{"service":"resticky-hub","version":"<v>"}` |
+| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `beep` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","beep":true|false,"install":"<x.y.z>"}` (see "Time", "Display" and "Firmware updates"; `install` only after the user asked for an update). `400` if the body is not JSON or the device ID is bad. |
+| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` after the chunk is on disk. `400` if a header is missing or bad. A chunk that has the same device, session and sequence as a stored chunk replaces the file but does not add its duration again. |
+| `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
+| `GET /api/todos?device=<id>` | — | `200`, `{"open":[todo],"done":[todo]}`. `done` has only the to-dos done since 00:00 local time today. |
+| `PUT /api/todos/{device}/{session}/{index}` | JSON `{"done":true\|false,"at":"<RFC 3339 time>"}` | `200`, `{"done":…,"at":…}` with the state that the hub keeps. `404` if the to-do does not exist. `400` if the body is bad. See "To-do changes". |
+| `POST /api/screen` | Header `X-Device`. Body: the 48000-byte panel frame. | `200`. `400` if the size is not 48000 bytes. |
+| `GET /api/screen?device=<id>` | — | `200`, a 480x800 grey PNG of the last frame. `404` if there is no frame. |
+| `GET /api/weather?device=<id>` | — | `200`, the weather JSON (see "Weather"). `400` if the device ID is bad. |
+| `PUT /api/weather?device=<id>` | JSON `{"mode":"phone"\|"city","units":"c"\|"f"}`; each key is optional. | `200`, the weather JSON with the new settings. `400` if the body or a value is bad. |
+| `GET /api/agenda?device=<id>` | — | `200`, the agenda JSON (see "Agenda"). `400` if the device ID is bad. |
+| `GET /api/health?device=<id>&hours=<n>` | `hours`: 1 to 168, default 24. | `200`, a JSON array of health samples from the last `hours`, oldest first (see "Health"). `[]` for a device with no samples. `400` if the device ID or `hours` is bad. |
+| `GET /api/devices` | — | `200`, a JSON object: device ID → the last check-in, with `seen` (the time). |
+| `GET /api/firmware` | — | `200`, `{"version":"<x.y.z>","size":<bytes>}`: the newest firmware in the hub's firmware folder (laptop: `~/.local/share/resticky/firmware/<x.y.z>.bin`, `-firmware <dir>`; phone: app files `firmware/`). `404` if there is none. Both hubs. |
+| `GET /api/firmware/bin?version=<x.y.z>` | — | `200`, the firmware image. `404` if there is no such version. |
+
+### Voice activity (shadow mode)
+
+Firmware 0.9.0 and later run a voice activity detector (ESP-SR VADNet `vadnet1_medium`) on each 20 ms
+frame, but still record and upload all audio. A chunk on HTTP can have three more headers. A hub that does
+not know them ignores them.
+
+| Header | Value |
+|---|---|
+| `X-Vad-Speech` | Base64 (standard, with padding) of a bit mask: one bit for each 20 ms frame of the chunk, `1` = speech. Frame `i` is in byte `i / 8`, bit `i % 8` (the least significant bit first). The mask has `ceil(frames / 8)` bytes; `frames` = `X-Duration-Ms` / 20. |
+| `X-Vad-Keep` | The same format: `1` = the gated recorder would keep this frame (speech, 2 s pre-roll before the start of speech, 15 s hang-over after the last speech frame). |
+| `X-Vad-Keep-Prev` | Integer ≥ 0: the gated recorder would also keep this number of frames at the end of the previous chunk of the session (pre-roll that starts in the previous chunk). |
+
+A chunk with no VAD (no model in the `model` partition, or a chunk from an older firmware) has none of
+these headers. On Bluetooth LE the chunk has no VAD data (see "Required hub change").
+
+Required hub change (shared store, `app/shared`): `POST /api/chunks` reads the three headers and the store
+writes them into `meta.json` as `vad`: sequence number (string) → `{"speech":"<base64>","keep":"<base64>",
+"keep_prev":<n>}`. A chunk with no `X-Vad-Speech` header has no entry. The BLE `chunk` frame gets an
+optional VAD trailer after the audio (u16 mask length `m`, speech mask `m` bytes, keep mask `m` bytes,
+keep_prev u16); `parseChunk` must accept `size >= 31 + audio length` before the device sends it.
+
+### Transcript item
+
+```json
+{"when":"13:12","title":"…","summary":"…","todos":["…"],"ready":true,"text":"…","place":"Office","marks":2,"photos":1}
+```
+
+- `when`: `HH:MM` for a session that started today, else `Mon D HH:MM` (Go layout `Jan 2 15:04`), local
+  time.
+- `ready`: `true` when the summary exists. While it is `false`, `title` and `summary` are empty and
+  `todos` is `[]`. `todos` is always an array, never `null`.
+- `text`: the last 180 characters (Unicode code points) of the transcript, with `...` before them when
+  the transcript is longer.
+- `place`: the name of the user's place where the session started, `"Elsewhere"` when it started at none
+  of them, `""` when not known (no location access, the laptop hub, a session from the device backlog, or the
+  location is not found yet). Always there. See "Places".
+- `marks`: the number of marks in the session (see "Marks"). Always there.
+- `photos`: the number of photos in the session (see "Photos"). Always there. The photos never leave the phone.
+
+### To-do item
+
+```json
+{"id":"5f3a9c21-3","text":"…","from":"Product launch and Partner Plans · 13:12"}
+```
+
+`id` is `<session>-<index>`. `from` is the session title, ` · `, and `when` of the session.
+
+### Audio frames
+
+The body of a chunk is a list of Opus packets (16 kHz, mono, 20 ms each). Each packet has a 2-byte
+little-endian length, then the packet bytes. A length of 0 is a 20 ms frame with no packet (DTX). A
+30 s chunk has 1500 frames.
+
+### Screen frame
+
+The frame is the panel buffer: 800x480, 1 bit for each pixel, 100 bytes for each row, the most
+significant bit first, 1 = white. The portrait pixel (x, y) is in byte `(479 - x) * 100 + y / 8`, bit
+`7 - y % 8`.
+
+## Time
+
+The device gets UTC from SNTP and has no time zone. Each hub sends its local UTC offset in minutes
+(`utc_offset_min`, an integer, with daylight saving time at that moment, for example `-300` or `480`):
+
+- HTTP: in the response to `POST /api/checkin`.
+- BLE: in the `time` frame, `{"utc_offset_min":-300}`. The hub sends it when the link becomes ready and
+  again when the value changes (the hub checks after each check-in).
+
+The device applies the offset as a fixed offset and updates it at each check-in.
+
+## Display
+
+The hub owns the display settings. `clock_face` is the face of the clock page: `dial` (hand-drawn dial,
+the default), `digits` (big digits), `words`, `note` (sticky note) or `flip` (flip clock). The user selects
+it on the phone (Sticky settings › Clock); the laptop hub takes it from the `-clock-face <name>`
+option (default `dial`). `weather_style` is the style of the Weather app: `sketch` (the default), `big`
+(big picture), `journal` or `week`. The user selects it on the phone (Sticky settings › Weather › Style);
+the laptop hub takes it from the `-weather-style <name>` option (default `sketch`). `hour_format` is `"24"` (the
+default) or `"12"`: the hour format of all times on the device. The user selects it on the phone (Sticky settings ›
+Clock › Hours); the laptop hub takes it from the `-hour-format 12|24` option. `beep` (default `true`) turns the
+button and alert sounds of the Sticky on or off: phone Sticky settings › Sounds on the Sticky, laptop hub
+`-beep on|off`. The Sticky has its own switch too, and the newest change wins: the device sends its value in
+each check-in as `"beep"`. When it differs from the hub value, the hub takes the device value, except after a
+change on the hub: then the hub ignores the device value until a check-in reports the new hub value (the
+device applied it).
+
+- HTTP: in the response to `POST /api/checkin`.
+- BLE: in the `display` frame, `{"clock_face":"dial","weather_style":"sketch","hour_format":"24","beep":true}`. The hub sends it when the
+  link becomes ready and again when one of the values changes.
+
+The device ignores a face or a style that it does not know.
+
+## Weather
+
+The hub gets the forecast from Open-Meteo (`api.open-meteo.com/v1/forecast`, no key) at a fixed interval
+while it runs (15, 30, 60 or 180 minutes, default 30; phone: Hub › Weather › Refresh, stored as `interval_min` in
+the weather settings file; laptop hub: `-weather-interval <minutes>`), and when the settings change. It keeps the last result (also on disk) when a fetch fails.
+Only the location goes to Open-Meteo: the latitude and longitude rounded to 0.1° (about 10 km), or the
+city name for the geocoding API (`geocoding-api.open-meteo.com/v1/search`, one time for each city).
+
+Weather JSON (at most about 600 bytes; the hub keeps it below 2048 bytes):
+
+```json
+{"place":"Lisbon","mode":"phone","units":"c","at":1794358412,
+ "now":{"temp":18,"feels":17,"cond":"cloud","hi":21,"lo":12,"rain":20},
+ "hour":14,"temps":[18,19,21,21,21,20,20,19,18,16,15,14,14],
+ "conds":["cloud","sun","cloud","rain","rain"],
+ "days":[{"wd":"Tue","cond":"rain","lo":11,"hi":17}]}
+```
+
+| Field | Notes |
+|---|---|
+| `place` | Fixed city: the name from the geocoding API. From phone: the city part of the forecast time zone (`Asia/Lisbon` → `Lisbon`). Empty when not known. |
+| `mode` | `phone` (the phone's approximate location) or `city` (a fixed city). The laptop hub is always `city`. |
+| `units` | `c` or `f`. All temperatures are integers in this unit. |
+| `at` | Unix time (seconds) of the forecast fetch. |
+| `now` | Current temperature, feels-like, condition, today's high and low, today's highest rain chance in percent. |
+| `hour`, `temps` | 13 hourly temperatures. `temps[0]` is the current hour (`hour`, 0 to 23, local time at the place); `temps[i]` is `hour + i`. |
+| `conds` | 5 conditions, for `temps[0]`, `temps[3]`, `temps[6]`, `temps[9]` and `temps[12]`. |
+| `days` | The next 5 days (tomorrow first): weekday (`Mon` to `Sun`), condition, low, high. |
+
+`now`, `hour`, `temps`, `conds`, `days` and `at` are not in the JSON until the hub has a forecast (for example
+`{"place":"","mode":"phone","units":"c"}`). The settings fields are always there, so the device can show
+Settings › Weather.
+
+A condition is one of `sun`, `cloud`, `rain`, `storm`, `snow`, `fog`, from the WMO weather code: 0 and 1 →
+`sun`; 2 and 3 → `cloud`; 45 and 48 → `fog`; 51 to 67 and 80 to 82 → `rain`; 71 to 77, 85 and 86 → `snow`;
+95 to 99 → `storm`; other codes → `cloud`.
+
+Settings change from the device: `PUT /api/weather` on Wi-Fi, or the `weather_set` frame on BLE, with
+`{"mode":"phone"|"city","units":"c"|"f"}` (each key is optional). The hub stores the change, sends the
+weather JSON with the new settings at once (without forecast data when the units or the mode changed), then
+fetches a new forecast and sends it. The fixed city itself is set only on the hub: Settings › Weather in the
+phone app, or the `-city <name>` option of the laptop hub. A laptop hub ignores `mode` (it has no phone
+location).
+
+## Agenda
+
+The phone hub reads the calendars that the user selects (Settings › Calendars) with Android
+`CalendarContract`. Calendar data goes only to the device. The laptop hub has no calendars and sends
+`show: false`.
+
+```json
+{"today":"2026-11-10","show":true,"events":[
+ {"day":0,"start":"09:30","end":"10:00","title":"Standup"},
+ {"day":1,"start":"","end":"","title":"Holiday"}]}
+```
+
+| Field | Notes |
+|---|---|
+| `today` | The hub's local date for `day` 0 (`YYYY-MM-DD`). |
+| `show` | `false` when the user turned off "Show on the Sticky"; then `events` is empty and the clock shows no agenda. |
+| `day` | 0 = today, 1 = tomorrow. |
+| `start`, `end` | `HH:MM` local time of the hub. Both empty for an all-day event. An event that starts before the day has `00:00`; an event that ends after it has `24:00`. An event over midnight is in the list on both days. |
+| `title` | At most 48 Unicode code points. |
+
+Rules: events of all selected calendars and accounts together, no account marker; events that already
+ended are not in the list; sorted by day, then start (all-day first), then end and title; at most 12 events;
+the hub removes events from the end until the JSON is at most 2048 bytes. The phone hub builds the agenda
+again every 5 minutes and when the selection changes, and sends it when it changed.
+
+## Wi-Fi from the phone
+
+The phone app adds and removes the device's saved networks over the bonded BLE link only (it is encrypted).
+There is no HTTP endpoint for this.
+
+- `wifi_add` (hub → device): `{"ssid":"Office-5G","password":"…"}`. SSID 1 to 32 bytes, password 0 (open
+  network) or 8 to 64 bytes. The device saves it like the USB `wifi` command (at most 5 networks).
+- `wifi_forget` (hub → device): `{"ssid":"Office-5G"}`.
+- After it applies one of them, the device sends a `checkin` at once, so the app shows the new list.
+
+Check-in fields: `wifi_saved` (array of the saved SSIDs, in the device order), `wifi_ssid` (the connected
+SSID, `""` when not connected), `wifi_rssi` (dBm of the connected network, 0 when not connected). The phone
+lists only 2.4 GHz networks that it can see, because the device has no 5 GHz radio.
+
+## Health
+
+The device sends a `health` object in each check-in (HTTP and BLE `checkin`, about every 30 s), so that the
+hub keeps the history and the device stores none:
+
+```json
+{"uptime_s":3600,"heap_free":95000,"heap_min":85000,"heap_largest":60000,"psram_free":7157060,
+ "psram_min":7153040,"stack_main":4300,"stack_net":9484,"stack_ble":852,"cpu_filter_pm":120,
+ "cpu_opus_pm":340,"cpu_vad_pm":210,"opus_max_us":9100,"overflows":0,"temp_c":41.5}
+```
+
+| Field | Unit | Notes |
+|---|---|---|
+| `uptime_s` | s | Time since start. |
+| `heap_free`, `heap_min`, `heap_largest` | bytes | Internal RAM: free now, lowest free since start, largest free block. |
+| `psram_free`, `psram_min` | bytes | PSRAM: free now, lowest free since start. |
+| `stack_main`, `stack_net`, `stack_ble` | bytes | Lowest free stack (high-water mark) of the main, net and BLE tasks. |
+| `cpu_filter_pm`, `cpu_opus_pm`, `cpu_vad_pm` | per mille | Part of the audio core time used by the filter, the Opus encoder and the VAD. |
+| `opus_max_us` | µs | Longest Opus encode of one frame. |
+| `overflows` | count | I2S overflows since start. |
+| `temp_c` | °C | Chip temperature. The hub keeps 0.1 °C. |
+
+The hub keeps one sample for each check-in, but at most one sample in each minute (UTC minute of the hub
+clock; the first check-in in a minute wins). A check-in without `health` gives a sample with `"health":null`.
+
+Sample (from `GET /api/health`; all fields are always there):
+
+```json
+{"t":1794358412,"battery_pct":77,"voltage_mv":4012,"current_ma":-31,"recording":true,"outbox_chunks":3,
+ "dropped_chunks":0,"wifi_rssi":-61,"health":{…}}
+```
+
+`t` is the Unix time (seconds) when the hub got the check-in.
+
+Storage: `<device>/health.bin` in the data folder, fixed 100-byte records, little-endian, appended at each
+kept sample: `t` (i64), then 23 i32 values: `battery_pct`, `voltage_mv`, `current_ma`, `recording` (0 or 1),
+`outbox_chunks`, `dropped_chunks`, `wifi_rssi`, a health flag (0 = no `health`), then the 15 health fields
+in the order of the table, with `temp_c` × 10. When the file has 11,520 records (7 days + 1 day), the hub
+writes it again (temporary file, then rename) with only the samples of the last 7 days, at most 10,080.
+Thus the file is at most about 1.15 MB, and `GET /api/health` never gives samples older than 7 days. A
+partial record at the end (a crash during a write) is removed when the hub opens the file.
+
+The phone app shows the history in Settings › Sticky › Health (6 h, 24 h or 7 d, at most 300 points in each
+chart).
+
+## Places
+
+The phone hub tags each new session with a place. The user names the places in Settings › Places on the
+phone (name, radius 100, 150 or 300 m, the precise location of the phone when the user adds the place). The
+places are stored only in the app preferences on the phone.
+
+- When the first chunk of a session that the hub does not know arrives, the hub decides if the session is
+  live: the chunk age is `uptime_s × 1000 + (now − time of the last check-in) − X-Start-Ms` (BLE: `start ms`),
+  from the last check-in of the device. A chunk older than 10 minutes (from the outbox backlog) gets no tag. If
+  the age is not known (no `health` in the last check-in, or a negative age after a restart of the device), the
+  hub tags the session.
+- The phone needs precise location (`ACCESS_FINE_LOCATION`) and, when the app is not on the screen,
+  `ACCESS_BACKGROUND_LOCATION` ("Allow all the time"). The app asks for them only in Settings › Places. Without
+  them the session gets no tag. The hub service type stays `connectedDevice`: with background access, a
+  normal location request works from the service.
+- One fix: the last known fused location if it is at most 10 minutes old, else one fused request with
+  balanced power accuracy (at most 30 s). While the phone gets the fix, `place` is `"\u0000pending"`, and the
+  summary of the session waits for at most 1 minute after the last chunk.
+- The nearest place whose radius contains the fix gives the tag. No place → `"Elsewhere"`, with the location
+  rounded to about 1 km in `meta.json`.
+- The location never leaves the phone. The app does not use the Android `Geocoder`. Only the name goes to the
+  Sticky (`place` in the transcript item) and to the on-device summary model as context (`"Elsewhere"` does
+  not go to the model).
+
+## Marks
+
+A mark is a moment that the user marked on the Sticky with a double press while it records.
+
+- The check-in (HTTP `POST /api/checkin` and the BLE `checkin`) has an optional field
+  `"marks":[{"session":"<8 hex>","offset_ms":<int>,"at":<unix ms>}]`. `offset_ms` is the position in the
+  session audio: `seq × 30000` + the position in the chunk (ms). `at` is the device clock (0 when the clock is
+  not set); the hub does not store it.
+- The device sends each mark in every check-in until the check-in is delivered: on HTTP, a `200` reply (the hub
+  answers only after the marks are stored); on BLE, a successful write of the `checkin` frame (BLE has no reply).
+- The hub stores each mark once (key: session and `offset_ms`) in `meta.json` of the session as `marks`
+  (sorted). A repeat is ignored. A mark with a bad session ID or a negative offset is ignored; the reply is
+  still `200`.
+- A mark can arrive before the first chunk of its session (the chunks wait in the outbox). The hub then makes
+  `meta.json` with no chunks. Such a session is not in the lists and gets no summary until its first chunk
+  arrives; `started` is set from the first chunk.
+- The summary prompt gets the marks as important moments: the time of each mark and the transcript text of the
+  2 minutes before it.
+
+## Segments and the session timeline
+
+- The transcriber gives segments with start and end times. The hub stores them per chunk in `meta.json`
+  `segments` (times in ms from the chunk start) and keeps the plain text in `chunks`.
+- The session timeline: chunk `seq` starts at the sum of the durations of chunks `0 … seq-1` (`chunk_ms`; a
+  chunk that is not stored counts 30 s). This is the same as `seq × 30000` while all chunks are 30 s.
+- A chunk with no segments (transcribed before this change) shows as one block at the chunk start.
+- Each segment has `words` (whisper token timestamps, tokens joined into words): an array of
+  `[start_ms, end_ms, "text"]`, times from the chunk start. Phone: whisper.cpp `token_timestamps`; laptop:
+  `whisper-cli -ojf` (`tokens[].offsets`). `[BLANK_AUDIO]` and special tokens are left out.
+- `Session.offsets()` and the phone player use the same timeline. The phone plays the session audio with its own
+  player: the Opus frames of the chunks in order (a missing chunk is silence) are decoded with libopus and written
+  to an `AudioTrack`.
+
+## Speakers
+
+- When a session is closed and has no pending chunk, the hub finds the speakers before it makes the summary
+  (sherpa-onnx: pyannote segmentation 3.0 and 3D-Speaker CAM++ embeddings, fast clustering with threshold 1.1,
+  `min_duration_on` 0.3 s, `min_duration_off` 0.5 s). Clusters whose mean embeddings (from turns of 1.5 s and
+  longer) have a cosine above 0.95 are merged. Speakers are numbered by their first turn.
+- The phone diarizes at most 20 minutes of audio in one run; a longer session is done in 20-minute windows and
+  the windows are joined by the same embedding rule. The laptop does the whole session in one run.
+- Each segment gets the speaker with the most overlap (`speaker`, from 0; no overlap: the speaker of the segment
+  before). `meta.json` `diarized` is true after the run (also when it failed or the models are missing; the
+  summary does not wait). A new chunk sets it to false.
+- Names: `speakers` in `meta.json` maps the speaker number (string) to a name. With no name the label is
+  "Speaker A", "Speaker B", …. The phone renames for the whole session; a rename also replaces the old label in
+  the title, the summary and the to-dos.
+- The summary input has one line per speaker turn, `Name: text`.
+- Models: phone: Settings › Models › Speakers (downloaded like the whisper models). Laptop:
+  `-segmentation <file>` (default `~/.local/share/resticky/models/pyannote-segmentation-3-0.onnx`, from
+  `huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx`) and
+  `-embedding <file>` (default `…/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx`, sherpa-onnx release
+  `speaker-recongition-models`). Without them the laptop hub logs a warning and skips the speakers.
+
+## Playback view (phone only)
+
+- Clean up: the transcript shows filler words and false starts as `-----` (`um`, `uh`, `erm`, `er`, `ah`, `hmm`,
+  `mm`, `mhm`, "you know", "I mean", a word repeated at once, a cut-off word ending in `-`), and the player jumps
+  over their time spans. Skip silence: the player jumps over gaps longer than 1.5 s without words (250 ms are
+  kept at each side). A chunk with text but no word times counts as speech. The stored text does not change.
+- Crisp voice: Off, Clear or Clear + denoise (remembered). Clear: Android `DynamicsProcessing` on the player
+  session (pre-EQ: −24 dB below 90 Hz, −2 dB at 250–400 Hz, +3.5 dB at 2–5 kHz, +1 dB above 5 kHz; 3-band
+  compressor 2:1 from −30 dB; limiter at −2 dB) and a slow level control to about −18 dBFS RMS of speech.
+  Clear + denoise: the DPDFNet 2 model (sherpa-onnx `OnlineSpeechDenoiser`, 16 kHz, one thread) before the same
+  chain. If `<session>/listen.opus` exists (an enhanced listening copy, the same frame format and timeline), the
+  player uses it instead of the real-time denoiser. A switch while playing keeps the position: Clear ↔ denoise is
+  a 50 ms crossfade, a switch to or from Off is a 25 ms fade out, the effect change, and a 25 ms fade in.
+  The original audio is never changed.
+
+## Photos (phone only)
+
+- The Snap button (center of the tab bar, on every tab) and the Quick Settings tile "Snap to meeting" open the
+  system camera. The photo is made at most 2048 px on the long side (JPEG quality 85) and stored in
+  `<session>/photos/<unix ms>.jpg`; ML Kit text recognition (on the phone) reads the text.
+- Linking: the session that is live at capture time (from `started` to `last_chunk` + 3 minutes), else the nearest
+  session within 10 minutes; offset = capture time − `started`, limited to the session. Else the photo goes to "Not
+  linked" (`files/unlinked/<unix ms>.jpg` and `.txt` with the text) on the Photos tab, where the user attaches it.
+- The Photos tab shows the photos grouped by session, newest first (3 columns; tap: the viewer with the text and
+  "Play from mm:ss", which opens the transcript at that time), then "Not linked".
+- `meta.json` `photos`: `[{"offset_ms","file","text","taken_ms"}]`, sorted by offset. The summary prompt gets
+  "photo text at mm:ss" lines. `/api/transcripts` has only the count.
+
+## To-do changes
+
+`PUT` sets the state, so a repeat or the same change from two hubs gives the same result:
+
+- The hub keeps, for each to-do, the state and the time of the last change.
+- A change with an `at` time older than the stored time is ignored; the response has the stored state.
+- An open to-do that was never changed has no stored time.
+- The device sets `at` from its clock, which it sets with SNTP after Wi-Fi connects. It sends a change
+  only after the clock is set.
+
+## Session rules
+
+- A session is closed when a chunk has `X-Final: 1`, or when no chunk came for 3 minutes.
+- Each chunk is transcribed when it arrives. A closed session with no pending chunk gets a summary: a
+  title (at most 6 words), 1 to 2 sentences, and the to-dos. A session with no words gets the title
+  "No speech" and no summary.
+- Audio files (`.opus`, `.ogg`, `.wav`) are deleted 7 days after they were written. Text stays.
+
+## Data folder
+
+Default: `~/.local/share/resticky/data`.
+
+```
+<device>/
+  screen.png                  last screen frame
+  health.bin                  health history (see "Health")
+  <session>/
+    meta.json                 the session
+    <seq>.opus                the chunk as received
+    <seq>.ogg                 the chunk in an Ogg container (made for the transcription)
+    photos/<unix ms>.jpg      photos (phone only)
+    listen.opus               optional enhanced listening copy (phone only)
+```
+
+`meta.json`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `device`, `id` | string | |
+| `started` | RFC 3339 time | arrival of the first chunk minus its duration |
+| `last_chunk` | RFC 3339 time | arrival of the last chunk |
+| `duration_ms` | integer | sum of the chunk durations |
+| `final` | boolean | left out when false |
+| `chunks` | object | sequence number (string) → transcript text. The text `"\u0000pending"` means "not transcribed yet". |
+| `title`, `summary` | string | left out when empty |
+| `todos` | array of strings | left out when empty |
+| `done` | object | to-do index (string) → RFC 3339 time when it was marked done. Left out when empty. |
+| `todo_changes` | object | to-do index (string) → RFC 3339 time of the last `PUT` change, open or done. Left out when empty. |
+| `ready` | boolean | left out when false |
+| `place` | string | Place tag (see "Places"). `"\u0000pending"` while the phone gets the location. Left out when empty. |
+| `place_lat`, `place_lon` | number | Only with `"place":"Elsewhere"`: the location rounded to 0.01° (about 1 km). Never in an API response. |
+| `segments` | object | sequence number (string) → array of `{"start_ms","end_ms","text","speaker","words"}`, times from the chunk start (see "Segments and the session timeline" and "Speakers"). `speaker` is left out when unknown, `words` when empty. Left out when empty. |
+| `chunk_ms` | object | sequence number (string) → chunk duration in ms (`X-Duration-Ms`). Left out when empty. |
+| `marks` | array of integers | Mark offsets in ms on the session timeline, sorted, no repeats (see "Marks"). Left out when empty. |
+| `diarized` | boolean | The speaker run is done (see "Speakers"). Left out when false. |
+| `speakers` | object | Speaker number (string) → name. Left out when empty. |
+| `photos` | array | See "Photos". Left out when empty. |
+| `vad` | object | sequence number (string) → `{"speech","keep","keep_prev"}` from the `X-Vad-*` headers (see "Voice activity"). Left out when empty. Needs the hub change. |
+
+## Bluetooth LE
+
+Firmware 0.7.0 and later. The device is a GATT server (NimBLE peripheral, one connection). The hub is the
+central. The test hub is `firmware/tools/ble_hub.py`.
+
+### Advertising
+
+Name `resticky`, the service UUID in the advertising data, the name in the scan response. Interval 300 to
+500 ms. The device advertises again after each disconnect.
+
+### GATT service
+
+| Item | UUID | Properties | Security |
+|---|---|---|---|
+| Service | `5a391e60-e572-4f44-920b-4a82eb105232` | | |
+| RX (hub → device) | `5a391e61-e572-4f44-920b-4a82eb105232` | write, write without response | encrypted and authenticated link |
+| TX (device → hub) | `5a391e62-e572-4f44-920b-4a82eb105232` | notify | encrypted and authenticated link to subscribe |
+
+### Security
+
+- LE Secure Connections only (legacy pairing is off), bonding, MITM protection.
+- Device IO capability: DisplayOnly. The device shows a random 6-digit passkey on a full-screen "Pairing"
+  page; the user types it on the hub. The page closes when pairing ends (success, failure or disconnect).
+  The serial log also shows the passkey (`ble: pairing: passkey …`).
+- Bonds (keys and subscriptions) are in NVS, at most 4. A bonded hub reconnects without a passkey. If a
+  bonded peer pairs again, the device deletes the old bond and accepts the new pairing.
+- The device sends chunks only when the link is encrypted, authenticated and bonded, and the hub has
+  subscribed to TX.
+
+### Link settings
+
+The device asks for the LE 2M PHY and for data length 251 bytes. The preferred ATT MTU is 517. The hub
+selects the connection interval.
+
+### Frames
+
+Both directions carry a byte stream of frames. A frame is:
+
+| Field | Size | Notes |
+|---|---|---|
+| length | u32, little-endian | number of bytes after this field (type + payload) |
+| type | u8 | see the table below |
+| payload | length - 1 bytes | |
+
+A frame is split over as many notifications (TX) or writes (RX) as necessary; each one carries at most
+MTU - 3 bytes of the stream, and never more than 512 bytes (the ATT value limit: Android drops longer
+notifications). The Android hub asks for MTU 515 for this reason. A notification or write can contain the end of one frame and the start of the
+next one. Both sides clear a partial frame when the connection closes. The hub writes RX with write
+requests (with response), one at a time. The JSON payload of a hub → device frame is at most 2048 bytes, so
+the device must accept RX frames of at most 2053 bytes (required firmware change: before this, the limit was
+1020 bytes).
+
+### Message types
+
+| Type | Name | Direction | Payload |
+|---|---|---|---|
+| 1 | `chunk` | device → hub | header (31 bytes, little-endian) and the audio frames |
+| 2 | `ack` | hub → device | session (u32), seq (u32) |
+| 3 | `checkin` | device → hub | the JSON of `POST /api/checkin` (UTF-8) |
+| 4 to 7 | reserved | | `todo_set`, `state`, `hint`, `screen` (later layers) |
+| 8 | `weather` | hub → device | the weather JSON (see "Weather") |
+| 9 | `agenda` | hub → device | the agenda JSON (see "Agenda") |
+| 10 | `wifi_add` | hub → device | `{"ssid","password"}` (see "Wi-Fi from the phone") |
+| 11 | `wifi_forget` | hub → device | `{"ssid"}` |
+| 12 | `weather_set` | device → hub | `{"mode","units"}`, the same as the body of `PUT /api/weather` |
+| 13 | `time` | hub → device | `{"utc_offset_min":<n>}` (see "Time") |
+| 14 | `display` | hub → device | `{"clock_face","weather_style","hour_format","beep"}` (see "Display") |
+| 15 | reserved | | |
+| 16 | `install` | hub → device | `{"version":"<x.y.z>"}`: the user asked for this firmware (see "Firmware updates") |
+
+All JSON payloads are UTF-8 with no terminating zero byte.
+
+The device ignores types that it does not know.
+
+`chunk` header:
+
+| Offset | Field | Type |
+|---|---|---|
+| 0 | device (the Wi-Fi MAC address, 6 bytes; the device ID is its lowercase hex) | 6 bytes |
+| 6 | session | u32 |
+| 10 | seq | u32 |
+| 14 | final (1 or 0) | u8 |
+| 15 | start ms (`X-Start-Ms`) | i64 |
+| 23 | duration ms | u32 |
+| 27 | audio length in bytes | u32 |
+| 31 | audio frames, the same format as the body of `POST /api/chunks` | |
+
+### Rules
+
+- The device sends one chunk at a time, the oldest in the outbox, and deletes it only after an `ack` with
+  the same session and seq. With no `ack` in 15 s, or when the link closes, the chunk stays in the outbox.
+  After a missing `ack` the device does not send chunks on BLE for 60 s; in that time it uses Wi-Fi if a
+  Wi-Fi hub is reachable. Then it tries BLE again. The device ignores an `ack` for a chunk that it does not
+  wait for.
+- The hub sends `ack` only after the chunk is on disk. A chunk that the hub already has (same device,
+  session and seq) replaces the file, the same as on HTTP.
+- The device sends `checkin` when the link becomes ready and then every 30 s.
+- The hub sends `time`, `weather`, `agenda` and `display` when the link becomes ready, and then each one
+  again only when its JSON changed (a new forecast, a settings change, a calendar change, a new offset, a
+  new clock face or weather style). On Wi-Fi the device gets the same data with `GET /api/weather`,
+  `GET /api/agenda` and the check-in reply.
+- While a BLE hub is ready, chunks go only on BLE. Check-ins, transcripts, to-dos and screen frames still
+  use Wi-Fi when a Wi-Fi hub is reachable.
+
+## Firmware updates
+
+- After each successful check-in, the device asks `GET /api/firmware`. It offers the update on Settings >
+  Device when the version is newer than its own and did not fail on this device before (ESP-IDF keeps
+  the last invalid slot).
+- The device writes the image into the other app slot; `esp_ota_end` checks the image hash that ESP-IDF
+  appends to every image. The device does not start an update below 20% battery unless USB is connected.
+- A new firmware starts in "pending verify". It confirms itself when it has written an audio chunk to the
+  outbox and the hub answered a check-in (Wi-Fi or BLE), within 3 minutes. Otherwise, or if it crashes
+  first, the bootloader starts the previous firmware.
+- Releases: both hubs ask the GitHub REST API (`GET https://api.github.com/repos/mtch3n/resticky/releases/latest`,
+  no token, `User-Agent: resticky-hub/<v>` or `resticky-android/<v>`, `If-None-Match` with the stored ETag) at most
+  once a day and when the user taps Check now (phone App settings › Updates). On `403`/`429` they wait until
+  `X-RateLimit-Reset`. The answer is cached (`releases.json`). A release has the assets `resticky-android.apk`,
+  `resticky-firmware-<x.y.z>.bin` and `resticky-hub-desktop.zip` (CI, tags `v*`).
+- Both hubs copy the release firmware into their firmware folder (`<x.y.z>.bin`), so `/api/firmware` offers it.
+  The laptop hub does this unless it runs with `-updates off` (the contract tests use it).
+- Update now (phone Sticky settings › Firmware, or Updates): the hub sets `install` to the version in the check-in
+  reply (HTTP) and sends the BLE `install` frame. The device installs it over Wi-Fi from the hub it reaches. The
+  hub clears `install` when a check-in reports that firmware. The phone shows the button only when its folder has a
+  newer firmware than the device and the device is on Wi-Fi. Required firmware change: act on `install`.
+- Phone app update: App settings › Updates downloads `resticky-android.apk` and gives it to the Android package
+  installer (`REQUEST_INSTALL_PACKAGES`; the user allows installs from resticky once and confirms each install).
+  The APK must have the same signing key as the installed app.
+- Release: `firmware/tools/release.sh` builds and copies the image to the firmware folder. After a USB
+  flash, `firmware/tools/verify.sh` checks the check-in and an upload, and flashes the last good build
+  back if they do not come.

@@ -1,0 +1,54 @@
+[versions]
+kotlin = "2.4.21"
+ktor = "3.6.1"
+coroutines = "1.11.0"
+serialization = "1.12.0"
+io = "0.9.2"
+datetime = "0.8.0"
+jmdns = "3.6.5"
+slf4j = "2.0.20"
+agp = "9.5.1"
+compose-bom = "2026.06.01"
+activity-compose = "1.13.0"
+litertlm = "0.19.1"
+genai-prompt = "1.0.0-beta5"
+work = "2.12.0"
+sherpa-onnx = "2.0.1"
+test-runner = "1.6.2"
+text-recognition = "16.0.1"
+test-junit = "1.2.1"
+
+[libraries]
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "io" }
+datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
+jmdns = { module = "org.jmdns:jmdns", version.ref = "jmdns" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+litertlm = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
+work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
+genai-prompt = { module = "com.google.mlkit:genai-prompt", version.ref = "genai-prompt" }
+
+sherpa-onnx-android = { module = "k2-fsa:sherpa-onnx", version.ref = "sherpa-onnx" }
+sherpa-onnx-jvm = { module = "k2-fsa:sherpa-onnx-jvm", version.ref = "sherpa-onnx" }
+sherpa-onnx-native-linux = { module = "k2-fsa:sherpa-onnx-native-lib-linux-x64", version.ref = "sherpa-onnx" }
+
+text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "text-recognition" }
+test-runner = { module = "androidx.test:runner", version.ref = "test-runner" }
+test-junit = { module = "androidx.test.ext:junit", version.ref = "test-junit" }
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-kmp-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }

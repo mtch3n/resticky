@@ -1,0 +1,50 @@
+<!doctype html><meta charset=utf-8><style>@font-face{font-family:H;src:url(assets/fonts/Caveat.ttf)}@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
+*{margin:0;padding:0;box-sizing:border-box}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:M}
+.status{position:absolute;top:0;left:0;width:480px;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
+.h{font-family:H;font-weight:700;position:absolute}</style><body><div class=status><span style="display:flex;align-items:center;gap:10px"><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="22"
+  height="22"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.4"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M12 18l.01 0" />
+  <path d="M9.172 15.172a4 4 0 0 1 5.656 0" />
+  <path d="M6.343 12.343a8 8 0 0 1 11.314 0" />
+  <path d="M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0" />
+</svg><b style="font-size:22px">Weather</b></span><span style="display:flex;align-items:center;gap:6px">78% <svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="28"
+  height="28"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M6 7h11a2 2 0 0 1 2 2v.5a.5 .5 0 0 0 .5 .5a.5 .5 0 0 1 .5 .5v3a.5 .5 0 0 1 -.5 .5a.5 .5 0 0 0 -.5 .5v.5a2 2 0 0 1 -2 2h-11a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2" />
+  <path d="M7 10l0 4" />
+  <path d="M10 10l0 4" />
+  <path d="M13 10l0 4" />
+</svg></span></div><svg id=s width=480 height=800 style='position:absolute;left:0;top:0'></svg><script src='assets/js/rough.js'></script><script src='assets/js/art.js'></script><script>
+const text = (x, y, t, size, anchor = 'middle', weight = 700) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y);
+  e.setAttribute('text-anchor', anchor); e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', weight); e.setAttribute('font-size', size); e.textContent = t; svg.appendChild(e); };
+
+for (let k = 0; k < 13; k++) add(rc.line(20, 118 + k * 52, 460, 118 + k * 52, pen(1, 500 + k, 0.6)));
+add(rc.line(70, 60, 70, 790, pen(1.6, 520, 0.8)));
+text(84, 108, 'tuesday, 10 november', 40, 'start');
+text(84, 160, 'cloudy, 18°.', 40, 'start'); text(84, 212, 'feels like 16°.', 36, 'start', 600);
+text(84, 264, 'high 21°, low 12°.', 36, 'start', 600); text(84, 316, '20% chance of rain.', 36, 'start', 600);
+text(84, 368, 'cooling to 14° by tonight.', 36, 'start', 600);
+text(84, 476, 'this week', 36, 'start');
+[["tue", "rain", 11, 17], ["wed", "cloud", 12, 19], ["thu", "sun", 13, 22], ["fri", "storm", 12, 18], ["sat", "snow", -2, 3]].forEach(([d, c, lo, hi], i) => { text(84, 528 + i * 52, d, 32, 'start'); cond(c, 170, 514 + i * 52, 0.22, 300 + i * 40); text(214, 528 + i * 52, c + ', ' + lo + '° to ' + hi + '°', 30, 'start', 600); });
+</script></body>

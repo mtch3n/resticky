@@ -1,0 +1,8 @@
+#!/bin/sh
+out=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "-o" ] && out="$2"
+  shift
+done
+cat > /dev/null
+printf '{"title":"Fake title","summary":"Fake summary.","todos":["Fake todo"]}' > "$out"

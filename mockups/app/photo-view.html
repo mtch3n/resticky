@@ -1,0 +1,156 @@
+<!doctype html><meta charset=utf-8><style>
+@font-face{font-family:M;src:url(../assets/fonts/Montserrat.ttf)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:412px;height:915px;overflow:hidden;background:#fff;color:#111;font-family:M;font-weight:500;display:flex;flex-direction:column}
+.sys{height:36px;display:flex;justify-content:space-between;align-items:center;padding:0 22px;font-size:14px;font-weight:600}
+.bar{height:64px;display:flex;align-items:center;gap:12px;padding:0 20px;font-size:26px;font-weight:700}
+.bar .act{margin-left:auto;display:flex;gap:16px}
+.main{flex:1;overflow:hidden;padding:4px 16px 0;display:flex;flex-direction:column;gap:14px}
+.card{border-radius:24px;background:#f3f3f3;padding:18px 18px}
+.card.dark{background:#111;color:#fff}
+.row{display:flex;align-items:center;gap:12px}
+.sp{margin-left:auto}
+.h{font-size:17px;font-weight:700}
+.s{font-size:13px;color:#666;font-weight:500}
+.dark .s{color:#bbb}
+.big{font-size:30px;font-weight:700;letter-spacing:-.5px}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;background:#fff;color:#111}
+.pill.on{background:#111;color:#fff}
+.dark .pill{background:#2a2a2a;color:#fff}
+.sec{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#666;padding:6px 4px 0}
+.list{border-radius:24px;background:#f3f3f3;overflow:hidden}
+.li{display:flex;align-items:center;gap:14px;padding:15px 18px;border-top:1px solid #e2e2e2;font-size:15px;font-weight:600}
+.li:first-child{border-top:none}
+.li > svg:last-child{margin-left:auto;flex:none}
+.li .t{display:flex;flex-direction:column;gap:3px;min-width:0}
+.li .t b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chk{width:26px;height:26px;border-radius:8px;border:2.5px solid #111;flex:none;display:flex;align-items:center;justify-content:center}
+.chk.on{background:#111}
+.radio{width:22px;height:22px;border-radius:50%;border:2.5px solid #111;flex:none}
+.radio.on{border-width:7px}
+.sw{width:50px;height:30px;border-radius:999px;background:#111;position:relative;flex:none}
+.sw:after{content:'';position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:#fff}
+.sw.off{background:#ccc}.sw.off:after{right:auto;left:4px}
+.btn{height:48px;border-radius:999px;border:2px solid #111;display:flex;align-items:center;justify-content:center;gap:8px;font-size:15px;font-weight:700}
+.btn.on{background:#111;color:#fff}
+.nav{height:80px;border-top:1px solid #e5e5e5;display:flex;justify-content:space-around;align-items:center;padding-bottom:6px}
+.nav div{display:flex;flex-direction:column;align-items:center;gap:4px;font-size:12px;font-weight:700;color:#555}
+.nav i{display:flex;width:64px;height:32px;border-radius:999px;align-items:center;justify-content:center}
+.nav .on{color:#111}.nav .on i{background:#111}
+.dot{width:8px;height:8px;border-radius:50%;background:#111;display:inline-block}
+.tl{display:flex;gap:12px;padding:9px 12px;border-radius:14px;font-size:15px;line-height:1.45}
+.tl .at{flex:none;width:62px;font-size:13px;font-weight:700;color:#666;padding-top:2px;display:flex;gap:3px;align-items:center;height:20px}.tl .at svg{flex:none}
+.tl.near{background:#f3f3f3;border-radius:0}
+.tl.now{background:#111;color:#fff;font-weight:600}.tl.now .at{color:#bbb}
+.player{border-top:1px solid #e5e5e5;padding:12px 20px 22px;display:flex;flex-direction:column;gap:6px;background:#fff}
+.seek{position:relative;height:22px}
+.seek .track{position:absolute;left:0;right:0;top:13px;height:4px;border-radius:2px;background:#ddd}
+.seek .done{position:absolute;left:0;top:13px;height:4px;border-radius:2px;background:#111}
+.seek .knob{position:absolute;top:8px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#111}
+.seek .mk{position:absolute;top:-6px;margin-left:-7px;display:flex}
+.ctl{display:flex;align-items:center;justify-content:center;gap:34px}
+.segm{display:inline-flex;border-radius:999px;background:#f3f3f3;padding:3px}
+.segm span{border-radius:999px;padding:5px 12px;font-size:13px;font-weight:700;color:#555}
+.segm .on{background:#111;color:#fff}
+.segm.big span{padding:9px 22px;font-size:14px}
+.who{display:inline-block;margin-right:6px;padding:1px 8px;border-radius:999px;background:#e2e2e2;font-size:11px;font-weight:700;vertical-align:1px}
+.near .who{background:#e2e2e2}.now .who{background:#2a2a2a;color:#fff}
+.tl i{font-style:normal;color:#999;letter-spacing:1px}.now i{color:#888}
+.opt{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:6px 13px;font-size:13px;font-weight:700;background:#f3f3f3}
+.opt.on{background:#111;color:#fff}
+.chip{display:inline-flex;align-items:center;border-radius:999px;padding:9px 18px;font-size:14px;font-weight:700;background:#f3f3f3}
+.chip.on{background:#111;color:#fff}
+.fld{border-radius:24px;background:#f3f3f3;padding:18px}
+.play{width:60px;height:60px;border-radius:50%;background:#111;display:flex;align-items:center;justify-content:center}
+.bar2{height:6px;border-radius:999px;background:#ddd;overflow:hidden}.bar2 div{height:100%;background:#111}
+p.q{font-size:15px;line-height:1.5;font-weight:500}
+</style><body><div class=sys><span>10:42</span><span style="display:flex;gap:6px;align-items:center"><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="16"
+  height="16"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M12 18l.01 0" />
+  <path d="M9.172 15.172a4 4 0 0 1 5.656 0" />
+  <path d="M6.343 12.343a8 8 0 0 1 11.314 0" />
+  <path d="M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0" />
+</svg><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="18"
+  height="18"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M6 7h11a2 2 0 0 1 2 2v.5a.5 .5 0 0 0 .5 .5a.5 .5 0 0 1 .5 .5v3a.5 .5 0 0 1 -.5 .5a.5 .5 0 0 0 -.5 .5v.5a2 2 0 0 1 -2 2h-11a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2" />
+  <path d="M7 10l0 4" />
+  <path d="M10 10l0 4" />
+  <path d="M13 10l0 4" />
+  <path d="M16 10l0 4" />
+</svg></span></div><div class=bar><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="26"
+  height="26"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2.4"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M15 6l-6 6l6 6" />
+</svg>Whiteboard · 39:30</div><div class=main>
+<div style="height:420px;border-radius:10px;background:linear-gradient(135deg,#e6e6e6,#b9b9b9);display:flex;align-items:center;justify-content:center;flex:none;border-radius:20px"><!--
+tags: [image, picture, gallery, img, photography, media, thumbnail, landscape, jpg, png, wallpaper, photo]
+category: Media
+version: "1.0"
+unicode: "eb0a"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="64"
+  height="64"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#666"
+  stroke-width="1.6"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 8h.01" />
+  <path d="M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12" />
+  <path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5" />
+  <path d="M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3" />
+</svg>
+</div>
+<div class=sec>Text in the photo</div>
+<div class=card><p class=q>Restore test env by tomorrow · DNS switch Friday night · keep old servers 2 days</p></div>
+<div class="btn on"><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="20"
+  height="20"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#fff"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M7 4v16l13 -8l-13 -8" />
+</svg>Play from 39:30</div></div></body>

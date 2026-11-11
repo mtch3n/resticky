@@ -1,0 +1,97 @@
+import sys
+
+root = sys.argv[1]
+STEPS = ["starting", "opening storage", "starting Bluetooth", "joining Wi-Fi", "finding the hub", "ready"]
+
+
+def page(name, shown, bottom, extra="", scene="speech"):
+    html = f"""<!doctype html><meta charset=utf-8><style>
+@font-face{{font-family:H;src:url(assets/fonts/Caveat.ttf)}}
+*{{margin:0;padding:0}}body{{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:H}}
+.t{{position:absolute;width:480px;text-align:center}}
+</style><body>
+<div class=t style="top:50px;font-size:112px;font-weight:700;line-height:1">resticky</div>
+<svg id=s width=480 height=800 style="position:absolute;left:0;top:0"></svg>
+<div class=t style="top:604px;font-size:40px;font-weight:600">keeps what was said</div>
+{bottom}
+<script src="assets/js/rough.js"></script><script>
+const svg = document.getElementById('s'), rc = rough.svg(svg), shown = {shown}, scene = '{scene}';
+const add = n => svg.appendChild(n);
+const pen = (w, s) => ({{roughness: 1.1, strokeWidth: w, seed: s}});
+const cloud = (x, y, w, h, sd) => add(rc.path(`M${{x}} ${{y + h}} C${{x - h * 0.6}} ${{y + h}} ${{x - h * 0.6}} ${{y + h * 0.35}} ${{x + w * 0.12}} ${{y + h * 0.4}} C${{x + w * 0.1}} ${{y - h * 0.15}} ${{x + w * 0.45}} ${{y - h * 0.25}} ${{x + w * 0.52}} ${{y + h * 0.15}} C${{x + w * 0.62}} ${{y - h * 0.05}} ${{x + w * 0.9}} ${{y + h * 0.05}} ${{x + w * 0.86}} ${{y + h * 0.45}} C${{x + w * 1.08}} ${{y + h * 0.45}} ${{x + w * 1.08}} ${{y + h}} ${{x + w * 0.9}} ${{y + h}} Z`, {{...pen(3, sd), fill: '#fff', fillStyle: 'solid'}}));
+if (scene === 'speech') {{
+const NS = 'http://www.w3.org/2000/svg';
+const note = document.createElementNS(NS, 'g');
+note.setAttribute('transform', 'rotate(-4 270 390)');
+const hand = (x, y, t, sz) => {{ const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y); e.setAttribute('font-size', sz); e.setAttribute('font-weight', 700); e.setAttribute('font-family', 'H'); e.textContent = t; note.appendChild(e); }};
+if (shown >= 1) {{
+  note.appendChild(rc.path('M168 290 L386 290 L386 470 L346 510 L168 510 Z', {{roughness: 0.8, stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 6, fillWeight: 1.6, hachureAngle: 40, seed: 2}}));
+  note.appendChild(rc.path('M156 278 L374 278 L374 458 L334 498 L156 498 Z', {{...pen(3, 1), fill: '#fff', fillStyle: 'solid'}}));
+  note.appendChild(rc.path('M374 458 L334 458 L334 498', pen(2.6, 3)));
+}}
+if (shown >= 2) note.appendChild(rc.polygon([[222, 258], [312, 262], [310, 296], [220, 292]], {{...pen(2.4, 5), fill: '#000', fillStyle: 'hachure', hachureGap: 4, fillWeight: 1.4, hachureAngle: -60}}));
+if (shown >= 3) {{
+  const pts = []; for (let x = 18; x <= 186; x += 3) {{ const k = (x - 18) / 168, amp = 30 * Math.sin(Math.PI * k) * (0.55 + 0.45 * Math.sin(x / 7)); pts.push([x, 350 + amp * Math.sin(x / 4.2)]); }}
+  add(rc.curve(pts, {{roughness: 0.6, strokeWidth: 3, seed: 7}}));
+}}
+if (shown >= 4) hand(184, 352, 'ship report', 38);
+if (shown >= 5) {{ hand(184, 404, 'ask Sam', 38); hand(184, 456, 'call Alex', 38); }}
+if (shown >= 6) {{
+  note.appendChild(rc.path('M300 442 L314 460 L340 420', pen(3.6, 9)));
+  add(note);
+  const pg = document.createElementNS(NS, 'g'); pg.setAttribute('transform', 'rotate(-22 360 548)');
+  pg.appendChild(rc.rectangle(270, 536, 150, 22, {{...pen(2.6, 11), fill: '#000', fillStyle: 'hachure', hachureGap: 7, fillWeight: 1.2}}));
+  pg.appendChild(rc.path('M270 536 L240 547 L270 558', pen(2.6, 12)));
+  pg.appendChild(rc.path('M250 543 L240 547 L250 551', {{...pen(2, 13), fill: '#000', fillStyle: 'solid'}}));
+  pg.appendChild(rc.line(400, 536, 400, 558, pen(2.4, 14)));
+  add(pg);
+}} else add(note);
+}} else {{
+if (shown >= 1) add(rc.path('M20 566 C90 520 150 520 210 548 C270 576 330 512 460 540', pen(3, 1)));
+if (shown >= 2) add(rc.circle(318, 300, 112, pen(3, 2)));
+if (shown >= 3) for (let k = 0; k < 12; k++) {{ const a = k * Math.PI / 6, c = Math.cos(a), s = Math.sin(a); add(rc.line(318 + 72 * c, 300 + 72 * s, 318 + 94 * c, 300 + 94 * s, pen(3, 20 + k))); }}
+if (shown >= 4) cloud(110, 340, 230, 100, 40);
+if (shown >= 5) cloud(330, 446, 110, 52, 50);
+if (shown >= 6) [[96, 270], [140, 246]].forEach(([x, y], i) => add(rc.path(`M${{x - 16}} ${{y - 6}} Q${{x - 6}} ${{y - 10}} ${{x}} ${{y}} Q${{x + 6}} ${{y - 10}} ${{x + 16}} ${{y - 6}}`, pen(2.6, 60 + i))));
+}}
+{extra}
+document.querySelectorAll('[data-bar]').forEach(b => {{
+  const p = +b.dataset.bar, bx = 90, by = 670, bw = 300, bh = 26;
+  add(rc.rectangle(bx + 4, by + 4, (bw - 8) * p, bh - 8, {{stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2.4, hachureAngle: -50, seed: 70}}));
+  add(rc.rectangle(bx, by, bw, bh, pen(2.6, 71)));
+}});
+</script></body>"""
+    open(f"{root}/{name}.html", "w").write(html)
+
+
+page("power-off", 6, '<div style="position:absolute;right:62px;top:172px;font-size:30px;font-weight:600;line-height:1">press to start</div>',
+     "add(rc.path('M424 190 C440 194 456 192 470 186', pen(3, 90))); add(rc.path('M458 176 L471 186 L460 198', pen(3, 91)));", "weather")
+for k in range(1, 7):
+    page(f"boot-{k}", k, f'<div data-bar="{k / 6:.3f}"></div><div class=t style="top:704px;font-size:30px;font-weight:600">{STEPS[k - 1]}</div>')
+
+
+def drawn(name, mark, title, lines, bar=None):
+    html = f"""<!doctype html><meta charset=utf-8><style>
+@font-face{{font-family:H;src:url(assets/fonts/Caveat.ttf)}}
+*{{margin:0;padding:0}}body{{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:H}}
+.t{{position:absolute;width:480px;text-align:center}}
+</style><body><svg id=s width=480 height=800 style="position:absolute;left:0;top:0"></svg>
+<div class=t style="top:478px;font-size:56px;font-weight:700">{title}</div>
+{"".join(f'<div class=t style="top:{y}px;font-size:32px;font-weight:600">{t}</div>' for y, t in lines)}
+<script src="assets/js/rough.js"></script><script>
+const svg = document.getElementById('s'), rc = rough.svg(svg), add = n => svg.appendChild(n);
+const pen = (w, s) => ({{roughness: 1.1, strokeWidth: w, seed: s}});
+const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+g.setAttribute('transform', 'rotate(-5 240 320)');
+g.appendChild(rc.path('M160 230 L320 230 L320 370 L284 406 L160 406 Z', pen(3, 40)));
+g.appendChild(rc.path('M320 370 L284 370 L284 406', pen(2.6, 41)));
+{mark}.forEach((d, i) => g.appendChild(rc.path(d, pen(4, 80 + i))));
+add(g);
+{f"add(rc.rectangle(94, 604, 292 * {bar}, 22, {{stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2.4, hachureAngle: -50, seed: 70}})); add(rc.rectangle(90, 600, 300, 30, pen(2.6, 71)));" if bar is not None else ""}
+</script></body>"""
+    open(f"{root}/{name}.html", "w").write(html)
+
+
+drawn("update-progress", ["M240 262 L240 352", "M206 322 L240 356 L274 322"], "updating to v0.2.0",
+      [(646, "62%"), (690, "keep on USB or battery above 20%")], 0.62)
+drawn("update-done", ["M196 316 L228 350 L290 270"], "v0.2.0 installed", [(560, "recording again")])

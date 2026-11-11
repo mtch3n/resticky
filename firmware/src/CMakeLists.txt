@@ -1,0 +1,2 @@
+idf_component_register(SRCS "main.c" "settings.c" "wifi.c" "spool.c" "ota.c" "board.c" "epd.c" "sensors.c" "ui.c" "icons_96.c" "icons_64.c" "icons_34.c" "icons_28.c" "text_16.c" "text_18.c" "text_20.c" "title_22.c" "title_28.c" "clock_112.c" "splash.c" "buttons.c" "clock.c" "buzzer.c" "sdcard.c" "art.c" "label_16.c" "body_18.c" "body_20.c" "hand_28.c" "hand_40.c" "hand_64.c" "hand_88.c" "hand_128.c" "hand_150.c" "hand_170.c" "hand_200.c" "title_40.c" "touch.c" "audio.c" "net.c" "ble.c" "lv_mem_psram.c" "vad.c"
+                       INCLUDE_DIRS ".")

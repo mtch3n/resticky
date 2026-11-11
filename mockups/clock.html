@@ -1,0 +1,56 @@
+<!doctype html><meta charset=utf-8><style>@font-face{font-family:H;src:url(assets/fonts/Caveat.ttf)}@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
+*{margin:0;padding:0;box-sizing:border-box}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:M}
+.status{position:absolute;top:0;left:0;width:480px;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
+.h{font-family:H;font-weight:700;position:absolute}</style><body><div class=status><span style="display:flex;align-items:center;gap:10px"><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="22"
+  height="22"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.4"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M12 18l.01 0" />
+  <path d="M9.172 15.172a4 4 0 0 1 5.656 0" />
+  <path d="M6.343 12.343a8 8 0 0 1 11.314 0" />
+  <path d="M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0" />
+</svg><b style="font-size:22px">Clock</b></span><span style="display:flex;align-items:center;gap:6px">78% <svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="28"
+  height="28"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M6 7h11a2 2 0 0 1 2 2v.5a.5 .5 0 0 0 .5 .5a.5 .5 0 0 1 .5 .5v3a.5 .5 0 0 1 -.5 .5a.5 .5 0 0 0 -.5 .5v.5a2 2 0 0 1 -2 2h-11a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2" />
+  <path d="M7 10l0 4" />
+  <path d="M10 10l0 4" />
+  <path d="M13 10l0 4" />
+</svg></span></div><svg id=s width=480 height=800 style='position:absolute;left:0;top:0'></svg><script src='assets/js/rough.js'></script><script src='assets/js/art.js'></script><script>const EVENTS = [["11:00", "Billing review"], ["13:30", "Lunch with Jo"], ["15:00", "Product launch sync"], ["18:30", "Gym"]];
+const text = (x, y, t, size, anchor = 'middle', weight = 700) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y);
+  e.setAttribute('text-anchor', anchor); e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', weight); e.setAttribute('font-size', size); e.textContent = t; svg.appendChild(e); };
+const agenda = (top) => { text(24, top, 'today', 32, 'start');
+  EVENTS.forEach(([t, n], i) => { const y = top + 44 + i * 50; add(rc.circle(36, y - 7, 10, {...pen(2, 70 + i), fill: '#000', fillStyle: 'solid'}));
+    text(56, y, t, 28, 'start'); text(140, y, n, 28, 'start', 500); }); };
+
+const cx = 240, cy = 226, r = 150;
+add(rc.circle(cx, cy, r * 2, pen(3.4, 1, 1.4)));
+add(rc.circle(cx, cy, r * 2 - 18, pen(1.6, 2, 1.6)));
+for (let k = 0; k < 60; k++) { if (k % 5) { const a = k * Math.PI / 30; add(rc.circle(cx + (r - 20) * Math.cos(a), cy + (r - 20) * Math.sin(a), 3, {...pen(1, 100 + k), fill: '#000', fillStyle: 'solid'})); } }
+for (let k = 1; k <= 12; k++) { const a = (k * 30 - 90) * Math.PI / 180; text(cx + (r - 46) * Math.cos(a), cy + (r - 46) * Math.sin(a) + 13, k, k % 3 ? 30 : 40); }
+const hand = (ang, len, w, s) => { const a = (ang - 90) * Math.PI / 180, x = cx + len * Math.cos(a), y = cy + len * Math.sin(a), nx = -Math.sin(a) * w, ny = Math.cos(a) * w;
+  add(rc.polygon([[cx + nx, cy + ny], [x, y], [cx - nx, cy - ny], [cx - 0.25 * len * Math.cos(a), cy - 0.25 * len * Math.sin(a)]], {...pen(2, s), fill: '#000', fillStyle: 'solid'})); };
+hand((10 + 42 / 60) * 30, 78, 9, 3); hand(42 * 6, 120, 6, 4);
+add(rc.circle(cx, cy, 16, {...pen(2, 5), fill: '#fff', fillStyle: 'solid'}));
+text(240, 432, 'tuesday, 10 november', 40);
+agenda(492);
+</script></body>

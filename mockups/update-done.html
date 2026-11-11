@@ -1,0 +1,18 @@
+<!doctype html><meta charset=utf-8><style>
+@font-face{font-family:H;src:url(assets/fonts/Caveat.ttf)}
+*{margin:0;padding:0}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:H}
+.t{position:absolute;width:480px;text-align:center}
+</style><body><svg id=s width=480 height=800 style="position:absolute;left:0;top:0"></svg>
+<div class=t style="top:478px;font-size:56px;font-weight:700">v0.2.0 installed</div>
+<div class=t style="top:560px;font-size:32px;font-weight:600">recording again</div>
+<script src="assets/js/rough.js"></script><script>
+const svg = document.getElementById('s'), rc = rough.svg(svg), add = n => svg.appendChild(n);
+const pen = (w, s) => ({roughness: 1.1, strokeWidth: w, seed: s});
+const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+g.setAttribute('transform', 'rotate(-5 240 320)');
+g.appendChild(rc.path('M160 230 L320 230 L320 370 L284 406 L160 406 Z', pen(3, 40)));
+g.appendChild(rc.path('M320 370 L284 370 L284 406', pen(2.6, 41)));
+['M196 316 L228 350 L290 270'].forEach((d, i) => g.appendChild(rc.path(d, pen(4, 80 + i))));
+add(g);
+
+</script></body>

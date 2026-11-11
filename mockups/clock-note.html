@@ -1,0 +1,54 @@
+<!doctype html><meta charset=utf-8><style>@font-face{font-family:H;src:url(assets/fonts/Caveat.ttf)}@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
+*{margin:0;padding:0;box-sizing:border-box}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:M}
+.status{position:absolute;top:0;left:0;width:480px;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
+.h{font-family:H;font-weight:700;position:absolute}</style><body><div class=status><span style="display:flex;align-items:center;gap:10px"><svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="22"
+  height="22"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.4"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M12 18l.01 0" />
+  <path d="M9.172 15.172a4 4 0 0 1 5.656 0" />
+  <path d="M6.343 12.343a8 8 0 0 1 11.314 0" />
+  <path d="M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0" />
+</svg><b style="font-size:22px">Clock</b></span><span style="display:flex;align-items:center;gap:6px">78% <svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="28"
+  height="28"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  
+>
+  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+  <path d="M6 7h11a2 2 0 0 1 2 2v.5a.5 .5 0 0 0 .5 .5a.5 .5 0 0 1 .5 .5v3a.5 .5 0 0 1 -.5 .5a.5 .5 0 0 0 -.5 .5v.5a2 2 0 0 1 -2 2h-11a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2" />
+  <path d="M7 10l0 4" />
+  <path d="M10 10l0 4" />
+  <path d="M13 10l0 4" />
+</svg></span></div><svg id=s width=480 height=800 style='position:absolute;left:0;top:0'></svg><script src='assets/js/rough.js'></script><script src='assets/js/art.js'></script><script>const EVENTS = [["11:00", "Billing review"], ["13:30", "Lunch with Jo"], ["15:00", "Product launch sync"], ["18:30", "Gym"]];
+const text = (x, y, t, size, anchor = 'middle', weight = 700) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y);
+  e.setAttribute('text-anchor', anchor); e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', weight); e.setAttribute('font-size', size); e.textContent = t; svg.appendChild(e); };
+const agenda = (top) => { text(24, top, 'today', 32, 'start');
+  EVENTS.forEach(([t, n], i) => { const y = top + 44 + i * 50; add(rc.circle(36, y - 7, 10, {...pen(2, 70 + i), fill: '#000', fillStyle: 'solid'}));
+    text(56, y, t, 28, 'start'); text(140, y, n, 28, 'start', 500); }); };
+
+const n = g('rotate(-3 240 220)');
+n.appendChild(rc.path('M70 90 L420 90 L420 330 L380 370 L70 370 Z', {roughness: 0.8, stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 6, fillWeight: 1.6, hachureAngle: 40, seed: 2}));
+n.appendChild(rc.path('M58 78 L408 78 L408 318 L368 358 L58 358 Z', {...pen(3, 1), fill: '#fff', fillStyle: 'solid'}));
+n.appendChild(rc.path('M408 318 L368 318 L368 358', pen(2.6, 3)));
+n.appendChild(rc.polygon([[182, 58], [292, 62], [290, 98], [180, 94]], {...pen(2.4, 5), fill: '#000', fillStyle: 'hachure', hachureGap: 4, fillWeight: 1.4, hachureAngle: -60}));
+const t = (x, y, s, size) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y); e.setAttribute('text-anchor', 'middle');
+  e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', 700); e.setAttribute('font-size', size); e.textContent = s; n.appendChild(e); };
+t(232, 250, '10:42', 150); t(232, 316, 'tue, 10 nov', 38);
+agenda(440);
+</script></body>

@@ -1,0 +1,36 @@
+#pragma once
+#include "lvgl.h"
+
+extern const lv_image_dsc_t art_wx_sun_s;
+extern const lv_image_dsc_t art_wx_sun_m;
+extern const lv_image_dsc_t art_wx_sun_l;
+extern const lv_image_dsc_t art_wx_sun_xl;
+extern const lv_image_dsc_t art_wx_cloud_s;
+extern const lv_image_dsc_t art_wx_cloud_m;
+extern const lv_image_dsc_t art_wx_cloud_l;
+extern const lv_image_dsc_t art_wx_cloud_xl;
+extern const lv_image_dsc_t art_wx_rain_s;
+extern const lv_image_dsc_t art_wx_rain_m;
+extern const lv_image_dsc_t art_wx_rain_l;
+extern const lv_image_dsc_t art_wx_rain_xl;
+extern const lv_image_dsc_t art_wx_storm_s;
+extern const lv_image_dsc_t art_wx_storm_m;
+extern const lv_image_dsc_t art_wx_storm_l;
+extern const lv_image_dsc_t art_wx_storm_xl;
+extern const lv_image_dsc_t art_wx_snow_s;
+extern const lv_image_dsc_t art_wx_snow_m;
+extern const lv_image_dsc_t art_wx_snow_l;
+extern const lv_image_dsc_t art_wx_snow_xl;
+extern const lv_image_dsc_t art_wx_fog_s;
+extern const lv_image_dsc_t art_wx_fog_m;
+extern const lv_image_dsc_t art_wx_fog_l;
+extern const lv_image_dsc_t art_wx_fog_xl;
+extern const lv_image_dsc_t art_dial;
+extern const lv_image_dsc_t art_note;
+extern const lv_image_dsc_t art_flip_card;
+extern const lv_image_dsc_t art_sun_small;
+extern const lv_image_dsc_t art_underline2;
+extern const lv_image_dsc_t art_underline;
+extern const lv_image_dsc_t art_ruled;
+extern const lv_image_dsc_t art_card_half;
+extern const lv_image_dsc_t art_card_full;
