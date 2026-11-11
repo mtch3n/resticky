@@ -126,7 +126,7 @@ RTC_DATA_ATTR static int history_len;
 RTC_DATA_ATTR static time_t history_at;
 
 static view_t v_launcher, v_recorder, v_todo, v_transcripts, v_clock, v_weather, v_wsettings, v_stats, v_settings, v_rec, v_wifi, v_hub,
-    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick, v_update;
+    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick, v_update, v_night, v_item;
 static view_t *current_view;
 static pager_t todo_pager, list_pager, stats_pager;
 
@@ -143,8 +143,10 @@ static lv_obj_t *stats_pages[2], *stats_big, *stats_sub, *chart_line, *device_va
 static lv_point_precise_t chart_points[HISTORY];
 static lv_obj_t *rec_value, *wifi_value, *hub_value, *buttons_value, *sd_value, *home_value;
 static seg_t quality;
-static switch_t mic_switch, flip_switch;
-static seg_t sound_seg;
+static switch_t mic_switch, flip_switch, night_switch;
+static lv_obj_t *night_value, *night_times[2];
+static seg_t sound_seg, pitch_seg;
+static lv_obj_t *pitch_title;
 static lv_obj_t *net_rows[WIFI_MAX_PROFILES], *net_names[WIFI_MAX_PROFILES], *net_states[WIFI_MAX_PROFILES], *net_empty;
 static char net_ssids[WIFI_MAX_PROFILES][WIFI_SSID_LEN];
 static lv_obj_t *hub_name, *hub_status, *update_button;
@@ -631,6 +633,84 @@ static void show_recorder(void)
 
 static void render_transcripts(void);
 
+#define ITEM_TODOS 5
+static int item_index;
+static char item_title[64], item_ids[ITEM_TODOS][NET_TODO_ID_LEN];
+static bool item_done[ITEM_TODOS];
+static lv_obj_t *item_when, *item_summary, *item_todo_hdr, *item_rows[ITEM_TODOS], *item_boxes[ITEM_TODOS], *item_checks[ITEM_TODOS], *item_texts[ITEM_TODOS];
+
+static void item_todo_clicked(lv_event_t *e)
+{
+    int r = (int)(intptr_t)lv_event_get_user_data(e);
+    actions.set_todo(item_ids[r], !item_done[r]);
+}
+
+static void render_item(void)
+{
+    const net_state_t *n = &view;
+    if (item_index >= n->count) return;
+    const net_item_t *it = &n->items[item_index];
+    strlcpy(item_title, it->ready ? it->title : "Live transcript", sizeof item_title);
+    v_item.title = item_title;
+    lv_label_set_text(item_when, it->when);
+    lv_label_set_text(item_summary, it->ready ? it->summary : it->text);
+    int k = 0;
+    size_t len = strlen(it->title);
+    for (int i = 0; i < n->todo_count && k < ITEM_TODOS && it->ready && len; i++) {
+        const net_todo_t *t = &n->todos[i];
+        if (strncmp(t->from, it->title, len)) continue;
+        strlcpy(item_ids[k], t->id, sizeof item_ids[k]);
+        item_done[k] = t->done;
+        lv_label_set_text(item_texts[k], t->text);
+        lv_obj_set_style_bg_color(item_boxes[k], t->done ? lv_color_black() : lv_color_white(), 0);
+        set_hidden(item_checks[k], !t->done);
+        k++;
+    }
+    for (int r = 0; r < ITEM_TODOS; r++) set_hidden(item_rows[r], r >= k);
+    set_hidden(item_todo_hdr, k == 0);
+}
+
+static void build_item(void)
+{
+    lv_obj_t *s = screen(&v_item, "", &v_transcripts);
+    v_item.on_show = render_item;
+    item_when = section(s, "", TOP);
+    item_summary = label(s, "", &body_20);
+    lv_obj_set_width(item_summary, UI_W - 48);
+    lv_obj_set_height(item_summary, 208);
+    lv_label_set_long_mode(item_summary, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(item_summary, 24, TOP + 30);
+    item_todo_hdr = section(s, "TO-DOS", TOP + 262);
+    for (int i = 0; i < ITEM_TODOS; i++) {
+        lv_obj_t *r = plain(s);
+        lv_obj_set_size(r, UI_W, 64);
+        lv_obj_set_pos(r, 0, TOP + 290 + i * 64);
+        lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(r, item_todo_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_t *box = plain(r);
+        lv_obj_set_size(box, 40, 40);
+        lv_obj_align(box, LV_ALIGN_LEFT_MID, 24, 0);
+        lv_obj_set_style_border_width(box, 3, 0);
+        lv_obj_set_style_radius(box, 10, 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        item_checks[i] = label(box, ICON_CHECK, &icons_34);
+        lv_obj_set_style_text_color(item_checks[i], lv_color_white(), 0);
+        lv_obj_center(item_checks[i]);
+        item_texts[i] = label(r, "", &text_20);
+        lv_obj_set_width(item_texts[i], UI_W - 108);
+        lv_label_set_long_mode(item_texts[i], LV_LABEL_LONG_DOT);
+        lv_obj_align(item_texts[i], LV_ALIGN_LEFT_MID, 84, 0);
+        item_boxes[i] = box;
+        item_rows[i] = r;
+    }
+}
+
+static void list_clicked(lv_event_t *e)
+{
+    item_index = list_pager.page * LIST_PAGE + (int)(intptr_t)lv_event_get_user_data(e);
+    show_view(&v_item);
+}
+
 static void build_transcripts(void)
 {
     lv_obj_t *s = screen(&v_transcripts, "Transcripts", &v_launcher);
@@ -650,6 +730,8 @@ static void build_transcripts(void)
             lv_obj_set_pos(l, 24, k ? 34 : 8);
         }
         set_hidden(r, true);
+        lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(r, list_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         list_rows[i] = r;
     }
     pager_init(&v_transcripts, &list_pager, render_transcripts);
@@ -1368,6 +1450,14 @@ static void show_settings(void)
         if (QUALITIES[i] == current.bitrate_kbps) seg_set(&quality, i);
     switch_set(&flip_switch, current.flip_stop);
     seg_set(&sound_seg, current.sound);
+    switch_set(&night_switch, current.night_on);
+    unsigned short ends[2] = {current.night_start, current.night_end};
+    for (int i = 0; i < 2; i++) lv_label_set_text_fmt(night_times[i], "%02d:%02d", ends[i] / 60, ends[i] % 60);
+    if (current.night_on) lv_label_set_text_fmt(night_value, "%02d:%02d\xE2\x80\x93%02d:%02d", ends[0] / 60, ends[0] % 60, ends[1] / 60, ends[1] % 60);
+    else lv_label_set_text(night_value, "Off");
+    seg_set(&pitch_seg, current.buzz_pitch);
+    set_hidden(pitch_title, current.sound != SOUND_BUZZ);
+    set_hidden(pitch_seg.box, current.sound != SOUND_BUZZ);
     switch_set(&mic_switch, recording);
     for (int i = 0; i < SLOT_COUNT; i++) lv_label_set_text(slot_values[i], ACTION_NAMES[current.buttons[i]]);
     for (int i = 0; i < ACT_COUNT; i++) set_hidden(choose_checks[i], current.buttons[choose_slot] != i);
@@ -1380,6 +1470,49 @@ static void quality_clicked(lv_event_t *e)
     current.bitrate_kbps = QUALITIES[(int)(intptr_t)lv_event_get_user_data(e)];
     show_settings();
     actions.settings_changed(&current);
+}
+
+static void night_clicked(lv_event_t *e)
+{
+    current.night_on = !current.night_on;
+    show_settings();
+    actions.settings_changed(&current);
+}
+
+static void night_step(lv_event_t *e)
+{
+    int k = (int)(intptr_t)lv_event_get_user_data(e);
+    unsigned short *t = k / 2 ? &current.night_end : &current.night_start;
+    *t = (*t + (k % 2 ? 30 : 1440 - 30)) % 1440;
+    if (current.night_start == current.night_end) *t = (*t + (k % 2 ? 30 : 1440 - 30)) % 1440;
+    show_settings();
+    actions.settings_changed(&current);
+}
+
+static void build_night(void)
+{
+    lv_obj_t *s = screen(&v_night, "Night", &v_settings);
+    lv_obj_t *r = row(s, TOP - 8, "Sleep at night");
+    lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(r, night_clicked, LV_EVENT_CLICKED, NULL);
+    switch_create(&night_switch, r);
+    static const char *const names[2] = {"Starts", "Ends"};
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *t = row(s, TOP + 72 + i * 80, names[i]);
+        lv_obj_set_height(t, 72);
+        for (int k = 0; k < 2; k++) {
+            lv_obj_t *b = plain(t);
+            lv_obj_set_size(b, 64, 64);
+            lv_obj_align(b, LV_ALIGN_RIGHT_MID, k ? -24 : -24 - 64 - 12, 0);
+            lv_obj_set_style_radius(b, 32, 0);
+            lv_obj_set_style_border_width(b, 3, 0);
+            lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(b, night_step, LV_EVENT_CLICKED, (void *)(intptr_t)(i * 2 + k));
+            lv_obj_center(label(b, k ? "+" : "\xE2\x80\x93", &title_28));
+        }
+        night_times[i] = label(t, "", &title_28);
+        lv_obj_align(night_times[i], LV_ALIGN_RIGHT_MID, -24 - 64 - 12 - 64 - 20, 0);
+    }
 }
 
 static void flip_clicked(lv_event_t *e)
@@ -1424,8 +1557,9 @@ static void build_settings(void)
     weather_value = nav_row(s, TOP - 8 + 3 * ROW_H, ICON_CLOUD, "Weather", &v_wsettings);
     buttons_value = nav_row(s, TOP - 8 + 4 * ROW_H, ICON_HAND, "Buttons", &v_buttons);
     home_value = nav_row(s, TOP - 8 + 5 * ROW_H, ICON_HOME, "Home screen", &v_homepick);
-    sd_value = nav_row(s, TOP - 8 + 6 * ROW_H, ICON_DEVICE, "SD card", &v_sd);
-    lv_label_set_text_fmt(nav_row(s, TOP - 8 + 7 * ROW_H, ICON_DEVICE, "Device", &v_device), "v%s", esp_app_get_description()->version);
+    night_value = nav_row(s, TOP - 8 + 6 * ROW_H, ICON_MOON, "Night", &v_night);
+    sd_value = nav_row(s, TOP - 8 + 7 * ROW_H, ICON_DEVICE, "SD card", &v_sd);
+    lv_label_set_text_fmt(nav_row(s, TOP - 8 + 8 * ROW_H, ICON_DEVICE, "Device", &v_device), "v%s", esp_app_get_description()->version);
 }
 
 static void build_rec_settings(void)
@@ -1673,6 +1807,13 @@ static void build_sd(void)
 static void restart_clicked(lv_event_t *e) { actions.restart(); }
 static void power_off_clicked(lv_event_t *e) { actions.power_off(); }
 
+static void pitch_clicked(lv_event_t *e)
+{
+    current.buzz_pitch = (int)(intptr_t)lv_event_get_user_data(e);
+    show_settings();
+    actions.settings_changed(&current);
+}
+
 static void sound_clicked(lv_event_t *e)
 {
     current.sound = (int)(intptr_t)lv_event_get_user_data(e);
@@ -1752,6 +1893,9 @@ static void build_device(void)
     section(s, "FEEDBACK", TOP + 68);
     static const char *const sounds[SOUND_COUNT] = {"Off", "Beep", "Buzz"};
     seg_create(&sound_seg, s, TOP + 96, sounds, SOUND_COUNT, sound_clicked);
+    pitch_title = section(s, "BUZZ PITCH", TOP + 180);
+    static const char *const pitches[BUZZ_PITCHES] = {"100 Hz", "175 Hz", "300 Hz", "500 Hz"};
+    seg_create(&pitch_seg, s, TOP + 208, pitches, BUZZ_PITCHES, pitch_clicked);
     update_button = button(v_settings.scr, "Check for updates", UI_H - 88, false, check_clicked);
     button(s, "Restart", UI_H - 168, false, restart_clicked);
     button(s, "Shut down", UI_H - 88, false, power_off_clicked);
@@ -1888,6 +2032,8 @@ void ui_init(const ui_actions_t *a)
     build_hub();
     build_buttons();
     build_device();
+    build_night();
+    build_item();
     build_update();
     build_map();
     build_sd();
@@ -1962,6 +2108,10 @@ void ui_set_net(const net_state_t *n)
     set_badge(list_badge, lv_obj_get_user_data(list_badge), n->count);
     render_todos();
     render_transcripts();
+    if (current_view == &v_item) {
+        render_item();
+        lv_label_set_text(status_title, item_title);
+    }
     show_weather();
     show_weather_settings();
     if (current_view == &v_clock || current_view == &v_launcher) show_clock();

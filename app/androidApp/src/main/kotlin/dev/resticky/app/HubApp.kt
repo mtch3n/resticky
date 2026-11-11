@@ -6,6 +6,8 @@ import android.util.Log
 import dev.resticky.CLOCK_DIAL
 import dev.resticky.CLOCK_FACES
 import dev.resticky.HOME_APPS
+import dev.resticky.NIGHT_OFF
+import dev.resticky.validNight
 import dev.resticky.HOME_SCREENS
 import dev.resticky.SOUNDS
 import dev.resticky.SOUND_BEEP
@@ -75,6 +77,11 @@ class HubApp : Application() {
         log("INFO hour format set format=$format")
     }
 
+    fun setNight(value: String) {
+        hub.setNight(value)
+        log("INFO night set night=$value")
+    }
+
     fun setSound(sound: String) {
         hub.setSound(sound)
         log("INFO sound set sound=$sound")
@@ -134,6 +141,8 @@ class HubApp : Application() {
         hub.soundSetting.load(prefs.getString("sound", null)?.takeIf { it in SOUNDS } ?: SOUND_BEEP)
         hub.homeSetting.load(prefs.getString("home", null)?.takeIf { it in HOME_SCREENS } ?: HOME_APPS)
         scope.launch { hub.sound.collect { prefs.edit().putString("sound", it).apply() } }
+        hub.nightSetting.load(prefs.getString("night", null)?.takeIf(::validNight) ?: NIGHT_OFF)
+        scope.launch { hub.night.collect { prefs.edit().putString("night", it).apply() } }
         scope.launch { hub.home.collect { prefs.edit().putString("home", it).apply() } }
         companion = Companion(this)
         ble = BleHub(this, hub, scope) { companion.address }

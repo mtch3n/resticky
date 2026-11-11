@@ -84,6 +84,7 @@ sealed interface Detail {
     data class PlaceEdit(val place: dev.resticky.NamedPlace?) : Detail
     data object Clock : Detail
     data object HomeScreen : Detail
+    data object Night : Detail
     data object Settings : Detail
     data object Updates : Detail
     data object Pipeline : Detail
@@ -134,6 +135,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val weatherStyle by model.weatherStyle.collectAsState()
     val sound by model.sound.collectAsState()
     val home by model.home.collectAsState()
+    val night by model.night.collectAsState()
     val chosen = calendarList.count { it.id in calendarChoice.selected }
     val calendarsLabel = if (calendarsAllowed && calendarChoice.show) "$chosen calendar${if (chosen == 1) "" else "s"}" else "Off"
     val placesLabel = placeList.joinToString(", ") { it.name }.ifEmpty { "None yet" }
@@ -159,7 +161,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                         HOME_SCREEN.firstOrNull { it.first == home }?.second ?: home,
                         "${optionName(CLOCK_FACE, face)} · $hourFormat h",
                         "${optionName(WEATHER_STYLE, weatherStyle)} · ${weatherReport.place.ifEmpty { if (weatherSettings.mode == MODE_PHONE) "From phone" else "Fixed city" }}",
-                        sound, wifiSummary(hub.sticky), healthStatus(hub.sticky), offer,
+                        sound, nightLabel(night), wifiSummary(hub.sticky), healthStatus(hub.sticky), offer,
                     ),
                     back, model::enterPasskey, pair, model::forget, model::setSound, { model.checkUpdates() }, { model.updateSticky() }, { model.cancelSticky() },
                 ) { stack.add(it) }
@@ -174,6 +176,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                     SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
                 }
                 Detail.HomeScreen -> HomeScreenPicker(home, back, model::setHome)
+                Detail.Night -> NightScreen(night, back, model::setNight)
                 Detail.Clock -> {
                     ClockScreen(face, hourFormat, back, model::setClockFace, model::setHourFormat)
                 }

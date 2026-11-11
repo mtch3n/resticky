@@ -22,6 +22,7 @@ body{width:412px;height:915px;overflow:hidden;background:#fff;color:#111;font-fa
 .bar{height:64px;display:flex;align-items:center;gap:12px;padding:0 20px;font-size:26px;font-weight:700}
 .bar .act{margin-left:auto;display:flex;gap:16px}
 .main{flex:1;overflow:hidden;padding:4px 16px 0;display:flex;flex-direction:column;gap:14px}
+.main>*{flex:none}
 .card{border-radius:24px;background:#f3f3f3;padding:18px 18px}
 .card.dark{background:#111;color:#fff}
 .row{display:flex;align-items:center;gap:12px}
@@ -170,8 +171,10 @@ page("device-picker", "Hub", sticky_card() + tiles(TILES), "Hub", foot=SHEET + f
 
 STICKY_ROWS = f"""{sec("Display")}
 {lst(li("Home screen", "Apps", icon("home", 22), CHEV), li("Clock", "Dial · 24 h", icon("clock", 22), CHEV), li("Weather", "Sketch · Lisbon", icon("cloud", 22), CHEV))}
+{sec("Feedback")}
+<div>{seg(["Off", "Beep", "Buzz"], 1)}</div>
 {sec("Sticky")}
-{lst(li("Sounds on the Sticky", "Button and alert sounds", icon("bell", 22), '<span class="sw sp"></span>'),
+{lst(li("Night", "22:00 – 07:00", icon("moon", 22), CHEV),
      li("Wi-Fi networks", "HomeWiFi and 1 more", icon("wifi", 22), CHEV), li("Health", "OK · 34 °C", icon("heart-rate-monitor", 22), CHEV))}"""
 
 page("sticky", "Sticky settings", f"""
@@ -432,3 +435,9 @@ page("photos", "Photos", sec("Product launch · today 13:12") + GRID(3) + sec("W
 page("home-screen", "Home screen", lst(*[li(n, d, radio(i == 0)) for i, (n, d) in enumerate([
     ("Apps", "All apps as tiles"), ("Clock", "The clock face"), ("Weather", "The weather style"), ("Recorder", "Recording state and level"), ("To-do", "Open to-dos")])])
     + '<div class=s style="padding:0 4px">The Sticky shows this after start and on Home; tap the app name to open all apps.</div>', back=True)
+
+NIGHT = f"""<div class=card><div class=row><div class=h>Night</div><span class="sw sp"></span></div></div>
+{lst(li("Start", "22:00", icon("moon", 22), CHEV), li("End", "07:00", icon("sun", 22), CHEV))}"""
+page("night", "Night", NIGHT, back=True)
+page("night-time", "Night", NIGHT, back=True, foot=SHEET + '<div class=h style="font-size:20px;padding:0 4px">Start</div><div class=list style="max-height:420px;overflow:hidden">' + "".join(
+    f'<div class=li>{radio(t == "22:00")}<span class=t><b>{t}</b></span></div>' for t in ["20:30", "21:00", "21:30", "22:00", "22:30", "23:00", "23:30"]) + "</div></div>")

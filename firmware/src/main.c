@@ -12,6 +12,10 @@
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_pm.h"
+#include "esp_core_dump.h"
+#include "esp_sleep.h"
+#include <stdlib.h>
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -20,7 +24,9 @@
 #include "settings.h"
 #include "touch.h"
 #include "ui.h"
+#include "lvgl.h"
 #include <string.h>
+#include <time.h>
 
 static const char *TAG = "main";
 static bool recording = true;
@@ -41,12 +47,15 @@ static void toggle_recording(void) { set_recording(!recording); }
 
 static void apply_settings(const settings_t *s)
 {
+    bool sample = s->sound != settings.sound || s->buzz_pitch != settings.buzz_pitch;
     settings = *s;
     settings_save(&settings);
     audio_set_bitrate(settings.bitrate_kbps * 1000);
-    buzzer_set_sound(settings.sound);
+    buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
     net_set_sound(settings.sound);
     net_set_home(settings.home);
+    net_set_night(settings.night_on, settings.night_start, settings.night_end);
+    if (sample) buzzer_mark();
     ESP_LOGI(TAG, "settings: %d kbps, flip stop %d", settings.bitrate_kbps, settings.flip_stop);
 }
 
@@ -57,14 +66,46 @@ static void restart(void)
     esp_restart();
 }
 
-static void go_sleep(void)
+static void sleep_for(uint32_t seconds)
 {
-    ESP_LOGI(TAG, "manual sleep");
     set_recording(false);
     ui_show_sleep();
     vTaskDelay(pdMS_TO_TICKS(FINAL_UPLOAD_MS));
     sensors_double_tap();
-    board_sleep();
+    board_sleep(seconds);
+}
+
+static void go_sleep(void)
+{
+    ESP_LOGI(TAG, "manual sleep");
+    sleep_for(0);
+}
+
+#define NIGHT_AWAKE_MS (5 * 60 * 1000)
+
+static uint32_t last_button_ms;
+
+static int night_left_s(const settings_t *s)
+{
+    time_t now = time(NULL);
+    if (!s->night_on || now < 1700000000) return 0;
+    struct tm t;
+    localtime_r(&now, &t);
+    int m = t.tm_hour * 60 + t.tm_min, start = s->night_start, end = s->night_end;
+    bool in = start < end ? m >= start && m < end : m >= start || m < end;
+    if (!in) return 0;
+    int left = (end - m + 1440) % 1440;
+    return left * 60 - t.tm_sec + 30;
+}
+
+static void night_check(void)
+{
+    int left = night_left_s(&settings);
+    uint32_t idle = lv_display_get_inactive_time(NULL);
+    uint32_t since_button = esp_log_timestamp() - last_button_ms;
+    if (!left || update_pause || idle < NIGHT_AWAKE_MS || since_button < NIGHT_AWAKE_MS || esp_log_timestamp() < NIGHT_AWAKE_MS) return;
+    ESP_LOGI(TAG, "night: sleep for %d s", left);
+    sleep_for(left);
 }
 
 static void power_off(void)
@@ -80,6 +121,7 @@ static void do_action(action_t action);
 static void on_button(button_t button, button_event_t event)
 {
     if (event == BTN_POWER_OFF) return power_off();
+    last_button_ms = esp_log_timestamp();
     buzzer_click();
     static const int SLOTS[BTN_COUNT][2] = {
         [BTN_POWER] = {SLOT_POWER_PRESS, -1},
@@ -104,6 +146,29 @@ static void do_action(action_t action)
     else ui_key(action);
 }
 
+static void report_boot(void)
+{
+    static const char *const RESETS[] = {"unknown", "power-on", "ext", "software", "panic", "int-wdt", "task-wdt", "wdt", "deep-sleep", "brownout", "sdio", "usb", "jtag", "efuse", "pwr-glitch", "cpu-lockup"};
+    static const char *const WAKES[] = {"none", "all", "ext0", "ext1", "timer", "touch", "ulp", "gpio", "uart", "wifi", "cocpu", "cocpu-trap", "bt"};
+    esp_reset_reason_t r = esp_reset_reason();
+    esp_sleep_wakeup_cause_t w = esp_sleep_get_wakeup_cause();
+    char text[160];
+    int o = snprintf(text, sizeof text, "reset=%s wake=%s", r < sizeof RESETS / sizeof RESETS[0] ? RESETS[r] : "?",
+                     (unsigned)w < sizeof WAKES / sizeof WAKES[0] ? WAKES[w] : "?");
+    if (w == ESP_SLEEP_WAKEUP_EXT1) o += snprintf(text + o, sizeof text - o, " pins=0x%llx", (unsigned long long)esp_sleep_get_ext1_wakeup_status());
+    esp_core_dump_summary_t *sum = malloc(sizeof *sum);
+    if (sum && esp_core_dump_image_check() == ESP_OK && esp_core_dump_get_summary(sum) == ESP_OK) {
+        o += snprintf(text + o, sizeof text - o, " dump=%s pc=0x%lx cause=%lu bt", sum->exc_task, (unsigned long)sum->exc_pc,
+                      (unsigned long)sum->ex_info.exc_cause);
+        for (int i = 0; i < 4 && i < (int)sum->exc_bt_info.depth && o < (int)sizeof text - 12; i++)
+            o += snprintf(text + o, sizeof text - o, ",0x%lx", (unsigned long)sum->exc_bt_info.bt[i]);
+        if (r != ESP_RST_PANIC) esp_core_dump_image_erase();
+    }
+    free(sum);
+    ESP_LOGI(TAG, "boot: %s", text);
+    net_set_boot(text);
+}
+
 static void log_memory(void)
 {
     static const char *const TASKS[] = {"main", "net", "audio", "wifi", "console", "nimble_host", "tiT", "esp_timer"};
@@ -125,6 +190,7 @@ static void log_memory(void)
 void app_main(void)
 {
     board_power_latch();
+    esp_pm_configure(&(esp_pm_config_t){.max_freq_mhz = 240, .min_freq_mhz = 80, .light_sleep_enable = false});
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase();
@@ -140,9 +206,11 @@ void app_main(void)
     buzzer_init(PIN_BUZZER);
     ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates, net_cancel_update});
     settings_load(&settings);
-    buzzer_set_sound(settings.sound);
+    buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
     net_set_home(settings.home);
     net_set_sound(settings.sound);
+    report_boot();
+    net_set_night(settings.night_on, settings.night_start, settings.night_end);
     ui_boot_step(2);
     net_init();
     audio_init(net_enqueue);
@@ -157,7 +225,16 @@ void app_main(void)
     bool net_hub = false;
 
     int down_s = 0, up_s = 0, shown_passkey = -1;
+    esp_pm_lock_handle_t ui_fast;
+    ESP_ERROR_CHECK(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "ui", &ui_fast));
+    bool ui_held = false;
     for (int n = 0;; n++) {
+        bool busy = lv_display_get_inactive_time(NULL) < 10000 || esp_log_timestamp() - last_button_ms < 10000;
+        if (busy != ui_held) {
+            ui_held = busy;
+            if (busy) esp_pm_lock_acquire(ui_fast);
+            else esp_pm_lock_release(ui_fast);
+        }
         ui_tick();
         buttons_poll(on_button);
         if (gpio_get_level(PIN_MOTION_INT) == 0 && sensors_double_tap()) {
@@ -194,6 +271,16 @@ void app_main(void)
             }
             else if (resume_after_update) set_recording(true);
         }
+        if (ns.night_from_hub && (ns.night_on != settings.night_on || ns.night_start != settings.night_start || ns.night_end != settings.night_end)) {
+            settings.night_on = ns.night_on;
+            if (ns.night_on) {
+                settings.night_start = ns.night_start;
+                settings.night_end = ns.night_end;
+            }
+            settings_save(&settings);
+            ui_set_settings(&settings);
+        }
+        if (n % 1200 == 0) night_check();
         if (ns.home_from_hub && ns.home != settings.home) {
             settings.home = ns.home;
             settings_save(&settings);
@@ -202,7 +289,7 @@ void app_main(void)
         if (ns.sound_from_hub && ns.sound != settings.sound) {
             settings.sound = ns.sound;
             settings_save(&settings);
-            buzzer_set_sound(settings.sound);
+            buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
             ui_set_settings(&settings);
         }
         if (ns.version != net_version || memcmp(&ns.wifi, &net_wifi, sizeof net_wifi) || ns.hub != net_hub) {

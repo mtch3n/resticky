@@ -774,7 +774,7 @@ fun ModelsScreen(
         CardList {
             SPEECH_MODELS.forEachIndexed { i, m ->
                 val s = state.models[m]
-                ChoiceRow(m.label, modelSubtitle(m, s, state.speeds[m.label], " per 30 s"), speech == m, i == 0, m == Model.WhisperBaseQ8, { selectSpeech(m) },
+                ChoiceRow(m.label, modelSubtitle(m, s, state.speeds[m.label], " per 30 s"), speech == m, i == 0, m == DEFAULT_SPEECH, { selectSpeech(m) },
                     if (s == ModelState.Missing || s is ModelState.Failed) ({ Box(Modifier.clickable { download(m) }) { Glyph(R.drawable.ic_download, 20.dp) } }) else null)
             }
         }
@@ -864,7 +864,7 @@ private fun CodeEntry(enabled: Boolean, onCode: (String) -> Unit) {
     }
 }
 
-class StickyDisplay(val home: String, val clock: String, val weather: String, val sound: String, val wifi: String, val health: String, val firmware: FirmwareView)
+class StickyDisplay(val home: String, val clock: String, val weather: String, val sound: String, val night: String, val wifi: String, val health: String, val firmware: FirmwareView)
 
 class FirmwareView(val current: String?, val latest: String?, val checkedMs: Long, val state: FwState, val connected: Boolean) {
     val newer: Boolean get() = latest != null && current != null && isNewer(latest, current)
@@ -1053,7 +1053,8 @@ fun StickyScreen(
     gap()
     item {
         CardList {
-            ListRow("Wi-Fi networks", display.wifi, first = true, lead = { Glyph(R.drawable.ic_wifi) }, onClick = { open(Detail.Wifi) }) { Chevron() }
+            ListRow("Night", display.night, first = true, lead = { Glyph(R.drawable.ic_moon) }, onClick = { open(Detail.Night) }) { Chevron() }
+            ListRow("Wi-Fi networks", display.wifi, lead = { Glyph(R.drawable.ic_wifi) }, onClick = { open(Detail.Wifi) }) { Chevron() }
             ListRow("Health", display.health, lead = { Glyph(R.drawable.ic_heart_rate_monitor) }, onClick = { open(Detail.Health) }) { Chevron() }
         }
     }

@@ -58,6 +58,8 @@ Java_dev_resticky_app_Whisper_transcribe(JNIEnv *env, jclass, jlong handle, jflo
     params.beam_search.beam_size = 5;
     params.greedy.best_of = 5;
     params.token_timestamps = true;
+    params.suppress_nst = true;
+    params.no_context = true;
     jsize n = env->GetArrayLength(pcm);
     jfloat *data = env->GetFloatArrayElements(pcm, nullptr);
     int rc = whisper_full(ctx, params, data, n);

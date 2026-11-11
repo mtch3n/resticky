@@ -5,6 +5,7 @@
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
@@ -145,6 +146,9 @@ static void log_vad(const audio_chunk_t *c)
 
 static void audio_task(void *arg)
 {
+    esp_pm_lock_handle_t fast;
+    ESP_ERROR_CHECK(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "audio", &fast));
+    bool held = false;
     int16_t pcm[FRAME_SAMPLES];
     uint8_t packet[400];
     audio_chunk_t *chunk = NULL;
@@ -180,6 +184,10 @@ static void audio_task(void *arg)
             esp_opus_enc_set_bitrate(enc, bitrate);
             ESP_LOGI(TAG, "opus bitrate %d", bitrate);
         }
+        if (held) {
+            esp_pm_lock_release(fast);
+            held = false;
+        }
         if (!mic_on && !want_recording) {
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
@@ -197,6 +205,8 @@ static void audio_task(void *arg)
             ESP_LOGW(TAG, "i2s read: %s (got %u)", esp_err_to_name(rd), (unsigned)got);
             continue;
         }
+        esp_pm_lock_acquire(fast);
+        held = true;
         frames++;
         if (!want_recording) {
             if (session) {

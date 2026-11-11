@@ -13,6 +13,8 @@ import kotlin.time.Instant
 
 val NO_SPEAKERS = Diarizer { Diarization(emptyList(), emptyList()) }
 
+const val SPOKEN = "we agreed to ship the billing report on Friday and Sam checks the third quarter numbers before the review meeting with the team next week"
+
 class SpeakersTest {
     private val root = Path(SystemTemporaryDirectory, "resticky-speakers-${Random.nextLong().toULong()}")
 
@@ -40,8 +42,17 @@ class SpeakersTest {
 
     @Test
     fun voicesBelowTheThresholdStaySeparate() {
-        val d = Diarization(listOf(Turn(0, 1000, 0), Turn(1000, 2000, 1)), listOf(v(0, 1f, 0f), v(1, 0.9f, 0.43f)))
+        val d = Diarization(listOf(Turn(0, 1000, 0), Turn(1000, 2000, 1)), listOf(v(0, 1f, 0f), v(1, 0.5f, 0.87f)))
         assertEquals(listOf(0, 1), mergeSpeakers(d).map { it.speaker })
+    }
+
+    @Test
+    fun speakersWhoBarelyTalkJoinTheClosestMainVoice() {
+        val d = Diarization(
+            listOf(Turn(0, 60_000, 0), Turn(60_000, 120_000, 1), Turn(120_000, 125_000, 2), Turn(125_000, 126_000, 3)),
+            listOf(v(0, 1f, 0f), v(1, 0f, 1f), v(2, 0.3f, 0.95f)),
+        )
+        assertEquals(listOf(0, 1, 1, 1), mergeSpeakers(d).map { it.speaker })
     }
 
     @Test
@@ -98,11 +109,11 @@ class SpeakersTest {
         store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
         var input = ""
         val diarizer = Diarizer { Diarization(listOf(Turn(0, 600, 0), Turn(600, 1000, 1)), emptyList()) }
-        Pipeline(store, { listOf(Segment(0, 500, "hello"), Segment(500, 1000, "world")) }, { t, _ -> input = t; Summary("T", "S") }, diarizer) {}.drain()
+        Pipeline(store, { listOf(Segment(0, 500, "hello $SPOKEN"), Segment(500, 1000, "world $SPOKEN")) }, { t, _ -> input = t; Summary("T", "S") }, diarizer) {}.drain()
         val m = store.list("ab").single()
         assertTrue(m.diarized && m.ready)
         assertEquals(listOf(0, 1), m.segments.getValue("0").map { it.speaker })
-        assertEquals("Speaker A: hello\nSpeaker B: world", input)
+        assertEquals("Speaker A: hello $SPOKEN\nSpeaker B: world $SPOKEN", input)
     }
 }
 

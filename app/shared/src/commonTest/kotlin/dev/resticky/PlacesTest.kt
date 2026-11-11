@@ -68,7 +68,7 @@ class PlacesTest {
         assertFalse(store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4)))
         store.update("ab", "01") { it.place = PENDING }
         val seen = mutableListOf<String>()
-        val pipeline = Pipeline(store, { listOf(Segment(0, 1000, "hello world")) }, { _, c -> seen += c.place; Summary("T", "S") }, NO_SPEAKERS) {}
+        val pipeline = Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, c -> seen += c.place; Summary("T", "S") }, NO_SPEAKERS) {}
         assertEquals("", transcriptItems(store.list("ab")).single().place)
         pipeline.drain()
         assertFalse(store.list("ab").single().ready)

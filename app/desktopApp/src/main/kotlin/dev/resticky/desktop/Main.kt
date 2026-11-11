@@ -19,6 +19,8 @@ import java.nio.ByteOrder
 import dev.resticky.CLOCK_DIAL
 import dev.resticky.CLOCK_FACES
 import dev.resticky.HOME_APPS
+import dev.resticky.NIGHT_OFF
+import dev.resticky.validNight
 import dev.resticky.HOME_SCREENS
 import dev.resticky.SOUNDS
 import dev.resticky.SOUND_BEEP
@@ -42,6 +44,7 @@ import dev.resticky.hubJson
 import dev.resticky.opusFramesToOgg
 import dev.resticky.parseWhisperJson
 import dev.resticky.summaryPrompt
+import dev.resticky.parseSummary
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import kotlinx.coroutines.CoroutineScope
@@ -182,7 +185,7 @@ private val codex = Summarizer { transcript, context ->
                 "--skip-git-repo-check", "--ephemeral", "--output-schema", schema.path, "-o", out.path, "-",
                 input = summaryPrompt(context) + transcript,
             )
-            hubJson.decodeFromString<Summary>(out.readText().trim())
+            parseSummary(out.readText(), transcript)
         } finally {
             dir.deleteRecursively()
         }
@@ -247,6 +250,8 @@ fun main(args: Array<String>) {
     require(hourFormat in HOUR_FORMATS) { "-hour-format must be one of ${HOUR_FORMATS.joinToString("|")}" }
     val sound = flags.string("sound", SOUND_BEEP)
     require(sound in SOUNDS) { "-sound must be one of ${SOUNDS.joinToString("|")}" }
+    val night = flags.string("night", NIGHT_OFF)
+    require(validNight(night)) { "-night must be off or HH:MM-HH:MM (minutes 00 or 30)" }
     val homeScreen = flags.string("home", HOME_APPS)
     require(homeScreen in HOME_SCREENS) { "-home must be one of ${HOME_SCREENS.joinToString("|")}" }
     val firmware = FirmwareShelf(IoPath(flags.string("firmware", "$home/.local/share/resticky/firmware")))
@@ -255,6 +260,7 @@ fun main(args: Array<String>) {
     hub.weatherStyle.value = weatherStyle
     hub.hourFormat.value = hourFormat
     hub.soundSetting.load(sound)
+    hub.nightSetting.load(night)
     hub.homeSetting.load(homeScreen)
     val announcer = if (flags.string("mdns", "true") == "true") Announcer(port) else null
     Runtime.getRuntime().addShutdownHook(Thread { announcer?.close() })
@@ -274,7 +280,7 @@ fun main(args: Array<String>) {
             store.deleteOldAudio(Clock.System.now() - AUDIO_KEEP)
         }
     }
-    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen weather_interval=$weatherInterval")
+    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen night=$night weather_interval=$weatherInterval")
     embeddedServer(CIO, port = port) {
         hub.module(this)
     }.start(wait = true)

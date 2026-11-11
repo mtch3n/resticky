@@ -83,7 +83,8 @@ typedef struct {
     net_weather_t weather;
     net_agenda_t agenda;
     uint8_t clock_face, weather_style;
-    bool hour12, sound_from_hub, home_from_hub;
+    bool hour12, sound_from_hub, home_from_hub, night_from_hub, night_on;
+    unsigned short night_start, night_end;
     uint8_t home, sound;
     unsigned version;
 } net_state_t;
@@ -103,6 +104,8 @@ void net_checkin_soon(void);
 bool net_mark(void);
 void net_set_sound(int sound);
 void net_set_home(int home);
+void net_set_boot(const char *text);
+void net_set_night(bool on, int start, int end);
 void net_ota_frame(uint8_t type, const uint8_t *p, size_t n);
 void net_check_updates(void);
 void net_cancel_update(void);

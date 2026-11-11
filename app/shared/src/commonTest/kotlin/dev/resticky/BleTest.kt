@@ -67,16 +67,16 @@ class BleTest {
 
     @Test
     fun displayFrameCarriesTheDisplaySettings() {
-        val frames = FrameReader().feed(frame(FRAME_DISPLAY, hubJson.encodeToString(DisplayInfo("words", "week", "12", "off", "clock")).encodeToByteArray()))
+        val frames = FrameReader().feed(frame(FRAME_DISPLAY, hubJson.encodeToString(DisplayInfo("words", "week", "12", "off", "clock", "22:00-07:00")).encodeToByteArray()))
         assertEquals(14, frames.single().type)
-        assertEquals("{\"clock_face\":\"words\",\"weather_style\":\"week\",\"hour_format\":\"12\",\"sound\":\"off\",\"home\":\"clock\"}", frames.single().payload.decodeToString())
+        assertEquals("{\"clock_face\":\"words\",\"weather_style\":\"week\",\"hour_format\":\"12\",\"sound\":\"off\",\"home\":\"clock\",\"night\":\"22:00-07:00\"}", frames.single().payload.decodeToString())
     }
 
     @Test
     fun checkinReplyHasDisplaySettings() {
         assertEquals(
-            "{\"hub_version\":\"1\",\"utc_offset_min\":-300,\"clock_face\":\"dial\",\"weather_style\":\"sketch\",\"hour_format\":\"24\",\"sound\":\"beep\",\"home\":\"apps\"}",
-            hubJson.encodeToString(CheckinReply("1", -300, CLOCK_DIAL, WEATHER_SKETCH, HOUR_24, SOUND_BEEP, HOME_APPS)),
+            "{\"hub_version\":\"1\",\"utc_offset_min\":-300,\"clock_face\":\"dial\",\"weather_style\":\"sketch\",\"hour_format\":\"24\",\"sound\":\"beep\",\"home\":\"apps\",\"night\":\"off\"}",
+            hubJson.encodeToString(CheckinReply("1", -300, CLOCK_DIAL, WEATHER_SKETCH, HOUR_24, SOUND_BEEP, HOME_APPS, NIGHT_OFF)),
         )
         assertEquals(listOf("dial", "digits", "words", "note", "flip"), CLOCK_FACES)
         assertEquals(listOf("sketch", "big", "journal", "week"), WEATHER_STYLES)

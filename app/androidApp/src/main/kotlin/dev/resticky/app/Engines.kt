@@ -16,6 +16,14 @@ import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
 import com.k2fsa.sherpa.onnx.FastClusteringConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.SpeechSegment
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
@@ -39,6 +47,7 @@ import dev.resticky.Token
 import dev.resticky.wordsFromTokens
 import dev.resticky.Transcriber
 import dev.resticky.parseSummary
+import dev.resticky.NO_SPEECH
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,6 +72,14 @@ enum class Model(val label: String, val url: String, val file: String, val megab
     WhisperBase("whisper base.en", whisper("ggml-base.en.bin"), "ggml-base.en.bin", 148),
     WhisperSmallQ8("whisper small.en q8_0", whisper("ggml-small.en-q8_0.bin"), "ggml-small.en-q8_0.bin", 264),
     WhisperMediumQ5("whisper medium.en q5_0", whisper("ggml-medium.en-q5_0.bin"), "ggml-medium.en-q5_0.bin", 539),
+    SenseVoice(
+        "SenseVoice (English, Mandarin, Cantonese)",
+        "$SENSE_VOICE/model.int8.onnx",
+        "sense-voice-2025-09-09.int8.onnx",
+        237,
+    ),
+    SenseVoiceTokens("SenseVoice tokens", "$SENSE_VOICE/tokens.txt", "sense-voice-2025-09-09-tokens.txt", 1),
+    SpeechDetector("Silero speech detector", "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx", "silero_vad.onnx", 1),
     SpeakerSegmentation(
         "pyannote segmentation 3.0",
         "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx",
@@ -89,9 +106,14 @@ enum class Model(val label: String, val url: String, val file: String, val megab
     ),
 }
 
+private const val SENSE_VOICE = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main"
+private const val SAMPLE_RATE = 16_000
+
 private fun whisper(file: String) = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$file"
 
-val SPEECH_MODELS get() = Model.entries.filter { it.name.startsWith("Whisper") }
+val SPEECH_MODELS get() = Model.entries.filter { it.name.startsWith("Whisper") } + Model.SenseVoice
+val DEFAULT_SPEECH = Model.WhisperSmallQ8
+private const val MIN_SPEECH_MS = 1000L
 val SPEAKER_MODELS = listOf(Model.SpeakerSegmentation, Model.SpeakerEmbedding)
 val DIARIZE_WINDOW_MS = 20 * 60 * 1000L
 const val LISTEN_FILE = "listen.opus"
@@ -138,7 +160,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
     private val jobLock = context.getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "resticky:job")
 
     val runs = MutableStateFlow<List<Run>>(emptyList())
-    val speech = MutableStateFlow(Model.valueOf(prefs.getString("speech", Model.WhisperBaseQ8.name)!!))
+    val speech = MutableStateFlow(Model.valueOf(prefs.getString("speech", DEFAULT_SPEECH.name)!!))
     val summaryOpen = MutableStateFlow(SummaryEngine.valueOf(prefs.getString("summaryOpen", SummaryEngine.Nano.name)!!))
     val summaryClosed = MutableStateFlow(SummaryEngine.valueOf(prefs.getString("summaryClosed", SummaryEngine.Gemma.name)!!))
 
@@ -237,6 +259,9 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         track("${opusFile.parentFile!!.name}/${opusFile.nameWithoutExtension}", "speech", m.label) {
             withContext(Dispatchers.Default) {
                 val pcm = Whisper.decodeOpus(opusFile.readBytes()) ?: error("opus decoder failed")
+                val parts = speechParts(pcm)
+                if (parts.sumOf { it.samples.size } * 1000L / SAMPLE_RATE < MIN_SPEECH_MS) return@withContext emptyList()
+                if (m == Model.SenseVoice) return@withContext senseVoice(parts)
                 val ctx = whisperContext(m)
                 check(Whisper.transcribe(ctx, pcm, WHISPER_THREADS)) { "whisper failed" }
                 List(Whisper.segments(ctx)) { i ->
@@ -246,6 +271,72 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                     }
                     Segment(Whisper.segmentStartMs(ctx, i), Whisper.segmentEndMs(ctx, i), Whisper.segmentText(ctx, i).decodeToString(), words = wordsFromTokens(tokens))
                 }
+            }
+        }
+    }
+
+    private var recognizer: OfflineRecognizer? = null
+
+    private fun speechParts(pcm: FloatArray): List<SpeechSegment> {
+        val vad = Vad(
+            null,
+            VadModelConfig(
+                sileroVadModelConfig = SileroVadModelConfig(
+                    model = requireReady(Model.SpeechDetector).path,
+                    threshold = 0.5f,
+                    minSilenceDuration = 0.4f,
+                    minSpeechDuration = 0.25f,
+                    windowSize = 512,
+                    maxSpeechDuration = 20f,
+                ),
+                sampleRate = SAMPLE_RATE,
+                numThreads = 1,
+            ),
+        )
+        try {
+            val parts = mutableListOf<SpeechSegment>()
+            var i = 0
+            while (i < pcm.size) {
+                vad.acceptWaveform(pcm.copyOfRange(i, minOf(i + 512, pcm.size)))
+                i += 512
+                while (!vad.empty()) parts += vad.front().also { vad.pop() }
+            }
+            vad.flush()
+            while (!vad.empty()) parts += vad.front().also { vad.pop() }
+            return parts
+        } finally {
+            vad.release()
+        }
+    }
+
+    private fun senseVoice(parts: List<SpeechSegment>): List<Segment> {
+        val rec = recognizer ?: OfflineRecognizer(
+            null,
+            OfflineRecognizerConfig(
+                modelConfig = OfflineModelConfig(
+                    senseVoice = OfflineSenseVoiceModelConfig(model = requireReady(Model.SenseVoice).path, language = "auto", useInverseTextNormalization = true),
+                    tokens = requireReady(Model.SenseVoiceTokens).path,
+                    numThreads = WHISPER_THREADS,
+                ),
+            ),
+        ).also { recognizer = it }
+        return parts.mapNotNull { part ->
+            val stream = rec.createStream()
+            try {
+                stream.acceptWaveform(part.samples, SAMPLE_RATE)
+                rec.decode(stream)
+                val r = rec.getResult(stream)
+                val startMs = part.start * 1000 / SAMPLE_RATE
+                val endMs = startMs + part.samples.size * 1000L / SAMPLE_RATE
+                val tokens = r.tokens.mapIndexed { k, t ->
+                    val from = startMs + (r.timestamps.getOrElse(k) { 0f } * 1000).toLong()
+                    val to = if (k + 1 < r.tokens.size) startMs + (r.timestamps.getOrElse(k + 1) { 0f } * 1000).toLong() else endMs
+                    val cjk = t.firstOrNull()?.let { it in '\u3400'..'\u9fff' } == true
+                    Token(if (t.startsWith("\u2581")) " " + t.drop(1) else if (cjk) " $t" else t, from, to)
+                }
+                r.text.trim().takeIf { it.isNotEmpty() }?.let { Segment(startMs, endMs, it, words = wordsFromTokens(tokens)) }
+            } finally {
+                stream.release()
             }
         }
     }
@@ -309,7 +400,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 topK = 10
                 maxOutputTokens = MAX_OUTPUT_TOKENS
             }
-            parseSummary(model.generateContent(request).candidates.first().text)
+            parseSummary(model.generateContent(request).candidates.first().text, text)
         } finally {
             model.close()
         }
@@ -327,7 +418,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 )
                 engine.createConversation(config).use { c ->
                     val reply = c.sendMessage(summaryPrompt(sc) + text, responseFormat = ResponseFormat.json(SUMMARY_SCHEMA))
-                    parseSummary(reply.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text })
+                    parseSummary(reply.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }, text)
                 }
             }
         }
@@ -354,7 +445,8 @@ private fun Summarizer.inParts(maxChars: Int) = Summarizer { text, sc ->
         if (parts.last().length + word.length + 1 > maxChars) parts += StringBuilder()
         parts.last().append(word).append(' ')
     }
-    val sums = parts.map { summarize(it.toString(), sc) }
+    val sums = parts.map { summarize(it.toString(), sc) }.filter { it.title != NO_SPEECH }
+    if (sums.isEmpty()) return@Summarizer Summary(NO_SPEECH, "")
     val merged = summarize(sums.joinToString("\n") { it.summary }, sc)
-    Summary(merged.title, merged.summary, sums.flatMap { it.todos }.distinct())
+    Summary(merged.title.takeIf { it != NO_SPEECH } ?: sums.first().title, merged.summary, sums.flatMap { it.todos }.distinct())
 }

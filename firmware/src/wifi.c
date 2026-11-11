@@ -108,6 +108,7 @@ static bool connect_best(void)
     xSemaphoreGive(lock);
     if (best < 0) return false;
     ESP_LOGI(TAG, "joining %s (rssi %d)", wc.sta.ssid, best_rssi);
+    wc.sta.listen_interval = 3;
     esp_wifi_set_config(WIFI_IF_STA, &wc);
     return esp_wifi_connect() == ESP_OK;
 }
@@ -147,6 +148,7 @@ void wifi_start(void)
 {
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_start();
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
     ESP_LOGI(TAG, "%d saved networks", count);
     if (xTaskCreate(wifi_task, "wifi", 4096, NULL, 4, &task) != pdPASS) ESP_LOGE(TAG, "wifi task not created");
 }

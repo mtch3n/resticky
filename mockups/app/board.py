@@ -9,7 +9,7 @@ h1, h2, cap, tag = ImageFont.truetype(BOLD, 64), ImageFont.truetype(BOLD, 44), I
 P = True
 groups = [
     ("Home", [("hub", "Hub"), ("device-picker", "Choose a Sticky")]),
-    ("Sticky settings", [("sticky", "Sticky settings"), ("sticky-pair", "Sticky settings (pairing)"), ("firmware-states", "Firmware update states"), ("home-screen", "Home screen"), ("faces", "Clock"), ("weather-settings", "Weather"),
+    ("Sticky settings", [("sticky", "Sticky settings"), ("sticky-pair", "Sticky settings (pairing)"), ("firmware-states", "Firmware update states"), ("home-screen", "Home screen"), ("night", "Night"), ("night-time", "Night · pick a time"), ("faces", "Clock"), ("weather-settings", "Weather"),
                          ("sticky-wifi", "Wi-Fi networks"), ("sticky-wifi-add", "Add a network"), ("health", "Health")]),
     ("App settings", [("settings", "App settings"), ("updates", "Updates"), ("models", "Models"), ("pipeline", "Pipeline"), ("places", "Places"), ("place-edit", "Add a place"), ("calendars", "Calendars")]),
     ("Transcripts & playback", [("transcripts", "Transcripts"), ("transcript", "Transcript · top"), ("transcript-player", "Transcript · playing"),

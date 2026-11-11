@@ -106,6 +106,7 @@ class HubContractTest {
         assertTrue(r.json.jsonObject.getValue("weather_style").jsonPrimitive.content in setOf("sketch", "big", "journal", "week"))
         assertTrue(r.json.jsonObject.getValue("hour_format").jsonPrimitive.content in setOf("24", "12"))
         assertTrue(r.json.jsonObject.getValue("sound").jsonPrimitive.content in setOf("off", "beep", "buzz"))
+        assertTrue(Regex("^off$|^([01]\\d|2[0-3]):(00|30)-([01]\\d|2[0-3]):(00|30)$").matches(r.json.jsonObject.getValue("night").jsonPrimitive.content))
         assertTrue(r.json.jsonObject.getValue("home").jsonPrimitive.content in setOf("apps", "clock", "weather", "recorder", "todo"))
         assertTrue(!r.json.jsonObject.containsKey("install"))
         assertEquals(400, send("POST", "/api/checkin", "nope".encodeToByteArray()).status)
@@ -211,7 +212,7 @@ class HubContractTest {
         assertEquals("Fake title", ready.getValue("title").jsonPrimitive.content)
         assertEquals("Fake summary.", ready.getValue("summary").jsonPrimitive.content)
         assertEquals(listOf("Fake todo"), ready.getValue("todos").jsonArray.map { it.jsonPrimitive.content })
-        assertEquals("hello world hello world", ready.getValue("text").jsonPrimitive.content)
+        assertEquals("we agreed to ship the billing report on Friday and Sam checks the numbers".let { "$it $it" }, ready.getValue("text").jsonPrimitive.content)
         assertTrue(Regex("""\d\d:\d\d""").matches(ready.getValue("when").jsonPrimitive.content))
     }
 

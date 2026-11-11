@@ -20,6 +20,26 @@ const val WEATHER_SKETCH = "sketch"
 val WEATHER_STYLES = listOf(WEATHER_SKETCH, "big", "journal", "week")
 const val SOUND_BEEP = "beep"
 val SOUNDS = listOf("off", SOUND_BEEP, "buzz")
+const val NIGHT_OFF = "off"
+private val NIGHT = Regex("""^([01]\d|2[0-3]):(00|30)-([01]\d|2[0-3]):(00|30)$""")
+
+class NightWindow(val startMin: Int, val endMin: Int) {
+    override fun toString() = "${hhmm(startMin)}-${hhmm(endMin)}"
+
+    companion object {
+        fun hhmm(min: Int) = "${(min / 60).toString().padStart(2, '0')}:${(min % 60).toString().padStart(2, '0')}"
+    }
+}
+
+fun parseNight(value: String): NightWindow? {
+    val m = NIGHT.matchEntire(value) ?: return null
+    val (sh, sm, eh, em) = m.destructured
+    val start = sh.toInt() * 60 + sm.toInt()
+    val end = eh.toInt() * 60 + em.toInt()
+    return if (start == end) null else NightWindow(start, end)
+}
+
+fun validNight(value: String): Boolean = value == NIGHT_OFF || parseNight(value) != null
 const val HOME_APPS = "apps"
 val HOME_SCREENS = listOf(HOME_APPS, "clock", "weather", "recorder", "todo")
 const val HOUR_24 = "24"
@@ -206,6 +226,7 @@ data class Checkin(
     val marks: List<Mark> = emptyList(),
     val sound: String? = null,
     val home: String? = null,
+    val night: String? = null,
 )
 
 @Serializable
@@ -242,6 +263,7 @@ data class CheckinReply(
     @SerialName("hour_format") val hourFormat: String,
     val sound: String,
     val home: String,
+    val night: String,
 )
 
 @Serializable
@@ -254,6 +276,7 @@ data class DisplayInfo(
     @SerialName("hour_format") val hourFormat: String,
     val sound: String,
     val home: String,
+    val night: String,
 )
 
 @Serializable

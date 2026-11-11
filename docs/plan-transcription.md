@@ -31,6 +31,24 @@ see what fits us the best and all using best practice". Based on a source review
 8. **VAD in front of the ASR:** segments under 20–30 s, merge segments under 2 s, 0.2 s padding. LLM-based
    models can invent text on silence.
 
+## Measured on real Sticky audio (2026-11-11)
+
+Six 30 s pieces of a real English meeting (Sticky mic, Opus 16 kbps), three with speech, three with music or noise:
+
+| Engine | Speech pieces | Music and noise pieces |
+|---|---|---|
+| Whisper base.en q8 (old default) | Good, some wrong words ("pulled me out", "theold disk … U.S. means") | Invented loops on the phone ("I'm going to go over the rest of my room" ×6) |
+| Whisper small.en q8 | Best ("pointed me out", "creating the UI screens and all the integration") | One short word |
+| SenseVoice int8 2025-09-09 | Bad English spelling ("DASHWARD", "PERATIONAL", "PORNTD") | Empty |
+
+Decision: Whisper small.en is the default (about 9 s per 30 s piece on the phone). The Silero speech detector runs
+first and a piece with less than 1 s of speech is not transcribed. Whisper drops non-speech tokens and does not use
+the previous text as a prompt. SenseVoice stays as the choice for meetings in Mandarin or Cantonese. After the engine,
+the hub removes sound labels and repeated phrases, sessions with fewer than 25 words (Chinese characters count as
+words) get "No speech" without a summary, and each to-do must quote the transcript or it is dropped. Speakers from the
+20-minute windows join at cosine 0.6 (was 0.95, which gave 17 speakers in a 4-hour meeting), and a speaker with less
+than 20 s or 2 % of the talk time joins the closest main voice.
+
 ## Evaluation (decides the defaults)
 
 - Personal test set: 30–60 min recorded on the Sticky (same mic, Opus 16 kbps), all three language mixes, 2–4

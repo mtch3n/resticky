@@ -31,7 +31,7 @@ void board_power_off(void)
     esp_deep_sleep_start();
 }
 
-void board_sleep(void)
+void board_sleep(uint32_t wake_after_s)
 {
     gpio_hold_en(PIN_PWR_HOLD);
     gpio_hold_en(PIN_PWR_LOCK);
@@ -42,5 +42,6 @@ void board_sleep(void)
         rtc_gpio_pulldown_dis(pin);
     }
     esp_sleep_enable_ext1_wakeup_io(WAKE_PINS, ESP_EXT1_WAKEUP_ANY_LOW);
+    if (wake_after_s) esp_sleep_enable_timer_wakeup((uint64_t)wake_after_s * 1000000);
     esp_deep_sleep_start();
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 
 #define PIN_PWR_HOLD 45
 #define PIN_PWR_LOCK 46
@@ -26,4 +27,4 @@
 
 void board_power_latch(void);
 void board_power_off(void);
-void board_sleep(void);
+void board_sleep(uint32_t wake_after_s);

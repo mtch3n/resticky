@@ -8,8 +8,8 @@ FONT = "/tmp/fontdl/Montserrat-SemiBold.ttf"
 BOLD = "/tmp/fontdl/Montserrat-Bold.ttf"
 GROUPS = [
     ("Apps", [("launcher-a", "Launcher"), ("launcher-quiet", "Launcher, quiet mode"), ("todo", "To-do"), ("clock", "Clock: dial"), ("clock-digits", "Clock: digits"), ("clock-words", "Clock: words"), ("clock-note", "Clock: note"), ("clock-flip", "Clock: flip"), ("stats", "Stats"), ("stats-device", "Stats, page 2: device"), ("weather", "Weather: sketch"), ("weather-big", "Weather: big picture"), ("weather-journal", "Weather: journal"), ("weather-week", "Weather: week")]),
-    ("Recorder", [("recorder", "Recording"), ("recorder-muted", "Muted"), ("transcripts", "Transcripts"), ("transcript", "Transcript (planned)")]),
-    ("Settings", [("settings", "Settings"), ("settings-recording", "Recording"), ("settings-wifi", "Wi-Fi"), ("settings-hub", "Hub"), ("settings-weather", "Weather"), ("settings-device", "Device")]),
+    ("Recorder", [("recorder", "Recording"), ("recorder-muted", "Muted"), ("transcripts", "Transcripts"), ("transcript", "Transcript")]),
+    ("Settings", [("settings", "Settings"), ("settings-recording", "Recording"), ("settings-wifi", "Wi-Fi"), ("settings-hub", "Hub"), ("settings-weather", "Weather"), ("settings-device", "Device"), ("night", "Night")]),
     ("Buttons and sleep", [("button-map", "Button map"), ("settings-buttons", "Settings > Buttons"), ("launcher-sleep", "Sleep: moon in the status row")]),
     ("System", [("boot-3", "Boot, step 3 of 6"), ("boot-6", "Boot, ready"), ("power-off", "Off"), ("update-progress", "Update: download, Cancel"), ("update-install", "Update: install"), ("update-done", "Update done")]),
 ]

@@ -276,6 +276,10 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSound(sound: String) = app.setSound(sound)
 
+    val night: StateFlow<String> = app.hub.night
+
+    fun setNight(value: String) = app.setNight(value)
+
     fun setWeatherStyle(style: String) = app.setWeatherStyle(style)
 
     val scan = MutableStateFlow<List<ScanItem>>(emptyList())

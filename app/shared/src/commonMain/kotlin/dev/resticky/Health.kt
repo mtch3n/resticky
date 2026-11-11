@@ -41,6 +41,7 @@ data class Health(
     @SerialName("opus_max_us") val opusMaxUs: Int = 0,
     val overflows: Int = 0,
     @SerialName("temp_c") val tempC: Float = 0f,
+    val boot: String = "",
 )
 
 @Serializable

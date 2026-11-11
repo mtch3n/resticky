@@ -211,6 +211,39 @@ static int64_t sound_local_at = -60000;
 static const char *const SOUNDS[SOUND_COUNT] = {"off", "beep", "buzz"};
 
 static int device_home;
+static bool device_night_on;
+static int device_night_start = 22 * 60, device_night_end = 7 * 60;
+static int64_t night_local_at = -60000;
+
+void net_set_night(bool on, int start, int end)
+{
+    if (on != device_night_on || start != device_night_start || end != device_night_end) night_local_at = esp_log_timestamp();
+    device_night_on = on;
+    device_night_start = start;
+    device_night_end = end;
+}
+
+static void night_text(char *out, size_t n)
+{
+    if (!device_night_on) strlcpy(out, "off", n);
+    else snprintf(out, n, "%02d:%02d-%02d:%02d", device_night_start / 60, device_night_start % 60, device_night_end / 60, device_night_end % 60);
+}
+
+static bool parse_night(const char *v, bool *on, int *start, int *end)
+{
+    if (!v) return false;
+    if (!strcmp(v, "off")) {
+        *on = false;
+        return true;
+    }
+    int h1, m1, h2, m2;
+    if (strlen(v) != 11 || sscanf(v, "%2d:%2d-%2d:%2d", &h1, &m1, &h2, &m2) != 4) return false;
+    if (h1 > 23 || h2 > 23 || (m1 != 0 && m1 != 30) || (m2 != 0 && m2 != 30) || h1 * 60 + m1 == h2 * 60 + m2) return false;
+    *on = true;
+    *start = h1 * 60 + m1;
+    *end = h2 * 60 + m2;
+    return true;
+}
 static int64_t home_local_at = -60000;
 static const char *const HOMES[HOME_COUNT] = {"apps", "clock", "weather", "recorder", "todo"};
 
@@ -259,22 +292,26 @@ static const char *climate_part(void)
     return out;
 }
 
+static char boot_text[160];
+
+void net_set_boot(const char *text) { strlcpy(boot_text, text, sizeof boot_text); }
+
 static const char *health_json(void)
 {
-    static char out[320];
+    static char out[512];
     audio_load_t a;
     audio_get_load(&a);
     TaskHandle_t nimble = xTaskGetHandle("nimble_host"), net = xTaskGetHandle("net"), mainh = xTaskGetHandle("main");
     snprintf(out, sizeof out,
              "{\"uptime_s\":%lld,\"heap_free\":%u,\"heap_min\":%u,\"heap_largest\":%u,\"psram_free\":%u,\"psram_min\":%u,"
              "\"stack_main\":%u,\"stack_net\":%u,\"stack_ble\":%u,\"cpu_filter_pm\":%d,\"cpu_opus_pm\":%d,\"cpu_vad_pm\":%d,"
-             "\"opus_max_us\":%d,\"overflows\":%lu,\"temp_c\":%d%s}",
+             "\"opus_max_us\":%d,\"overflows\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
              esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
              mainh ? (unsigned)uxTaskGetStackHighWaterMark(mainh) : 0, net ? (unsigned)uxTaskGetStackHighWaterMark(net) : 0,
              nimble ? (unsigned)uxTaskGetStackHighWaterMark(nimble) : 0, a.filter_pm, a.opus_pm, a.vad_pm, a.opus_max_us,
-             (unsigned long)a.overflows, sensors_chip_celsius(), climate_part());
+             (unsigned long)a.overflows, sensors_chip_celsius(), boot_text, climate_part());
     return out;
 }
 
@@ -298,7 +335,11 @@ static void checkin_body(char *body, size_t n)
     cJSON_free(list);
     cJSON_free(ssid_json);
     size_t used = strlen(body);
-    if (used > 1 && used < n) snprintf(body + used - 1, n - used + 1, ",\"sound\":\"%s\",\"home\":\"%s\",\"health\":%s}", SOUNDS[device_sound], HOMES[device_home], health_json());
+    if (used > 1 && used < n) {
+        char night[16];
+        night_text(night, sizeof night);
+        snprintf(body + used - 1, n - used + 1, ",\"sound\":\"%s\",\"home\":\"%s\",\"night\":\"%s\",\"health\":%s}", SOUNDS[device_sound], HOMES[device_home], night, health_json());
+    }
     xSemaphoreTake(lock, portMAX_DELAY);
     for (int i = 0; i < mark_count; i++) {
         used = strlen(body);
@@ -385,6 +426,16 @@ static void apply_display(const cJSON *j)
     if (home >= 0 && esp_log_timestamp() - home_local_at > 60000 && home != device_home) {
         state.home = device_home = home;
         state.home_from_hub = true;
+        state.version++;
+    }
+    bool n_on = device_night_on;
+    int n_start = device_night_start, n_end = device_night_end;
+    if (parse_night(cJSON_GetStringValue(cJSON_GetObjectItem(j, "night")), &n_on, &n_start, &n_end) && esp_log_timestamp() - night_local_at > 60000 &&
+        (n_on != device_night_on || (n_on && (n_start != device_night_start || n_end != device_night_end)))) {
+        state.night_on = device_night_on = n_on;
+        state.night_start = device_night_start = n_on ? n_start : device_night_start;
+        state.night_end = device_night_end = n_on ? n_end : device_night_end;
+        state.night_from_hub = true;
         state.version++;
     }
     const char *hf = cJSON_GetStringValue(cJSON_GetObjectItem(j, "hour_format"));
@@ -951,8 +1002,8 @@ static void sync_wifi(bool testing)
     }
     if (now - last_poll > POLL_MS) {
         last_poll = now;
-        bool ok = checkin();
-        if (ok) ota_note_hub();
+        bool ok = ble_linked || checkin();
+        if (ok && !ble_linked) ota_note_hub();
         if (!ok || testing) mark_changed();
         if (ok && hub_check_wanted) {
             hub_check_wanted = false;
@@ -960,8 +1011,10 @@ static void sync_wifi(bool testing)
         }
         fetch_transcripts();
         fetch_todos();
-        fetch_hub_json("weather", HUB_FRAME_WEATHER);
-        fetch_hub_json("agenda", HUB_FRAME_AGENDA);
+        if (!ble_linked) {
+            fetch_hub_json("weather", HUB_FRAME_WEATHER);
+            fetch_hub_json("agenda", HUB_FRAME_AGENDA);
+        }
     }
     send_weather_change(false);
 }
@@ -1048,6 +1101,7 @@ void net_get_state(net_state_t *out)
 {
     xSemaphoreTake(lock, portMAX_DELAY);
     *out = state;
+    state.sound_from_hub = state.home_from_hub = state.night_from_hub = false;
     xSemaphoreGive(lock);
     wifi_get_status(&out->wifi);
 }

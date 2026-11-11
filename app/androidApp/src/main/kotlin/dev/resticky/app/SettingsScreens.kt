@@ -1,5 +1,17 @@
 package dev.resticky.app
 
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
+import dev.resticky.NIGHT_OFF
+import dev.resticky.NightWindow
+import dev.resticky.parseNight
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -274,6 +286,71 @@ fun HomeScreenPicker(home: String, back: () -> Unit, select: (String) -> Unit) =
     }
     gap()
     item { Text("The Sticky shows this after start and on Home; tap the app name to open all apps.", style = Type.small, modifier = Modifier.padding(horizontal = 4.dp)) }
+}
+
+private val HALF_HOURS = (0 until 48).map { it * 30 }
+
+fun nightLabel(value: String): String = parseNight(value)?.let { "${NightWindow.hhmm(it.startMin)} – ${NightWindow.hhmm(it.endMin)}" } ?: "Off"
+
+@Composable
+fun NightScreen(value: String, back: () -> Unit, set: (String) -> Unit) {
+    val current = parseNight(value)
+    var start by remember { mutableIntStateOf(current?.startMin ?: 22 * 60) }
+    var end by remember { mutableIntStateOf(current?.endMin ?: 7 * 60) }
+    var picking by remember { mutableStateOf<Boolean?>(null) }
+    val on = current != null
+    fun apply(s: Int, e: Int) {
+        start = s
+        end = e
+        if (on) set(NightWindow(s, e).toString())
+    }
+    Page("Night", back) {
+        item {
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Night", style = Type.heading, modifier = Modifier.weight(1f))
+                    Toggle(on) { set(if (it) NightWindow(start, end).toString() else NIGHT_OFF) }
+                }
+            }
+        }
+        gap()
+        item {
+            CardList {
+                ListRow("Start", NightWindow.hhmm(start), first = true, lead = { Glyph(R.drawable.ic_moon) }, onClick = { picking = true }) { Chevron() }
+                ListRow("End", NightWindow.hhmm(end), lead = { Glyph(R.drawable.ic_sun) }, onClick = { picking = false }) { Chevron() }
+            }
+        }
+    }
+    picking?.let { isStart ->
+        TimeSheet(if (isStart) "Start" else "End", if (isStart) start else end, if (isStart) end else start, { picking = null }) { t ->
+            if (isStart) apply(t, end) else apply(start, t)
+            picking = null
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TimeSheet(title: String, selected: Int, other: Int, dismiss: () -> Unit, pick: (Int) -> Unit) {
+    ModalBottomSheet(
+        dismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = Ink.white,
+        scrimColor = Color.Black.copy(alpha = 0.45f),
+        dragHandle = { Box(Modifier.padding(top = 14.dp).width(40.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Ink.off)) },
+    ) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text(title, style = Type.heading.copy(fontSize = 20.sp), modifier = Modifier.padding(horizontal = 4.dp))
+            val list = rememberLazyListState((HALF_HOURS.indexOf(selected) - 3).coerceAtLeast(0))
+            LazyColumn(Modifier.height(420.dp).clip(CardShape).background(Ink.card), state = list) {
+                val times = HALF_HOURS.filter { it != other }
+                items(times.size) { i ->
+                    ListRow(NightWindow.hhmm(times[i]), first = i == 0, lead = { Radio(times[i] == selected) }, onClick = { pick(times[i]) })
+                }
+            }
+        }
+    }
 }
 
 @Composable

@@ -2,7 +2,9 @@ package dev.resticky
 
 import kotlin.math.sqrt
 
-const val SPEAKER_MERGE = 0.95
+const val SPEAKER_MERGE = 0.6
+const val SPEAKER_MIN_MS = 20_000L
+const val SPEAKER_MIN_SHARE = 0.02
 const val VOICE_MIN_MS = 1500L
 private const val FRAME_MS = 20L
 
@@ -53,12 +55,20 @@ fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn>
         voices.remove(b)
         target[b] = a
     }
-    val sorted = d.turns.sortedBy { it.startMs }
-    val order = mutableMapOf<Int, Int>()
-    return sorted.map { t ->
-        val r = root(t.speaker)
-        Turn(t.startMs, t.endMs, order.getOrPut(r) { order.size })
+    val sorted = d.turns.sortedBy { it.startMs }.map { Turn(it.startMs, it.endMs, root(it.speaker)) }
+    val talk = sorted.groupBy { it.speaker }.mapValues { (_, l) -> l.sumOf { it.endMs - it.startMs } }
+    val total = talk.values.sum()
+    val major = talk.filter { (_, ms) -> ms >= SPEAKER_MIN_MS && ms >= total * SPEAKER_MIN_SHARE }.keys
+    val absorbed = if (major.isEmpty()) sorted else sorted.mapIndexed { i, t ->
+        if (t.speaker in major) return@mapIndexed t
+        val own = voices[t.speaker]?.first
+        val byVoice = own?.let { e -> major.filter { it in voices }.maxByOrNull { cosine(e, voices.getValue(it).first) } }
+        val byTime = (i - 1 downTo 0).firstOrNull { sorted[it].speaker in major }?.let { sorted[it].speaker }
+            ?: (i + 1 until sorted.size).firstOrNull { sorted[it].speaker in major }?.let { sorted[it].speaker }
+        Turn(t.startMs, t.endMs, byVoice ?: byTime ?: t.speaker)
     }
+    val order = mutableMapOf<Int, Int>()
+    return absorbed.map { t -> Turn(t.startMs, t.endMs, order.getOrPut(t.speaker) { order.size }) }
 }
 
 fun speakerAt(startMs: Long, endMs: Long, turns: List<Turn>, last: Int): Int {

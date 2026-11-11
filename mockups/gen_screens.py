@@ -82,7 +82,7 @@ page3("recorder", H("Recorder") + REC("Recording", "2 h 14 today", "Mute", True)
 <div class=quote>“…so we ship the billing report on Friday, and Sam checks the Q3 numbers first.”</div></div>''')
 page3("settings", T("Settings") + ''.join(
  f'<div class=row>{icon(i,32)}{n}<span class=v>{v} {icon("chevron-right",24)}</span></div>'
- for i,n,v in [("microphone","Recording","16 kbps"),("wifi","Wi-Fi","HomeWiFi"),("device-mobile-rotated","Hub","OK"),("cloud","Weather","Phone"),("hand-finger","Buttons",""),("home","Home screen","Apps"),("device-mobile-rotated","SD card","29 GB free"),("device-mobile-rotated","Device","v0.14.6")]) +
+ for i,n,v in [("microphone","Recording","16 kbps"),("wifi","Wi-Fi","HomeWiFi"),("device-mobile-rotated","Hub","OK"),("cloud","Weather","Phone"),("hand-finger","Buttons",""),("home","Home screen","Apps"),("moon","Night","22:00–07:00"),("device-mobile-rotated","SD card","29 GB free"),("device-mobile-rotated","Device","v0.14.6")]) +
  '<div style="flex:1"></div><div class=btns style="padding-bottom:28px"><div class=btn>Check for updates</div></div>' + BACK)
 
 
@@ -121,12 +121,17 @@ page3("settings-hub", T("Hub") + f'''<div class=row>Name<span class=v>laptop</sp
 <div class=row>Status<span class=v>OK</span></div>
 <div class=btns><div class=btn>Test connection</div></div>''' + BACK)
 page3("settings-device", T("Device") + f'''<div class=row>Firmware<span class=v>0.14.6</span></div>
-<div class=sec>Feedback</div><div class=seg><div>Off</div><div class=on>Beep</div><div>Buzz</div></div>
+<div class=sec>Feedback</div><div class=seg><div>Off</div><div>Beep</div><div class=on>Buzz</div></div>
+<div class=sec>Buzz pitch</div><div class=seg><div>100 Hz</div><div class=on>175 Hz</div><div>300 Hz</div><div>500 Hz</div></div>
 <div style="flex:1"></div><div class=btns style="padding-bottom:28px"><div class=btn>Restart</div><div class=btn>Shut down</div></div>''' + BACK)
 
 
 
 
+STEP = 'width:64px;height:64px;border:3px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700'
+page3("night", T("Night") + '<div class=row>Sleep at night<span class="sw on">ON</span></div>' + ''.join(
+ f'<div class=row style="min-height:80px">{n}<span style="margin-left:auto;font-size:28px;font-weight:700;margin-right:20px">{t}</span><span style="{STEP}">–</span><span style="{STEP};margin-left:12px">+</span></div>'
+ for n, t in [("Starts", "22:00"), ("Ends", "07:00")]) + BACK)
 page3("todo", T("To-do") + '<div class=sec>Open · 11</div>' + ''.join(
  f'<div class=row style="{"" if i==0 else ""}min-height:66px"><span class=chk></span><span style="display:flex;flex-direction:column;gap:2px"><span>{t}</span><span style="font-size:16px;font-weight:500">{d}</span></span></div>'
  for i,(t,d) in enumerate([("Restore the test environment","Product launch · 13:12"),("Check the time zone issue","Product launch · 13:12"),("Meet Priya and Alex on Friday","Product launch · 13:12"),("Set up two customer users","Product launch · 13:12"),("Review the new dashboard","Product launch · 13:12"),("Send Northwind the claims","Product launch · 13:12"),("Compare DNS providers","Product launch · 13:12")]))

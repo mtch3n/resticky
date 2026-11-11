@@ -5,4 +5,4 @@ while [ $# -gt 0 ]; do
   shift
 done
 cat > /dev/null
-printf '{"title":"Fake title","summary":"Fake summary.","todos":["Fake todo"]}' > "$out"
+printf '{"title":"Fake title","summary":"Fake summary.","todos":[{"task":"Fake todo","quote":"ship the billing report on Friday"},{"task":"Invented todo","quote":"buy a boat"}]}' > "$out"

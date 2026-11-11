@@ -9,9 +9,13 @@
 #define BUZZER_CHANNEL LEDC_CHANNEL_1
 
 static int pin = -1;
-static int sound = SOUND_BEEP;
+static int sound = SOUND_BEEP, buzz_hz = 175;
 
-void buzzer_set_sound(int s) { sound = s; }
+void buzzer_set_sound(int s, int hz)
+{
+    sound = s;
+    buzz_hz = hz;
+}
 
 static void attach(int gpio)
 {
@@ -34,7 +38,7 @@ static void tone_duty(int hz, int ms, int duty)
 
 static void tone(int hz, int ms) { tone_duty(hz, ms, 512); }
 
-static void buzz(int ms) { tone_duty(170, ms, 384); }
+static void buzz(int ms) { tone_duty(buzz_hz, ms, 512); }
 
 void buzzer_init(int gpio)
 {
@@ -45,7 +49,7 @@ void buzzer_init(int gpio)
 void buzzer_click(void)
 {
     if (pin < 0 || sound == SOUND_OFF) return;
-    if (sound == SOUND_BUZZ) buzz(25);
+    if (sound == SOUND_BUZZ) buzz(35);
     else tone(2700, 12);
 }
 
@@ -53,9 +57,9 @@ void buzzer_mark(void)
 {
     if (pin < 0 || sound == SOUND_OFF) return;
     if (sound == SOUND_BUZZ) {
-        buzz(70);
-        vTaskDelay(pdMS_TO_TICKS(70));
-        buzz(70);
+        buzz(100);
+        vTaskDelay(pdMS_TO_TICKS(80));
+        buzz(100);
         return;
     }
     tone(2200, 60);

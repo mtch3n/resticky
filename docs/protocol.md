@@ -20,7 +20,7 @@ with a bad ID gets `400`.
 | Method and path | Request | Response |
 |---|---|---|
 | `GET /api/hello` | — | `200`, `{"service":"resticky-hub","version":"<v>"}` |
-| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound` and `home` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
+| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound`, `home` and `night` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>","night":"off"|"HH:MM-HH:MM"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
 | `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` after the chunk is on disk. `400` if a header is missing or bad. A chunk that has the same device, session and sequence as a stored chunk replaces the file but does not add its duration again. |
 | `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
 | `GET /api/todos?device=<id>` | — | `200`, `{"open":[todo],"done":[todo]}`. `done` has only the to-dos done since 00:00 local time today. |
@@ -123,10 +123,15 @@ change on the hub: then the hub ignores the device value until a check-in report
 device applied it). `home` (default `apps`) is the screen the Sticky shows after start and on Home: `apps` (all
 apps as tiles), `clock`, `weather`, `recorder` or `todo` (firmware 0.14.4). Phone: Sticky settings › Home screen;
 laptop hub: `-home <name>`. The device reports its value in the check-in as `"home"`, with the same newest-change
-rule as `sound`. The hub ignores a value it does not know.
+rule as `sound`. The hub ignores a value it does not know. `night` (default `"off"`) is the night time:
+`"off"` or `"HH:MM-HH:MM"` (24 h, minutes `00` or `30`, start not equal to end, may cross midnight, for example
+`"22:00-07:00"`). During the night the Sticky stops recording and deep-sleeps; it wakes at the end time or on a
+button press, and sleeps again 5 minutes after the last touch while still in the window. Phone: Sticky settings ›
+Night (On/Off, Start, End in 30-minute steps); laptop hub: `-night off|HH:MM-HH:MM`. The device sends its value in
+every check-in, with the same newest-change rule. The hub ignores a value with another format.
 
 - HTTP: in the response to `POST /api/checkin`.
-- BLE: in the `display` frame, `{"clock_face":"dial","weather_style":"sketch","hour_format":"24","sound":"beep","home":"apps"}`. The hub sends it when the
+- BLE: in the `display` frame, `{"clock_face":"dial","weather_style":"sketch","hour_format":"24","sound":"beep","home":"apps","night":"off"}`. The hub sends it when the
   link becomes ready and again when one of the values changes.
 
 The device ignores a face or a style that it does not know.
@@ -496,7 +501,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 11 | `wifi_forget` | hub → device | `{"ssid"}` |
 | 12 | `weather_set` | device → hub | `{"mode","units"}`, the same as the body of `PUT /api/weather` |
 | 13 | `time` | hub → device | `{"utc_offset_min":<n>}` (see "Time") |
-| 14 | `display` | hub → device | `{"clock_face","weather_style","hour_format","sound","home"}` (see "Display") |
+| 14 | `display` | hub → device | `{"clock_face","weather_style","hour_format","sound","home","night"}` (see "Display") |
 | 15, 16 | reserved | | |
 | 17 | `photo` | hub → device | exactly 48000 bytes: a 480×800 portrait picture, row-major, 1 bit per pixel, the most significant bit first, 1 = black. The Sticky shows it full screen (full refresh) until the next touch or key and stores nothing. Needs firmware 0.14.1. |
 | 18 | `ota_begin` | hub → device | `{"version":"x.y.z","size":N}` (see "Firmware push") |

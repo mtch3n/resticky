@@ -364,6 +364,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             scope.launch { hub.weatherStyle.collect { push() } },
             scope.launch { hub.hourFormat.collect { push() } },
             scope.launch { hub.sound.collect { push() } },
+            scope.launch { hub.night.collect { push() } },
             scope.launch { hub.home.collect { push() } },
         )
         val filter = IntentFilter().apply {
