@@ -64,8 +64,8 @@ class PlacesTest {
     @Test
     fun summaryWaitsForThePlaceAndGetsIt() = runTest {
         val store = Store(root)
-        assertTrue(store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4)))
-        assertFalse(store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4)))
+        assertEquals(Added.SESSION, store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4)))
+        assertEquals(Added.REPEAT, store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4)))
         store.update("ab", "01") { it.place = PENDING }
         val seen = mutableListOf<String>()
         val pipeline = Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, c -> seen += c.place; Summary("T", "S") }, NO_SPEAKERS) {}

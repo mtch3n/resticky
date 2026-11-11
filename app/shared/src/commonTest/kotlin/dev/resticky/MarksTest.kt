@@ -68,8 +68,8 @@ class MarksTest {
             (0..4).associate { "$it" to listOf(Segment(0, 15_000, "c${it}a"), Segment(15_000, 30_000, "c${it}b")) },
         )
         s.addMarks(listOf(140_000))
-        assertEquals(listOf("02:20 c0b c1a c1b c2a c2b c3a c3b c4a c4b"), s.moments())
-        val prompt = summaryPrompt(SummaryContext(moments = s.moments()))
+        assertEquals(listOf("02:20 c0b c1a c1b c2a c2b c3a c3b c4a c4b"), conversations(listOf(s)).single().moments())
+        val prompt = summaryPrompt(SummaryContext(moments = conversations(listOf(s)).single().moments()))
         assertTrue("- 02:20 c0b" in prompt)
         assertFalse("important" in summaryPrompt(SummaryContext()))
     }
@@ -97,8 +97,8 @@ class MarksTest {
         val store = Store(root)
         assertEquals(2, store.addMarks(device, "5e55", listOf(4000, 1000)))
         assertEquals(0, store.addMarks(device, "5e55", listOf(1000)))
-        assertTrue(store.addChunk(device, "5e55", 0, false, 30_000, ByteArray(4)))
-        assertFalse(store.addChunk(device, "5e55", 1, true, 12_000, ByteArray(4)))
+        assertEquals(Added.SESSION, store.addChunk(device, "5e55", 0, false, 30_000, ByteArray(4)))
+        assertEquals(Added.CHUNK, store.addChunk(device, "5e55", 1, true, 12_000, ByteArray(4)))
         val m = store.list(device).single()
         assertEquals(listOf(1000L, 4000L), m.marks)
         assertEquals(mapOf("0" to 30_000L, "1" to 12_000L), m.chunkMs)

@@ -3,6 +3,16 @@
 Status: draft, 2026-11-11. User: "sometimes i use both eng and chinese and what is the best way", "think deep and
 see what fits us the best and all using best practice". Based on a source review of open models (2025–2026).
 
+## Current defaults (2026-11-11)
+
+The measurement on real Sticky audio (see below) changed the first plan:
+
+- Phone and laptop: Whisper small.en is the default speech engine.
+- SenseVoice-Small int8 is the choice for meetings in Mandarin or Cantonese. It spells English badly on Sticky audio.
+- Qwen3-ASR and FireRedASR2 are not built yet.
+
+The table in "Decisions" is the first plan from the source review. It is not the current state.
+
 ## Decisions
 
 1. **One code-switch model, no language routing.** People switch language inside one sentence, so per-segment
@@ -43,11 +53,22 @@ Six 30 s pieces of a real English meeting (Sticky mic, Opus 16 kbps), three with
 
 Decision: Whisper small.en is the default (about 9 s per 30 s piece on the phone). The Silero speech detector runs
 first and a piece with less than 1 s of speech is not transcribed. Whisper drops non-speech tokens and does not use
-the previous text as a prompt. SenseVoice stays as the choice for meetings in Mandarin or Cantonese. After the engine,
-the hub removes sound labels and repeated phrases, sessions with fewer than 25 words (Chinese characters count as
-words) get "No speech" without a summary, and each to-do must quote the transcript or it is dropped. Speakers from the
-20-minute windows join at cosine 0.6 (was 0.95, which gave 17 speakers in a 4-hour meeting), and a speaker with less
-than 20 s or 2 % of the talk time joins the closest main voice.
+the previous text as a prompt. SenseVoice stays as the choice for meetings in Mandarin or Cantonese.
+
+After the engine, the hub applies these rules (2026-11-11). A Chinese character counts as one word.
+
+- The hub removes sound labels and repeated phrases.
+- A conversation with 0 to 4 words gets "No speech". A conversation with 5 to 24 words gets the title "Short note",
+  and the cleaned text is the summary. The hub does not call the summary model for these.
+- Each to-do must quote the transcript, else the hub drops it. The quote must be in the transcript as one span,
+  or 90 % of its words must be in the same order within 1.5 × the quote length. The hub keeps the matched text and
+  its start time (`todo_quotes`).
+- The hub drops a to-do when only the task or only the quote has a negation ("not", "cannot", "n't").
+- Speakers from the 20-minute windows join at cosine 0.6 (was 0.95, which gave 17 speakers in a 4-hour meeting).
+- A speaker with less than 20 s or 2 % of the talk time joins the closest main voice only at cosine 0.4 or more.
+  A speaker with no voice embedding and less than 5 s joins the nearest main speaker in time.
+- Two speakers whose turns overlap for more than 1 s never join.
+- If the speaker run fails, the hub tries again once. After the second failure, `speakers_failed` is true.
 
 ## Evaluation (decides the defaults)
 

@@ -86,6 +86,11 @@ class Session(
     var diarized: Boolean = false,
     val speakers: MutableMap<String, String> = mutableMapOf(),
     val photos: MutableList<Photo> = mutableListOf(),
+    @SerialName("todo_quotes") var todoQuotes: List<Quote> = emptyList(),
+    var input: String = "",
+    val splits: MutableMap<String, Recap> = mutableMapOf(),
+    @SerialName("chunk_start") val chunkStart: MutableMap<String, Long> = mutableMapOf(),
+    @SerialName("speakers_failed") var speakersFailed: Boolean = false,
 ) {
     val pending: Boolean get() = chunks.values.any { it == PENDING }
 
@@ -114,34 +119,16 @@ class Session(
             val text = chunks.getValue(seq)
             val segs = segments[seq].orEmpty()
             when {
-                segs.isNotEmpty() -> segs.map { Line(at + it.startMs, it.text, it.speaker, it.words) }
+                segs.isNotEmpty() -> segs.map { Line(at + it.startMs, it.text, it.speaker, it.words.map { w -> w.copy(startMs = at + w.startMs, endMs = at + w.endMs) }) }
                 text == PENDING || text.isEmpty() -> emptyList()
                 else -> listOf(Line(at, text))
             }
         }
     }
 
-    fun photoTexts(): List<String> = photos.filter { it.text.isNotBlank() }.map { "${timeLabel(it.offsetMs)} ${it.text.replace('\n', ' ')}" }
-
     fun endMs(): Long = offsets().entries.maxByOrNull { it.value }?.let { (seq, at) -> at + (chunkMs[seq] ?: CHUNK_MS) } ?: 0
 
     fun speakerName(speaker: Int): String = speakers["$speaker"] ?: speakerLetter(speaker)
-
-    fun labelledTranscript(): String {
-        val lines = lines()
-        if (lines.none { it.speaker >= 0 }) return transcript()
-        val out = StringBuilder()
-        var last = -2
-        for (l in lines) {
-            if (l.speaker != last) {
-                if (out.isNotEmpty()) out.append('\n')
-                if (l.speaker >= 0) out.append(speakerName(l.speaker)).append(": ")
-                last = l.speaker
-            } else out.append(' ')
-            out.append(l.text)
-        }
-        return out.toString()
-    }
 
     fun assignSpeakers(turns: List<Turn>) {
         val offsets = offsets()
@@ -163,25 +150,40 @@ class Session(
         val now = speakerName(speaker)
         if (now == old) return
         val word = Regex("\\b${Regex.escape(old)}\\b")
-        title = title.replace(word, now)
-        summary = summary.replace(word, now)
-        todos = todos.map { it.replace(word, now) }
+        recaps().forEach { (from, r) ->
+            putRecap(from, r.copy(title = r.title.replace(word, now), summary = r.summary.replace(word, now), todos = r.todos.map { it.replace(word, now) }))
+        }
     }
+
+    fun recap(fromMs: Long): Recap =
+        if (fromMs == 0L) Recap(title, summary, todos, todoQuotes, engine, done.toMap(), todoChanges.toMap(), ready, input)
+        else splits["$fromMs"] ?: Recap()
+
+    fun putRecap(fromMs: Long, r: Recap) {
+        if (fromMs != 0L) {
+            splits["$fromMs"] = r
+            return
+        }
+        title = r.title
+        summary = r.summary
+        todos = r.todos
+        todoQuotes = r.quotes
+        engine = r.engine
+        done.clear()
+        done.putAll(r.done)
+        todoChanges.clear()
+        todoChanges.putAll(r.todoChanges)
+        ready = r.ready
+        input = r.input
+    }
+
+    fun recaps(): List<Pair<Long, Recap>> = listOf(0L to recap(0)) + splits.keys.map { it.toLong() to splits.getValue(it) }
 
     fun addMarks(offsets: Collection<Long>): Int {
         val new = offsets.filter { it >= 0 && it !in marks }.distinct()
         marks += new
         marks.sort()
         return new.size
-    }
-
-    fun moments(): List<String> {
-        val lines = lines()
-        return marks.map { mark ->
-            val text = lines.filterIndexed { i, l -> l.atMs <= mark && (lines.getOrNull(i + 1)?.atMs ?: Long.MAX_VALUE) > mark - MARK_WINDOW_MS }
-                .joinToString(" ") { it.text }
-            "${timeLabel(mark)} $text".trim()
-        }
     }
 }
 
@@ -252,7 +254,26 @@ data class TodoList(val open: List<TodoItem>, val done: List<TodoItem>)
 data class TodoState(val done: Boolean, val at: Time)
 
 @Serializable
-data class Summary(val title: String, val summary: String, val todos: List<String> = emptyList(), val engine: String = "")
+data class Todo(val task: String, val quote: String = "")
+
+@Serializable
+data class Summary(val title: String, val summary: String, val todos: List<Todo> = emptyList(), val engine: String = "")
+
+@Serializable
+data class Quote(val text: String, val session: String = "", @SerialName("at_ms") val atMs: Long = -1)
+
+@Serializable
+data class Recap(
+    val title: String = "",
+    val summary: String = "",
+    val todos: List<String> = emptyList(),
+    @SerialName("todo_quotes") val quotes: List<Quote> = emptyList(),
+    val engine: String = "",
+    val done: Map<String, Time> = emptyMap(),
+    @SerialName("todo_changes") val todoChanges: Map<String, Time> = emptyMap(),
+    val ready: Boolean = false,
+    val input: String = "",
+)
 
 @Serializable
 data class CheckinReply(

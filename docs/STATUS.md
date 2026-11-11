@@ -12,7 +12,7 @@ low power and storage use that we can profile.
 
 | Part | Where | State |
 |---|---|---|
-| Firmware 0.7.0 | `firmware/` (ESP-IDF via PlatformIO, LVGL 9, NimBLE) | Flashed. Records Opus 16 kbps in 30 s chunks into a flash outbox (LittleFS on the 22 MB `spool` partition), uploads from it over Wi-Fi HTTP or Bluetooth LE and deletes a chunk only after the hub answers 200 or `ack`, shows transcripts, to-dos (with pages), stats, settings, and a pairing page with the BLE passkey. |
+| Firmware 0.14.9 | `firmware/` (ESP-IDF via PlatformIO, LVGL 9, NimBLE) | Current release. Records Opus 16 kbps in 30 s chunks into a flash outbox (LittleFS on the 22 MB `spool` partition), uploads from it over Wi-Fi HTTP or Bluetooth LE and deletes a chunk only after the hub answers 200 or `ack`, shows transcripts, to-dos (with pages), stats, settings, and a pairing page with the BLE passkey. |
 | BLE test hub | `firmware/tools/ble_hub.py` | `uv run firmware/tools/ble_hub.py --out <folder>`. Registers a BlueZ agent (KeyboardOnly), pairs (type the passkey from the e-paper on stdin), stores chunks as `<device>/<session>/<seq>.opus`, sends acks, prints KB/s for each chunk. Forget the bond: `bluetoothctl remove AA:BB:CC:DD:EE:FF`. |
 | Laptop hub 0.7.0 (check-in logs the outbox, keeps the health history; transcript items have `place`) | `app/desktopApp` (Kotlin Multiplatform, JVM) | systemd user service `resticky-hub`, runs `~/.local/opt/resticky-hub/bin/resticky-hub` (installed with `./gradlew :desktopApp:installDist`, then copied). Port 8787, mDNS `_resticky._tcp`. Weather: fixed city only, set with `-city <name>` in the service `ExecStart` (no city: no forecast); settings and the last forecast in `~/.local/share/resticky/weather.json` (`-weather <file>`). |
 | Data | `~/.local/share/resticky/data` | Sessions, chunks, transcripts. Backup before the hub change: `data.backup-go-20261110`. |
@@ -170,6 +170,27 @@ low power and storage use that we can profile.
 - BLE reconnect: the app connects again 3 s after the link closes. Firmware 0.10.0 fixed the reconnect fault (the
   Sticky called `ble_gap_set_data_len` in the connect event; the controller did not answer and the link dropped).
 
+## Conversations (hub, 2026-11-11)
+
+- A session is one recording run of the Sticky. A conversation is a view over the sessions. The stored sessions do
+  not change.
+- Consecutive sessions of one device are one conversation when the capture gap is less than 10 minutes.
+- A silence of 5 minutes or more with no speech (from the segment times) splits a session into two conversations.
+- Each conversation gets one summary. The hub stores it on the first session of the conversation: in the top-level
+  fields when the conversation starts at 0 ms, else in `splits` (key: the start in ms).
+- A to-do ID is `<session>-<minute × 100 + index>`. The minute is the start of the conversation in the session, so
+  the IDs of old data do not change.
+- A session closes 3 minutes after the capture end (`started` + chunk starts from `X-Start-Ms`), not after the last
+  arrival. `started` comes from the chunk age when the hub knows it.
+- Each summary keeps the hash of its input (`input`). A summary for older input is not saved. A summary with no
+  hash (old data) stays valid only for a conversation that is one whole session.
+- After a new summary, the hub copies the done state of a to-do with the same normalized text.
+- A repeated chunk with the same audio changes nothing. A repeated chunk with other audio is not stored (log
+  `WARN chunk conflict`). The hub writes audio and `meta.json` to a temporary file and then renames the file.
+- Old audio stays while its session has a pending chunk or a conversation that is not ready.
+- Old data: the hub summarizes again each old conversation that has more than one session or a split. This uses
+  the summary model once for each of them.
+
 ## Documents
 
 - `plan-apps.md`: the approved plan (Kotlin Multiplatform apps, BLE and Wi-Fi links, engines, layers).
@@ -181,7 +202,13 @@ low power and storage use that we can profile.
 
 ## Next
 
-1. Layer 4 of `plan-apps.md`: Android app (BLE central, see the BLE section of `protocol.md`).
-2. BLE power on battery: idle advertising, connected idle, transferring, BLE off.
-3. UI: transcript detail screen.
-4. Open decision: iOS builds (Mac over SSH or macOS CI, Apple Developer account).
+1. Phone UI for conversations: the transcript list and the transcript page show one row for each conversation
+   (`conversations()` in `app/shared`), not one row for each session. See "Conversations (hub)" above.
+2. Phone UI: show "Speakers not available" when `speakers_failed` is true, and show the time of each to-do quote
+   (`todo_quotes`).
+3. `protocol.md`: write the conversation rules, the to-do IDs for split conversations, the chunk conflict rule and
+   the new `meta.json` fields.
+4. Firmware push from the phone: test 0.14.6 and later end to end.
+5. BLE power on battery: idle advertising, connected idle, transferring, BLE off.
+6. Transcription evaluation set (see `plan-transcription.md`).
+7. Open decision: iOS builds (Mac over SSH or macOS CI, Apple Developer account).
