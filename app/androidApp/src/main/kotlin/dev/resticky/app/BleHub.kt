@@ -308,7 +308,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
     @Volatile var updating = false
         set(value) {
             field = value
-            gatt?.requestConnectionPriority(if (value) BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+            if (value) gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
             if (!value) {
                 push()
                 scope.launch { pushLists() }
@@ -410,6 +410,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             scope.launch { hub.weatherStyle.collect { push() } },
             scope.launch { hub.hourFormat.collect { push() } },
             scope.launch { hub.sound.collect { push() } },
+            scope.launch { hub.buzzHz.collect { push() } },
             scope.launch { hub.night.collect { push() } },
             scope.launch { hub.home.collect { push() } },
             scope.launch {

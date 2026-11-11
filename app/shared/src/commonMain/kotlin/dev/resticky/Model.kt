@@ -20,6 +20,8 @@ const val WEATHER_SKETCH = "sketch"
 val WEATHER_STYLES = listOf(WEATHER_SKETCH, "big", "journal", "week")
 const val SOUND_BEEP = "beep"
 val SOUNDS = listOf("off", SOUND_BEEP, "buzz")
+const val BUZZ_HZ = 175
+val BUZZ_RANGE = 60..1000
 const val NIGHT_OFF = "off"
 private val NIGHT = Regex("""^([01]\d|2[0-3]):(00|30)-([01]\d|2[0-3]):(00|30)$""")
 
@@ -227,6 +229,7 @@ data class Checkin(
     val link: String = "",
     val marks: List<Mark> = emptyList(),
     val sound: String? = null,
+    @SerialName("buzz_hz") val buzzHz: Int? = null,
     val home: String? = null,
     val night: String? = null,
 )
@@ -283,6 +286,7 @@ data class CheckinReply(
     @SerialName("weather_style") val weatherStyle: String,
     @SerialName("hour_format") val hourFormat: String,
     val sound: String,
+    @SerialName("buzz_hz") val buzzHz: Int,
     val home: String,
     val night: String,
 )
@@ -296,6 +300,7 @@ data class DisplayInfo(
     @SerialName("weather_style") val weatherStyle: String,
     @SerialName("hour_format") val hourFormat: String,
     val sound: String,
+    @SerialName("buzz_hz") val buzzHz: Int,
     val home: String,
     val night: String,
 )

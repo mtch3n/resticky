@@ -11,6 +11,10 @@ import dev.resticky.validNight
 import dev.resticky.HOME_SCREENS
 import dev.resticky.SOUNDS
 import dev.resticky.SOUND_BEEP
+import dev.resticky.BUZZ_HZ
+import dev.resticky.BUZZ_RANGE
+import dev.resticky.FRAME_BUZZ_TEST
+import dev.resticky.frame
 import dev.resticky.HOUR_24
 import dev.resticky.HOUR_FORMATS
 import dev.resticky.FirmwareShelf
@@ -82,6 +86,15 @@ class HubApp : Application() {
         log("INFO night set night=$value")
     }
 
+    fun setBuzzHz(hz: Int) {
+        hub.setBuzzHz(hz)
+        log("INFO buzz set hz=$hz")
+    }
+
+    fun buzzTest(hz: Int) {
+        if (hz in BUZZ_RANGE) ble.send(frame(FRAME_BUZZ_TEST, "{\"hz\":$hz}".encodeToByteArray()))
+    }
+
     fun setSound(sound: String) {
         hub.setSound(sound)
         log("INFO sound set sound=$sound")
@@ -138,6 +151,8 @@ class HubApp : Application() {
         hub.clockFace.value = prefs.getString("clock_face", null)?.takeIf { it in CLOCK_FACES } ?: CLOCK_DIAL
         hub.weatherStyle.value = prefs.getString("weather_style", null)?.takeIf { it in WEATHER_STYLES } ?: WEATHER_SKETCH
         hub.hourFormat.value = prefs.getString("hour_format", null)?.takeIf { it in HOUR_FORMATS } ?: HOUR_24
+        hub.buzzSetting.load(prefs.getInt("buzz_hz", BUZZ_HZ).takeIf { it in BUZZ_RANGE } ?: BUZZ_HZ)
+        scope.launch { hub.buzzHz.collect { prefs.edit().putInt("buzz_hz", it).apply() } }
         hub.soundSetting.load(prefs.getString("sound", null)?.takeIf { it in SOUNDS } ?: SOUND_BEEP)
         hub.homeSetting.load(prefs.getString("home", null)?.takeIf { it in HOME_SCREENS } ?: HOME_APPS)
         scope.launch { hub.sound.collect { prefs.edit().putString("sound", it).apply() } }

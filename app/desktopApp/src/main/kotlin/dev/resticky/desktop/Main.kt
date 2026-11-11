@@ -33,6 +33,8 @@ import dev.resticky.validNight
 import dev.resticky.HOME_SCREENS
 import dev.resticky.SOUNDS
 import dev.resticky.SOUND_BEEP
+import dev.resticky.BUZZ_HZ
+import dev.resticky.BUZZ_RANGE
 import dev.resticky.HOUR_24
 import dev.resticky.HOUR_FORMATS
 import dev.resticky.HUB_VERSION
@@ -331,6 +333,7 @@ fun main(args: Array<String>) {
     hub.weatherStyle.value = weatherStyle
     hub.hourFormat.value = hourFormat
     hub.soundSetting.load(sound)
+    hub.buzzSetting.load(flags.string("buzz-hz", "$BUZZ_HZ").toInt().also { require(it in BUZZ_RANGE) { "-buzz-hz must be in $BUZZ_RANGE" } })
     hub.nightSetting.load(night)
     hub.homeSetting.load(homeScreen)
     val announcer = if (flags.string("mdns", "true") == "true") Announcer(port) else null

@@ -49,4 +49,22 @@ class SoundTest {
         hub.setHome("tv")
         assertEquals("clock", hub.home.value)
     }
+
+    @Test
+    fun buzzPitchFollowsTheSameRule() = runTest {
+        val root = Path(SystemTemporaryDirectory, "resticky-buzz-${Random.nextLong().toULong()}")
+        val store = Store(root)
+        val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        suspend fun report(hz: Int?) = hub.checkin(Checkin("ab", buzzHz = hz), "wifi")
+        assertEquals(175, hub.buzzHz.value)
+        report(300)
+        assertEquals(300, hub.buzzHz.value)
+        report(5000)
+        assertEquals(300, hub.buzzHz.value)
+        hub.setBuzzHz(120)
+        report(300)
+        assertEquals(120, hub.display().buzzHz)
+        hub.setBuzzHz(10)
+        assertEquals(120, hub.buzzHz.value)
+    }
 }

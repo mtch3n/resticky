@@ -106,6 +106,7 @@ class HubContractTest {
         assertTrue(r.json.jsonObject.getValue("weather_style").jsonPrimitive.content in setOf("sketch", "big", "journal", "week"))
         assertTrue(r.json.jsonObject.getValue("hour_format").jsonPrimitive.content in setOf("24", "12"))
         assertTrue(r.json.jsonObject.getValue("sound").jsonPrimitive.content in setOf("off", "beep", "buzz"))
+        assertTrue(r.json.jsonObject.getValue("buzz_hz").jsonPrimitive.int in 60..1000)
         assertTrue(Regex("^off$|^([01]\\d|2[0-3]):(00|30)-([01]\\d|2[0-3]):(00|30)$").matches(r.json.jsonObject.getValue("night").jsonPrimitive.content))
         assertTrue(r.json.jsonObject.getValue("home").jsonPrimitive.content in setOf("apps", "clock", "weather", "recorder", "todo"))
         assertTrue(!r.json.jsonObject.containsKey("install"))

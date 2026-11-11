@@ -279,6 +279,12 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSound(sound: String) = app.setSound(sound)
 
+    val buzzHz: StateFlow<Int> = app.hub.buzzHz
+
+    fun setBuzzHz(hz: Int) = app.setBuzzHz(hz)
+
+    fun buzzTest(hz: Int) = app.buzzTest(hz)
+
     val night: StateFlow<String> = app.hub.night
 
     fun setNight(value: String) = app.setNight(value)

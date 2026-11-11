@@ -122,7 +122,7 @@ option (default `dial`). `weather_style` is the style of the Weather app: `sketc
 (big picture), `journal` or `week`. The user selects it on the phone (Sticky settings › Weather › Style);
 the laptop hub takes it from the `-weather-style <name>` option (default `sketch`). `hour_format` is `"24"` (the
 default) or `"12"`: the hour format of all times on the device. The user selects it on the phone (Sticky settings ›
-Clock › Hours); the laptop hub takes it from the `-hour-format 12|24` option. `sound` (default `beep`) is the
+Clock › Hours); the laptop hub takes it from the `-hour-format 12|24` option. `buzz_hz` (default 175, range 60–1000) is the pitch of the Buzz feedback in Hz, with the same newest-change rule as `sound`: phone Sticky settings › Feedback › Buzz pitch (with Test), the Sticky Settings › Device presets, laptop hub `-buzz-hz <n>`. `sound` (default `beep`) is the
 feedback of the Sticky for buttons and marks: `off`, `beep` (short high tones) or `buzz` (short low pulses that
 feel like a phone vibration; the passive buzzer cannot shake). Phone: Sticky settings › Feedback; laptop hub:
 `-sound off|beep|buzz`. The Sticky has its own setting too (Settings › Device › Feedback), and the newest change
@@ -538,6 +538,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 22 | `ota_cancel` | hub → device | empty: abort the update |
 | 23 | `lists` | hub → device | `{"transcripts":[transcript item],"todos":{"open":[todo],"done":[todo]}}`: the same items as `GET /api/transcripts` and `GET /api/todos` for the linked device. At most 40960 bytes (see "BLE-only mode"). |
 | 24 | `todo_set` | device → hub | `{"id":"<to-do id>","done":true\|false}`: `id` is the `id` of a to-do item. The hub applies it as `PUT /api/todos/{device}/{session}/{index}` with its current time as `at`, then sends a new `lists` frame. |
+| 25 | `buzz_test` | hub → device | `{"hz":<60–1000>}`: the Sticky plays the buzz pattern once at this pitch, also when Feedback is not Buzz. Firmware 0.15.0. |
 
 All JSON payloads are UTF-8 with no terminating zero byte.
 

@@ -135,6 +135,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val hourFormat by model.hourFormat.collectAsState()
     val weatherStyle by model.weatherStyle.collectAsState()
     val sound by model.sound.collectAsState()
+    val buzzHz by model.buzzHz.collectAsState()
     val home by model.home.collectAsState()
     val night by model.night.collectAsState()
     val chosen = calendarList.count { it.id in calendarChoice.selected }
@@ -164,7 +165,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                         "${optionName(WEATHER_STYLE, weatherStyle)} · ${weatherReport.place.ifEmpty { if (weatherSettings.mode == MODE_PHONE) "From phone" else "Fixed city" }}",
                         sound, nightLabel(night), wifiSummary(hub.sticky), healthStatus(hub.sticky), offer,
                     ),
-                    back, model::enterPasskey, pair, model::forget, model::setSound, { model.checkUpdates() }, { model.updateSticky() }, { model.cancelSticky() },
+                    back, model::enterPasskey, pair, model::forget, model::setSound, buzzHz, model::setBuzzHz, model::buzzTest, { model.checkUpdates() }, { model.updateSticky() }, { model.cancelSticky() },
                 ) { stack.add(it) }
                 Detail.Pipeline -> PipelineScreen(hub, runs, back)
                 Detail.Health -> {

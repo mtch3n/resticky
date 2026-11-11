@@ -52,6 +52,10 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.withStyle
 import dev.resticky.CLEANED
 import dev.resticky.SOUNDS
+import dev.resticky.BUZZ_RANGE
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Slider
 import dev.resticky.cleanText
 import dev.resticky.skipRanges
 import androidx.compose.ui.text.font.FontWeight
@@ -868,6 +872,26 @@ private fun CodeEntry(enabled: Boolean, onCode: (String) -> Unit) {
     }
 }
 
+@Composable
+private fun BuzzPitch(hz: Int, set: (Int) -> Unit, test: (Int) -> Unit) {
+    var value by remember(hz) { mutableStateOf(hz.toFloat()) }
+    Card {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Buzz pitch", style = Type.row, modifier = Modifier.weight(1f))
+            Text("${value.toInt()} Hz", style = Type.row)
+        }
+        Slider(
+            value = value,
+            onValueChange = { value = it },
+            onValueChangeFinished = { set(value.toInt()) },
+            valueRange = BUZZ_RANGE.first.toFloat()..BUZZ_RANGE.last.toFloat(),
+            steps = (BUZZ_RANGE.last - BUZZ_RANGE.first) / 20 - 1,
+            colors = SliderDefaults.colors(thumbColor = Ink.black, activeTrackColor = Ink.black, inactiveTrackColor = Ink.navLine, activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent),
+        )
+        OutlinedButton(onClick = { test(value.toInt()) }, modifier = Modifier.fillMaxWidth()) { Text("Test", style = Type.row) }
+    }
+}
+
 class StickyDisplay(val home: String, val clock: String, val weather: String, val sound: String, val night: String, val wifi: String, val health: String, val firmware: FirmwareView)
 
 class FirmwareView(val current: String?, val latest: String?, val checkedMs: Long, val state: FwState, val connected: Boolean) {
@@ -995,6 +1019,9 @@ fun StickyScreen(
     pair: () -> Unit,
     forget: () -> Unit,
     setSound: (String) -> Unit,
+    buzzHz: Int,
+    setBuzzHz: (Int) -> Unit,
+    buzzTest: (Int) -> Unit,
     checkFirmware: () -> Unit,
     updateFirmware: () -> Unit,
     cancelFirmware: () -> Unit,
@@ -1052,6 +1079,10 @@ fun StickyScreen(
     item { Section("Feedback") }
     gap()
     item { Segmented(SOUNDS.map { it to it.replaceFirstChar(Char::uppercase) }, display.sound, big = true, onSelect = setSound) }
+    if (display.sound == "buzz") {
+        gap()
+        item { BuzzPitch(buzzHz, setBuzzHz, buzzTest) }
+    }
     gap()
     item { Section("Sticky") }
     gap()

@@ -104,14 +104,20 @@ class Hub(
     val weatherStyle = MutableStateFlow(WEATHER_SKETCH)
     val hourFormat = MutableStateFlow(HOUR_24)
     val soundSetting = DeviceSetting(SOUND_BEEP)
+    val buzzSetting = DeviceSetting(BUZZ_HZ)
     val homeSetting = DeviceSetting(HOME_APPS)
     val sound: StateFlow<String> get() = soundSetting.value
+    val buzzHz: StateFlow<Int> get() = buzzSetting.value
     val home: StateFlow<String> get() = homeSetting.value
     val nightSetting = DeviceSetting(NIGHT_OFF)
     val night: StateFlow<String> get() = nightSetting.value
 
     fun setNight(value: String) {
         if (validNight(value)) nightSetting.set(value)
+    }
+
+    fun setBuzzHz(hz: Int) {
+        if (hz in BUZZ_RANGE) buzzSetting.set(hz)
     }
 
     fun setSound(sound: String) {
@@ -137,6 +143,7 @@ class Hub(
         val now = Clock.System.now()
         devicesLock.withLock {
             devices[c.device] = c.copy(seen = now, link = link, marks = emptyList())
+            c.buzzHz?.takeIf { it in BUZZ_RANGE }?.let { if (buzzSetting.report(it)) log("INFO buzz from device device=${c.device} hz=$it") }
             c.sound?.takeIf { it in SOUNDS }?.let { if (soundSetting.report(it)) log("INFO sound from device device=${c.device} sound=$it") }
             c.night?.takeIf(::validNight)?.let { if (nightSetting.report(it)) log("INFO night from device device=${c.device} night=$it") }
             c.home?.takeIf { it in HOME_SCREENS }?.let { if (homeSetting.report(it)) log("INFO home from device device=${c.device} home=$it") }
@@ -166,7 +173,7 @@ class Hub(
 
     suspend fun healthDevices(): List<String> = healthLog.devices()
 
-    fun display(): DisplayInfo = DisplayInfo(clockFace.value, weatherStyle.value, hourFormat.value, sound.value, home.value, night.value)
+    fun display(): DisplayInfo = DisplayInfo(clockFace.value, weatherStyle.value, hourFormat.value, sound.value, buzzHz.value, home.value, night.value)
 
     fun agendaNow(): Agenda = agenda.value ?: buildAgenda(emptyList(), false, Clock.System.now(), TimeZone.currentSystemDefault())
 
@@ -201,7 +208,7 @@ class Hub(
             val c = runCatching { hubJson.decodeFromString<Checkin>(call.receiveText()) }.getOrNull()
             if (c == null || !ID_PATTERN.matches(c.device)) return@post call.fail(HttpStatusCode.BadRequest, "body must be JSON with a hex device field")
             checkin(c, "wifi")
-            call.json(hubJson.encodeToString(CheckinReply(HUB_VERSION, utcOffsetMin(), clockFace.value, weatherStyle.value, hourFormat.value, sound.value, home.value, night.value)))
+            call.json(hubJson.encodeToString(CheckinReply(HUB_VERSION, utcOffsetMin(), clockFace.value, weatherStyle.value, hourFormat.value, sound.value, buzzHz.value, home.value, night.value)))
         }
         post("/api/chunks") {
             val h = call.request.headers

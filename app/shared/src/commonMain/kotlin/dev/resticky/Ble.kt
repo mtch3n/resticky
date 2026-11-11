@@ -23,6 +23,7 @@ const val FRAME_OTA_STATUS = 21
 const val FRAME_OTA_CANCEL = 22
 const val FRAME_LISTS = 23
 const val FRAME_TODO_SET = 24
+const val FRAME_BUZZ_TEST = 25
 const val LISTS_MAX = 40 * 1024
 private const val LISTS_FIELD = 300
 const val OTA_WINDOW = 16 * 1024
