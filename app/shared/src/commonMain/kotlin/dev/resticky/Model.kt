@@ -18,6 +18,8 @@ const val CLOCK_DIAL = "dial"
 val CLOCK_FACES = listOf(CLOCK_DIAL, "digits", "words", "note", "flip")
 const val WEATHER_SKETCH = "sketch"
 val WEATHER_STYLES = listOf(WEATHER_SKETCH, "big", "journal", "week")
+const val HOME_APPS = "apps"
+val HOME_SCREENS = listOf(HOME_APPS, "clock", "weather", "recorder", "todo")
 const val HOUR_24 = "24"
 val HOUR_FORMATS = listOf(HOUR_24, "12")
 val ID_PATTERN = Regex("^[0-9a-f]{1,16}$")
@@ -201,6 +203,7 @@ data class Checkin(
     val link: String = "",
     val marks: List<Mark> = emptyList(),
     val beep: Boolean? = null,
+    val home: String? = null,
 )
 
 @Serializable
@@ -236,7 +239,7 @@ data class CheckinReply(
     @SerialName("weather_style") val weatherStyle: String,
     @SerialName("hour_format") val hourFormat: String,
     val beep: Boolean,
-    val install: String? = null,
+    val home: String,
 )
 
 @Serializable
@@ -248,6 +251,7 @@ data class DisplayInfo(
     @SerialName("weather_style") val weatherStyle: String,
     @SerialName("hour_format") val hourFormat: String,
     val beep: Boolean,
+    val home: String,
 )
 
 @Serializable

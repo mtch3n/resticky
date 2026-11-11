@@ -70,13 +70,7 @@ class HubService : Service() {
                 }
             }
             launch { app.weather.run() }
-            launch {
-                while (true) {
-                    app.releases.check(force = false)
-                    app.releases.mirrorFirmware(app.firmware)
-                    delay(1.hours)
-                }
-            }
+
             launch {
                 app.calendars.choice.collectLatest {
                     while (true) {

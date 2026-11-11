@@ -255,6 +255,27 @@ private fun FaceStrip(options: List<PickerOption>, selected: String, select: (St
     }
 }
 
+val HOME_SCREEN = listOf(
+    Triple("apps", "Apps", "All apps as tiles"),
+    Triple("clock", "Clock", "The clock face"),
+    Triple("weather", "Weather", "The weather style"),
+    Triple("recorder", "Recorder", "Recording state and level"),
+    Triple("todo", "To-do", "Open to-dos"),
+)
+
+@Composable
+fun HomeScreenPicker(home: String, back: () -> Unit, select: (String) -> Unit) = Page("Home screen", back) {
+    item {
+        CardList {
+            HOME_SCREEN.forEachIndexed { i, (id, name, line) ->
+                ListRow(name, line, first = i == 0, lead = { Radio(home == id) }, onClick = { select(id) })
+            }
+        }
+    }
+    gap()
+    item { Text("The Sticky shows this after start and on Home; tap the app name to open all apps.", style = Type.small, modifier = Modifier.padding(horizontal = 4.dp)) }
+}
+
 @Composable
 fun ClockScreen(clockFace: String, hourFormat: String, back: () -> Unit, selectClockFace: (String) -> Unit, selectHourFormat: (String) -> Unit) = Page("Clock", back) {
     item { Section("Clock face") }

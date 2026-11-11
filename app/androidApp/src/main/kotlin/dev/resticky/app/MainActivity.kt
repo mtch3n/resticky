@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -82,6 +83,7 @@ sealed interface Detail {
     data object Places : Detail
     data class PlaceEdit(val place: dev.resticky.NamedPlace?) : Detail
     data object Clock : Detail
+    data object HomeScreen : Detail
     data object Settings : Detail
     data object Updates : Detail
     data object Pipeline : Detail
@@ -110,15 +112,15 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val release by model.release.collectAsState()
     val releaseChecked by model.releaseChecked.collectAsState()
     val updateStatus by model.updateStatus.collectAsState()
-    val firmwareReady by model.firmwareReady.collectAsState()
-    val installAsked by model.install.collectAsState()
-    val offer = FirmwareOffer(hub.sticky?.firmware?.takeIf { it.isNotEmpty() }, release?.firmware?.first, firmwareReady, hub.sticky?.wifiSsid?.isNotEmpty() == true, installAsked)
+    val firmwareState by model.firmwareState.collectAsState()
+    val offer = FirmwareView(hub.sticky?.firmware?.takeIf { it.isNotEmpty() }, release?.firmware?.first, releaseChecked, firmwareState, ble.status == LinkStatus.Ready)
     val updatesLabel = release?.takeIf { dev.resticky.isNewer(it.version, model.appVersion) }?.let { "Version ${it.version} is ready" } ?: "resticky ${model.appVersion}"
     var snapPath by rememberSaveable { mutableStateOf<String?>(null) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         snapPath?.let { path -> if (ok) model.savePhoto(java.io.File(path)) else java.io.File(path).delete() }
         snapPath = null
     }
+    val pickForSticky = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { model.showOnSticky(it) } }
     val snap = {
         val (file, uri) = model.newSnap()
         snapPath = file.path
@@ -131,6 +133,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val hourFormat by model.hourFormat.collectAsState()
     val weatherStyle by model.weatherStyle.collectAsState()
     val beep by model.beep.collectAsState()
+    val home by model.home.collectAsState()
     val chosen = calendarList.count { it.id in calendarChoice.selected }
     val calendarsLabel = if (calendarsAllowed && calendarChoice.show) "$chosen calendar${if (chosen == 1) "" else "s"}" else "Off"
     val placesLabel = placeList.joinToString(", ") { it.name }.ifEmpty { "None yet" }
@@ -153,11 +156,12 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 Detail.Sticky -> StickyScreen(
                     stickyName(hub, ble), ble, hub.sticky,
                     StickyDisplay(
+                        HOME_SCREEN.firstOrNull { it.first == home }?.second ?: home,
                         "${optionName(CLOCK_FACE, face)} · $hourFormat h",
                         "${optionName(WEATHER_STYLE, weatherStyle)} · ${weatherReport.place.ifEmpty { if (weatherSettings.mode == MODE_PHONE) "From phone" else "Fixed city" }}",
                         beep, wifiSummary(hub.sticky), healthStatus(hub.sticky), offer,
                     ),
-                    back, model::enterPasskey, pair, model::forget, model::setBeep, model::updateSticky,
+                    back, model::enterPasskey, pair, model::forget, model::setBeep, { model.checkUpdates() }, { model.updateSticky() },
                 ) { stack.add(it) }
                 Detail.Pipeline -> PipelineScreen(hub, runs, back)
                 Detail.Health -> {
@@ -169,6 +173,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                     val transcribe by model.transcribe.collectAsState()
                     SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
                 }
+                Detail.HomeScreen -> HomeScreenPicker(home, back, model::setHome)
                 Detail.Clock -> {
                     ClockScreen(face, hourFormat, back, model::setClockFace, model::setHourFormat)
                 }
@@ -227,7 +232,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 is Detail.WifiAdd -> WifiAddScreen(d.network, back, model::addWifi)
                 Detail.Updates -> UpdatesScreen(
                     model.appVersion, release, releaseChecked, updateStatus, stickyName(hub, ble), offer, back,
-                    { model.checkUpdates() }, { model.installApp() }, model::updateSticky,
+                    { model.checkUpdates() }, { model.installApp() }, { model.updateSticky() },
                 )
                 null -> when (tab) {
                     Tab.Hub -> {
@@ -238,6 +243,9 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                             HubTile(R.drawable.ic_map_pin, "Places", placesLabel) { stack.add(Detail.Places) },
                             HubTile(R.drawable.ic_calendar, "Calendars", calendarsLabel) { stack.add(Detail.Calendars) },
                             HubTile(R.drawable.ic_heart_rate_monitor, "Health", healthStatus(hub.sticky)) { stack.add(Detail.Health) },
+                            HubTile(R.drawable.ic_photo, "Photo to Sticky", "Pick an image") {
+                                pickForSticky.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            },
                             HubTile(R.drawable.ic_settings, "App settings", "Models, transcribe, hubs") { stack.add(Detail.Settings) },
                         )
                         HubScreen(hub, ble, tiles, { stack.add(Detail.Sticky) }) { choosing = true }

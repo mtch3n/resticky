@@ -5,6 +5,8 @@ import android.content.Intent
 import android.util.Log
 import dev.resticky.CLOCK_DIAL
 import dev.resticky.CLOCK_FACES
+import dev.resticky.HOME_APPS
+import dev.resticky.HOME_SCREENS
 import dev.resticky.HOUR_24
 import dev.resticky.HOUR_FORMATS
 import dev.resticky.FirmwareShelf
@@ -46,6 +48,7 @@ class HubApp : Application() {
     lateinit var releases: Releases
     lateinit var firmware: FirmwareShelf
     lateinit var updater: Updater
+    lateinit var stickyUpdate: StickyUpdate
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val prefs by lazy { getSharedPreferences("hub", MODE_PRIVATE) }
 
@@ -73,6 +76,11 @@ class HubApp : Application() {
     fun setBeep(on: Boolean) {
         hub.setBeep(on)
         log("INFO beep set beep=$on")
+    }
+
+    fun setHome(screen: String) {
+        hub.setHome(screen)
+        log("INFO home set home=$screen")
     }
 
     fun setWeatherStyle(style: String) {
@@ -116,12 +124,15 @@ class HubApp : Application() {
         firmware = FirmwareShelf(Path(File(filesDir, "firmware").path))
         releases = Releases(Path(File(filesDir, "releases.json").path), ::log, "resticky-android/${packageManager.getPackageInfo(packageName, 0).versionName}")
         updater = Updater(this, releases)
+        stickyUpdate = StickyUpdate(this)
         hub = Hub(store, pipeline, weather, firmware, ::log, ::tagPlace)
         hub.clockFace.value = prefs.getString("clock_face", null)?.takeIf { it in CLOCK_FACES } ?: CLOCK_DIAL
         hub.weatherStyle.value = prefs.getString("weather_style", null)?.takeIf { it in WEATHER_STYLES } ?: WEATHER_SKETCH
         hub.hourFormat.value = prefs.getString("hour_format", null)?.takeIf { it in HOUR_FORMATS } ?: HOUR_24
-        hub.beep.value = prefs.getBoolean("beep", true)
+        hub.beepSetting.load(prefs.getBoolean("beep", true))
+        hub.homeSetting.load(prefs.getString("home", null)?.takeIf { it in HOME_SCREENS } ?: HOME_APPS)
         scope.launch { hub.beep.collect { prefs.edit().putBoolean("beep", it).apply() } }
+        scope.launch { hub.home.collect { prefs.edit().putString("home", it).apply() } }
         companion = Companion(this)
         ble = BleHub(this, hub, scope) { companion.address }
     }

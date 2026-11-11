@@ -19,13 +19,12 @@ import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import io.ktor.client.plugins.onDownload
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.days
 
 const val RELEASES_REPO = "mtch3n/resticky"
 const val APK_ASSET = "resticky-android.apk"
 private const val LATEST = "https://api.github.com/repos/$RELEASES_REPO/releases/latest"
-private val CHECK_EVERY = 1.days
 private val FIRMWARE_ASSET = Regex("""^resticky-firmware-(\d+\.\d+\.\d+)\.bin$""")
 private val SEMVER = Regex("""(\d+)\.(\d+)\.(\d+)""")
 
@@ -90,9 +89,9 @@ class Releases(private val cacheFile: Path, private val log: (String) -> Unit, p
         SystemFileSystem.sink(cacheFile).buffered().use { it.writeString(hubJson.encodeToString(cache)) }
     }
 
-    suspend fun check(force: Boolean): Release? = lock.withLock {
+    suspend fun check(): Release? = lock.withLock {
         val now = Clock.System.now().toEpochMilliseconds()
-        if (now < cache.retryMs || !force && now - cache.checkedMs < CHECK_EVERY.inWholeMilliseconds) return@withLock cache.release
+        if (now < cache.retryMs) return@withLock cache.release
         val res = runCatching {
             http.get(LATEST) {
                 header("User-Agent", userAgent)
@@ -123,8 +122,11 @@ class Releases(private val cacheFile: Path, private val log: (String) -> Unit, p
         cache.release
     }
 
-    suspend fun download(asset: ReleaseAsset): ByteArray {
-        val res = http.get(asset.url) { header("User-Agent", userAgent) }
+    suspend fun download(asset: ReleaseAsset, progress: (Long, Long) -> Unit = { _, _ -> }): ByteArray {
+        val res = http.get(asset.url) {
+            header("User-Agent", userAgent)
+            onDownload { done, total -> progress(done, total ?: asset.size) }
+        }
         check(res.status == HttpStatusCode.OK) { "download failed: ${res.status.value}" }
         return res.bodyAsBytes()
     }

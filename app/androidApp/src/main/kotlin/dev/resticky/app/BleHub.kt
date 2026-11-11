@@ -25,8 +25,9 @@ import dev.resticky.FRAME_CHECKIN
 import dev.resticky.FRAME_AGENDA
 import dev.resticky.FRAME_CHUNK
 import dev.resticky.FRAME_DISPLAY
-import dev.resticky.FRAME_INSTALL
 import dev.resticky.FRAME_PHOTO
+import dev.resticky.FRAME_OTA_STATUS
+import dev.resticky.OtaStatus
 import dev.resticky.FRAME_TIME
 import dev.resticky.FRAME_WEATHER
 import dev.resticky.FRAME_WEATHER_SET
@@ -81,6 +82,8 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
 
     val state = MutableStateFlow(BleState(address = sticky()))
     private val outbox = ArrayDeque<ByteArray>()
+    val otaStatus = MutableStateFlow<OtaStatus?>(null)
+    val ready: Boolean get() = state.value.status == LinkStatus.Ready
     private var writing = false
     private val sent = mutableMapOf<Int, String>()
     private var watchers = emptyList<Job>()
@@ -191,6 +194,12 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
                     push()
                 }
                 .onFailure { log("WARN ble bad checkin ${it.message}") }
+            FRAME_OTA_STATUS -> runCatching { hubJson.decodeFromString<OtaStatus>(frame.payload.decodeToString()) }
+                .onSuccess {
+                    otaStatus.value = it
+                    log("INFO ble ota_status state=${it.state} percent=${it.percent}")
+                }
+                .onFailure { log("WARN ble bad ota_status ${it.message}") }
             FRAME_WEATHER_SET -> runCatching { hubJson.decodeFromString<WeatherChange>(frame.payload.decodeToString()) }
                 .onSuccess { scope.launch { if (!hub.weather.change(it)) log("WARN ble bad weather_set") else log("INFO ble weather_set mode=${it.mode} units=${it.units}") } }
                 .onFailure { log("WARN ble bad weather_set ${it.message}") }
@@ -248,7 +257,16 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         sendIfChanged(FRAME_WEATHER, hubJson.encodeToString(hub.weather.report.value))
         sendIfChanged(FRAME_AGENDA, hubJson.encodeToString(hub.agendaNow()))
         sendIfChanged(FRAME_DISPLAY, hubJson.encodeToString(hub.display()))
-        hub.install.value?.let { sendIfChanged(FRAME_INSTALL, """{"version":"$it"}""") }
+    }
+
+    suspend fun sendDrained(bytes: ByteArray): Boolean {
+        if (!ready) return false
+        write(bytes)
+        while (synchronized(outbox) { outbox.isNotEmpty() || writing }) {
+            if (!ready) return false
+            kotlinx.coroutines.delay(5)
+        }
+        return ready
     }
 
     fun sendPhoto(frame: ByteArray): Boolean {
@@ -302,7 +320,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             scope.launch { hub.weatherStyle.collect { push() } },
             scope.launch { hub.hourFormat.collect { push() } },
             scope.launch { hub.beep.collect { push() } },
-            scope.launch { hub.install.collect { push() } },
+            scope.launch { hub.home.collect { push() } },
         )
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_PAIRING_REQUEST)

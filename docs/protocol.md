@@ -20,7 +20,7 @@ with a bad ID gets `400`.
 | Method and path | Request | Response |
 |---|---|---|
 | `GET /api/hello` | — | `200`, `{"service":"resticky-hub","version":"<v>"}` |
-| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `beep` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","beep":true|false,"install":"<x.y.z>"}` (see "Time", "Display" and "Firmware updates"; `install` only after the user asked for an update). `400` if the body is not JSON or the device ID is bad. |
+| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `beep` and `home` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","beep":true|false,"home":"<screen>"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
 | `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` after the chunk is on disk. `400` if a header is missing or bad. A chunk that has the same device, session and sequence as a stored chunk replaces the file but does not add its duration again. |
 | `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
 | `GET /api/todos?device=<id>` | — | `200`, `{"open":[todo],"done":[todo]}`. `done` has only the to-dos done since 00:00 local time today. |
@@ -119,10 +119,13 @@ button and alert sounds of the Sticky on or off: phone Sticky settings › Sound
 `-beep on|off`. The Sticky has its own switch too, and the newest change wins: the device sends its value in
 each check-in as `"beep"`. When it differs from the hub value, the hub takes the device value, except after a
 change on the hub: then the hub ignores the device value until a check-in reports the new hub value (the
-device applied it).
+device applied it). `home` (default `apps`) is the screen the Sticky shows after start and on Home: `apps` (all
+apps as tiles), `clock`, `weather`, `recorder` or `todo` (firmware 0.14.4). Phone: Sticky settings › Home screen;
+laptop hub: `-home <name>`. The device reports its value in the check-in as `"home"`, with the same newest-change
+rule as `beep`. The hub ignores a value it does not know.
 
 - HTTP: in the response to `POST /api/checkin`.
-- BLE: in the `display` frame, `{"clock_face":"dial","weather_style":"sketch","hour_format":"24","beep":true}`. The hub sends it when the
+- BLE: in the `display` frame, `{"clock_face":"dial","weather_style":"sketch","hour_format":"24","beep":true,"home":"apps"}`. The hub sends it when the
   link becomes ready and again when one of the values changes.
 
 The device ignores a face or a style that it does not know.
@@ -493,9 +496,12 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 12 | `weather_set` | device → hub | `{"mode","units"}`, the same as the body of `PUT /api/weather` |
 | 13 | `time` | hub → device | `{"utc_offset_min":<n>}` (see "Time") |
 | 14 | `display` | hub → device | `{"clock_face","weather_style","hour_format","beep"}` (see "Display") |
-| 15 | reserved | | |
-| 16 | `install` | hub → device | `{"version":"<x.y.z>"}`: the user asked for this firmware (see "Firmware updates") |
+| 15, 16 | reserved | | |
 | 17 | `photo` | hub → device | exactly 48000 bytes: a 480×800 portrait picture, row-major, 1 bit per pixel, the most significant bit first, 1 = black. The Sticky shows it full screen (full refresh) until the next touch or key and stores nothing. Needs firmware 0.14.1. |
+| 18 | `ota_begin` | hub → device | `{"version":"x.y.z","size":N}` (see "Firmware updates") |
+| 19 | `ota_data` | hub → device | u32 little-endian offset, then the bytes. Strictly sequential; the phone sends 4096-byte blocks (the device accepts frames up to 48005 bytes). |
+| 20 | `ota_end` | hub → device | empty |
+| 21 | `ota_status` | device → hub | `{"state":"ready\|writing\|ok\|error","percent":n}` |
 
 All JSON payloads are UTF-8 with no terminating zero byte.
 
@@ -541,17 +547,27 @@ The device ignores types that it does not know.
 - A new firmware starts in "pending verify". It confirms itself when it has written an audio chunk to the
   outbox and the hub answered a check-in (Wi-Fi or BLE), within 3 minutes. Otherwise, or if it crashes
   first, the bootloader starts the previous firmware.
-- Releases: both hubs ask the GitHub REST API (`GET https://api.github.com/repos/mtch3n/resticky/releases/latest`,
-  no token, `User-Agent: resticky-hub/<v>` or `resticky-android/<v>`, `If-None-Match` with the stored ETag) at most
-  once a day and when the user taps Check now (phone App settings › Updates). On `403`/`429` they wait until
-  `X-RateLimit-Reset`. The answer is cached (`releases.json`). A release has the assets `resticky-android.apk`,
-  `resticky-firmware-<x.y.z>.bin` and `resticky-hub-desktop.zip` (CI, tags `v*`).
-- Both hubs copy the release firmware into their firmware folder (`<x.y.z>.bin`), so `/api/firmware` offers it.
-  The laptop hub does this unless it runs with `-updates off` (the contract tests use it).
-- Update now (phone Sticky settings › Firmware, or Updates): the hub sets `install` to the version in the check-in
-  reply (HTTP) and sends the BLE `install` frame. The device installs it over Wi-Fi from the hub it reaches. The
-  hub clears `install` when a check-in reports that firmware. The phone shows the button only when its folder has a
-  newer firmware than the device and the device is on Wi-Fi. Required firmware change: act on `install`.
+- Releases are checked only by hand: the "Check for updates" button (phone App settings › Updates, Sticky
+  settings › Firmware). Only that button asks the GitHub REST API
+  (`GET https://api.github.com/repos/mtch3n/resticky/releases/latest`, no token, `User-Agent: resticky-android/<v>`,
+  `If-None-Match` with the stored ETag). On `403`/`429` the phone waits until `X-RateLimit-Reset`. The answer is
+  cached (`releases.json`). A release has the assets `resticky-android.apk`, `resticky-firmware-<x.y.z>.bin` and
+  `resticky-hub-desktop.zip` (CI, tags `v*`). The laptop hub never asks GitHub; its firmware folder is filled by
+  hand (or `firmware/tools/release.sh`).
+- After a check, the phone copies the release firmware into its firmware folder (`<x.y.z>.bin`), so its
+  `/api/firmware` offers it.
+- Update now (phone Sticky settings › Firmware, or Updates), always over BLE, also when the Sticky is on Wi-Fi
+  (firmware 0.14.3):
+  1. The phone downloads the release firmware (progress shown) unless its folder has it.
+  2. It sends `ota_begin` and waits up to 20 s for `ota_status` `ready`.
+  3. It sends `ota_data` blocks in order, each after the previous one is written; the progress is the larger of the
+     sent part and the device `percent` (`writing`, every 5 %). On `error` it stops and shows it; a new try starts
+     again with `ota_begin`.
+  4. It sends `ota_end` and waits up to 60 s for `ok` (image checked, boot slot set). The device restarts about
+     1.5 s later and runs the 3-minute health check (rollback on failure).
+  5. It waits up to 5 minutes for the first check-in after the restart: the new version gives "Updated to x.y.z",
+     another version "Rolled back to …". For 4 more minutes, a check-in with another version changes it to
+     "Rolled back".
 - Phone app update: App settings › Updates downloads `resticky-android.apk` and gives it to the Android package
   installer (`REQUEST_INSTALL_PACKAGES`; the user allows installs from resticky once and confirms each install).
   The APK must have the same signing key as the installed app.

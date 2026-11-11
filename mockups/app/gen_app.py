@@ -145,7 +145,8 @@ CHEV = icon("chevron-right", 20)
 SHEET = '<div style="position:absolute;left:0;top:0;width:412px;height:915px;background:rgba(0,0,0,.45)"></div><div style="position:absolute;left:0;bottom:0;width:412px;background:#fff;border-radius:28px 28px 0 0;padding:14px 16px 28px;display:flex;flex-direction:column;gap:14px"><div style="width:40px;height:5px;border-radius:3px;background:#ccc;align-self:center"></div>'
 
 TILES = [("device-mobile", "Sticky", "Wi-Fi, clock, sounds"), ("cloud", "Weather", "Lisbon · 18°"), ("map-pin", "Places", "Home, Office"),
-         ("calendar", "Calendars", "4 calendars"), ("heart-rate-monitor", "Health", "OK · 34 °C"), ("settings", "App settings", "Models, transcribe, hubs")]
+         ("calendar", "Calendars", "4 calendars"), ("heart-rate-monitor", "Health", "OK · 34 °C"), ("photo", "Photo to Sticky", "Pick an image"),
+         ("settings", "App settings", "Models, transcribe, hubs")]
 
 
 def sticky_card(extra=""):
@@ -168,16 +169,16 @@ page("device-picker", "Hub", sticky_card() + tiles(TILES), "Hub", foot=SHEET + f
 <div class=btn>{icon("plus", 20)}Pair a new Sticky</div></div>""")
 
 STICKY_ROWS = f"""{sec("Display")}
-{lst(li("Clock", "Dial · 24 h", icon("clock", 22), CHEV), li("Weather", "Sketch · Lisbon", icon("cloud", 22), CHEV))}
+{lst(li("Home screen", "Apps", icon("home", 22), CHEV), li("Clock", "Dial · 24 h", icon("clock", 22), CHEV), li("Weather", "Sketch · Lisbon", icon("cloud", 22), CHEV))}
 {sec("Sticky")}
 {lst(li("Sounds on the Sticky", "Button and alert sounds", icon("bell", 22), '<span class="sw sp"></span>'),
      li("Wi-Fi networks", "HomeWiFi and 1 more", icon("wifi", 22), CHEV), li("Health", "OK · 34 °C", icon("heart-rate-monitor", 22), CHEV))}"""
 
 page("sticky", "Sticky settings", f"""
-<div class="card dark" style="padding:18px 22px"><div class=h>Sticky · desk</div><div class=s style="margin-top:4px">Connected over Bluetooth · firmware 0.13.5</div></div>
+<div class="card dark" style="padding:18px 22px"><div class=h>Sticky · desk</div><div class=s style="margin-top:4px">Connected over Bluetooth · firmware 0.14.3</div></div>
 {STICKY_ROWS}
 {sec("Device")}
-{lst(li("Firmware 0.13.5", "Latest 0.13.6 · the Sticky installs it on Wi-Fi", "", '<span class="pill sp on">Update now</span>'), li("Link", "Bluetooth · Wi-Fi for large backlogs"))}
+{lst(li("Firmware 0.14.3", "Latest 0.14.4 · checked today 10:42", "", '<span class="pill sp on">Update now</span>'), li("Link", "Bluetooth · Wi-Fi for large backlogs"))}
 <div class=btn>Forget this Sticky</div>""", back=True)
 
 DIGIT = 'flex:1;height:58px;border-radius:14px;background:#2a2a2a;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700'
@@ -403,14 +404,31 @@ page("updates", "Updates", f"""
 <div class="btn on" style="margin-top:14px">{icon("download", 20, 2, "#fff")}Download and install</div>
 <div class=s style="margin-top:10px">Android asks you to confirm the install.</div></div>
 {sec("Sticky firmware")}
-{lst(li("Sticky · desk", "0.13.5 · latest 0.13.6", icon("device-mobile", 22), '<span class="pill sp on">Update now</span>'))}
-{sec("Hubs")}
-{lst(li("This phone", "Firmware 0.13.6 ready for the Sticky", icon("server", 22)))}
+{lst(li("Sticky · desk", "0.14.3 · latest 0.14.4", icon("device-mobile", 22), '<span class="pill sp on">Update now</span>'))}
 <div class=s style="padding:0 4px">Checked today 10:42 · github.com/mtch3n/resticky</div>
-<div class=btn>{icon("refresh", 20)}Check now</div>""", back=True)
+<div class=btn>{icon("refresh", 20)}Check for updates</div>""", back=True)
+
+BAR = lambda pct: f'<div class=bar2 style="margin-top:8px"><div style="width:{pct}%"></div></div>'
+def fwrow(title, sub, trail="", bar=None):
+    extra = BAR(bar) if bar is not None else ""
+    return f'<div class=li><span class=t style="flex:1"><b>{title}</b><span class=s>{sub}</span>{extra}</span>{trail}</div>'
+page("firmware-states", "Sticky settings", sec("Firmware · each state") + '<div class=list>' + "".join([
+    fwrow("Firmware 0.14.3", "Up to date · checked today 10:42", '<span class="pill sp" style="background:#fff">Check for updates</span>'),
+    fwrow("Firmware 0.14.3", "Latest 0.14.4 · checked today 10:42", '<span class="pill sp on">Update now</span>'),
+    fwrow("Downloading 0.14.4", "42 % · from GitHub", bar=42),
+    fwrow("Sending to the Sticky", "63 % · over Bluetooth · keep the phone near", bar=63),
+    fwrow("The Sticky restarts", "Waiting for it to connect again"),
+    fwrow("Updated to 0.14.4", "The Sticky checks itself for 3 minutes"),
+    fwrow("Rolled back to 0.14.3", "The new firmware failed its check", '<span class="pill sp" style="background:#fff">Try again</span>'),
+    fwrow("Update failed", "The Sticky reported an error while writing", '<span class="pill sp" style="background:#fff">Try again</span>'),
+]) + "</div>", back=True)
 
 
 GRID = lambda n: '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">' + "".join(
     f'<div style="height:118px;{THUMB};border-radius:12px">{icon("photo", 24, 2, "#666")}</div>' for _ in range(n)) + "</div>"
 page("photos", "Photos", sec("Product launch · today 13:12") + GRID(3) + sec("Weekly planning · yesterday 09:30") + GRID(2) + sec("Not linked")
      + lst(li("Today 08:12", "No session within 10 min", f'<div style="width:72px;height:52px;{THUMB}">{icon("photo", 20, 2, "#666")}</div>', '<span class=sp style="font-size:14px;font-weight:700">Attach</span>')), "Photos")
+
+page("home-screen", "Home screen", lst(*[li(n, d, radio(i == 0)) for i, (n, d) in enumerate([
+    ("Apps", "All apps as tiles"), ("Clock", "The clock face"), ("Weather", "The weather style"), ("Recorder", "Recording state and level"), ("To-do", "Open to-dos")])])
+    + '<div class=s style="padding:0 4px">The Sticky shows this after start and on Home; tap the app name to open all apps.</div>', back=True)

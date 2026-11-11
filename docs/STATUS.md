@@ -128,8 +128,8 @@ low power and storage use that we can profile.
   resampling) 1.4 % of one core (RTF 0.015); DPDFNet 2 (sherpa-onnx, DeepFilterNet family) 14.8 % (RTF 0.15; a second
   run 23.5 %); GTCRN 5.6 %. The app keeps DPDFNet 2 (better quality, no extra native library: sherpa-onnx is already
   in the app). DeepFilterNet 3 (libDF, Rust) was not measured: the permission system blocked the cargo build.
-- Updates (2026-11-10): see "Firmware updates" in `protocol.md`. On 2026-11-10 the GitHub API answered `404` for
-  `mtch3n/resticky` releases/latest (no release yet, or the repository is not public), so nothing was downloaded.
+- Updates (2026-11-11): only by hand (Check for updates); firmware goes to the Sticky over BLE (frames 18–21).
+  See "Firmware updates" in `protocol.md`.
 - Phone tests that need the device: `./gradlew :androidApp:assembleDebugAndroidTest`, install both APKs with
   `adb install -r` (never `connectedAndroidTest`: it uninstalls the app and its data), then
   `adb shell am instrument -w dev.resticky.app.test/androidx.test.runner.AndroidJUnitRunner`. `EngineTest` plays

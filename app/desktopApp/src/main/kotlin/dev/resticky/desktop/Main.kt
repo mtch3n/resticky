@@ -18,6 +18,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import dev.resticky.CLOCK_DIAL
 import dev.resticky.CLOCK_FACES
+import dev.resticky.HOME_APPS
+import dev.resticky.HOME_SCREENS
 import dev.resticky.HOUR_24
 import dev.resticky.HOUR_FORMATS
 import dev.resticky.HUB_VERSION
@@ -25,7 +27,6 @@ import dev.resticky.WEATHER_INTERVAL
 import dev.resticky.WEATHER_INTERVALS
 import dev.resticky.FirmwareShelf
 import dev.resticky.Hub
-import dev.resticky.Releases
 import dev.resticky.Pipeline
 import dev.resticky.SUMMARY_SCHEMA
 import dev.resticky.WEATHER_SKETCH
@@ -244,12 +245,15 @@ fun main(args: Array<String>) {
     require(hourFormat in HOUR_FORMATS) { "-hour-format must be one of ${HOUR_FORMATS.joinToString("|")}" }
     val beep = flags.string("beep", "on")
     require(beep in setOf("on", "off")) { "-beep must be on or off" }
+    val homeScreen = flags.string("home", HOME_APPS)
+    require(homeScreen in HOME_SCREENS) { "-home must be one of ${HOME_SCREENS.joinToString("|")}" }
     val firmware = FirmwareShelf(IoPath(flags.string("firmware", "$home/.local/share/resticky/firmware")))
     val hub = Hub(store, pipeline, weather, firmware, ::log)
     hub.clockFace.value = clockFace
     hub.weatherStyle.value = weatherStyle
     hub.hourFormat.value = hourFormat
-    hub.beep.value = beep == "on"
+    hub.beepSetting.load(beep == "on")
+    hub.homeSetting.load(homeScreen)
     val announcer = if (flags.string("mdns", "true") == "true") Announcer(port) else null
     Runtime.getRuntime().addShutdownHook(Thread { announcer?.close() })
     val scope = CoroutineScope(Dispatchers.Default)
@@ -261,21 +265,14 @@ fun main(args: Array<String>) {
     }
     scope.launch { pipeline.run() }
     scope.launch { weather.run() }
-    if (flags.string("updates", "on") == "on") scope.launch {
-        val releases = Releases(IoPath("$home/.local/share/resticky/releases.json"), ::log)
-        while (true) {
-            releases.check(force = false)
-            releases.mirrorFirmware(firmware)
-            delay(1.hours)
-        }
-    }
+
     scope.launch {
         while (true) {
             delay(1.hours)
             store.deleteOldAudio(Clock.System.now() - AUDIO_KEEP)
         }
     }
-    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat beep=$beep weather_interval=$weatherInterval")
+    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat beep=$beep home=$homeScreen weather_interval=$weatherInterval")
     embeddedServer(CIO, port = port) {
         hub.module(this)
     }.start(wait = true)

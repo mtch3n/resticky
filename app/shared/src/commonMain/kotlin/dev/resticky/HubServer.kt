@@ -13,6 +13,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.LocalDateTime
@@ -96,13 +97,15 @@ class Hub(
     val clockFace = MutableStateFlow(CLOCK_DIAL)
     val weatherStyle = MutableStateFlow(WEATHER_SKETCH)
     val hourFormat = MutableStateFlow(HOUR_24)
-    val beep = MutableStateFlow(true)
-    val install = MutableStateFlow<String?>(null)
-    private var beepSent = false
+    val beepSetting = DeviceSetting(true)
+    val homeSetting = DeviceSetting(HOME_APPS)
+    val beep: StateFlow<Boolean> get() = beepSetting.value
+    val home: StateFlow<String> get() = homeSetting.value
 
-    fun setBeep(on: Boolean) {
-        beepSent = on != beep.value || beepSent
-        beep.value = on
+    fun setBeep(on: Boolean) = beepSetting.set(on)
+
+    fun setHome(screen: String) {
+        if (screen in HOME_SCREENS) homeSetting.set(screen)
     }
 
     private val devices = mutableMapOf<String, Checkin>()
@@ -120,16 +123,10 @@ class Hub(
         val now = Clock.System.now()
         devicesLock.withLock {
             devices[c.device] = c.copy(seen = now, link = link, marks = emptyList())
-            c.beep?.let { reported ->
-                if (beepSent) beepSent = reported != beep.value
-                else if (reported != beep.value) {
-                    beep.value = reported
-                    log("INFO beep from device device=${c.device} beep=$reported")
-                }
-            }
+            c.beep?.let { if (beepSetting.report(it)) log("INFO beep from device device=${c.device} beep=$it") }
+            c.home?.takeIf { it in HOME_SCREENS }?.let { if (homeSetting.report(it)) log("INFO home from device device=${c.device} home=$it") }
         }
         runCatching { healthLog.add(c.device, HealthSample.of(c, now.epochSeconds)) }.onFailure { log("WARN health store device=${c.device} ${it.message}") }
-        if (install.value != null && c.firmware == install.value) install.value = null
         var added = 0
         c.marks.filter { ID_PATTERN.matches(it.session) && it.offsetMs >= 0 }.groupBy { it.session }.forEach { (session, marks) ->
             added += store.addMarks(c.device, session, marks.map { it.offsetMs })
@@ -152,7 +149,7 @@ class Hub(
 
     suspend fun healthDevices(): List<String> = healthLog.devices()
 
-    fun display(): DisplayInfo = DisplayInfo(clockFace.value, weatherStyle.value, hourFormat.value, beep.value)
+    fun display(): DisplayInfo = DisplayInfo(clockFace.value, weatherStyle.value, hourFormat.value, beep.value, home.value)
 
     fun agendaNow(): Agenda = agenda.value ?: buildAgenda(emptyList(), false, Clock.System.now(), TimeZone.currentSystemDefault())
 
@@ -176,7 +173,7 @@ class Hub(
             val c = runCatching { hubJson.decodeFromString<Checkin>(call.receiveText()) }.getOrNull()
             if (c == null || !ID_PATTERN.matches(c.device)) return@post call.fail(HttpStatusCode.BadRequest, "body must be JSON with a hex device field")
             checkin(c, "wifi")
-            call.json(hubJson.encodeToString(CheckinReply(HUB_VERSION, utcOffsetMin(), clockFace.value, weatherStyle.value, hourFormat.value, beep.value, install.value)))
+            call.json(hubJson.encodeToString(CheckinReply(HUB_VERSION, utcOffsetMin(), clockFace.value, weatherStyle.value, hourFormat.value, beep.value, home.value)))
         }
         post("/api/chunks") {
             val h = call.request.headers
@@ -261,5 +258,30 @@ class Hub(
         get("/api/devices") {
             call.json(hubJson.encodeToString(devices()))
         }
+    }
+}
+
+class DeviceSetting<T>(initial: T) {
+    private val _value = MutableStateFlow(initial)
+    val value: StateFlow<T> get() = _value
+    private var sent = false
+
+    fun load(v: T) {
+        _value.value = v
+    }
+
+    fun set(v: T) {
+        sent = v != _value.value || sent
+        _value.value = v
+    }
+
+    fun report(reported: T): Boolean {
+        if (sent) {
+            sent = reported != _value.value
+            return false
+        }
+        if (reported == _value.value) return false
+        _value.value = reported
+        return true
     }
 }

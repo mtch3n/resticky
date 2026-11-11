@@ -26,4 +26,25 @@ class BeepTest {
         assertEquals(false, hub.beep.value)
         assertEquals(false, hub.display().beep)
     }
+
+    @Test
+    fun homeScreenFollowsTheSameRule() = runTest {
+        val root = Path(SystemTemporaryDirectory, "resticky-home-${Random.nextLong().toULong()}")
+        val store = Store(root)
+        val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        suspend fun report(home: String?) = hub.checkin(Checkin("ab", home = home), "wifi")
+        assertEquals("apps", hub.home.value)
+        report("weather")
+        assertEquals("weather", hub.home.value)
+        report("nope")
+        assertEquals("weather", hub.home.value)
+        hub.setHome("todo")
+        report("weather")
+        assertEquals("todo", hub.home.value)
+        report("todo")
+        report("clock")
+        assertEquals("clock", hub.display().home)
+        hub.setHome("tv")
+        assertEquals("clock", hub.home.value)
+    }
 }

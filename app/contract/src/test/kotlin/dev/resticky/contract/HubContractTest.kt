@@ -106,6 +106,8 @@ class HubContractTest {
         assertTrue(r.json.jsonObject.getValue("weather_style").jsonPrimitive.content in setOf("sketch", "big", "journal", "week"))
         assertTrue(r.json.jsonObject.getValue("hour_format").jsonPrimitive.content in setOf("24", "12"))
         r.json.jsonObject.getValue("beep").jsonPrimitive.boolean
+        assertTrue(r.json.jsonObject.getValue("home").jsonPrimitive.content in setOf("apps", "clock", "weather", "recorder", "todo"))
+        assertTrue(!r.json.jsonObject.containsKey("install"))
         assertEquals(400, send("POST", "/api/checkin", "nope".encodeToByteArray()).status)
         assertEquals(400, send("POST", "/api/checkin", """{"device":"XYZ"}""".encodeToByteArray()).status)
         val d = get("/api/devices").json.jsonObject.getValue(device).jsonObject

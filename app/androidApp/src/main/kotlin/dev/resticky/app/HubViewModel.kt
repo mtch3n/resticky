@@ -166,23 +166,21 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     val releaseChecked: StateFlow<Long> = app.releases.checked
     val updateStatus: StateFlow<String> = app.updater.status
     val appVersion = app.updater.version
-    val install: StateFlow<String?> = app.hub.install
-    val firmwareReady: StateFlow<String?> = poll(null, 5000) { app.firmware.newest()?.first }
+    val firmwareState: StateFlow<FwState> = app.stickyUpdate.state
 
-    fun checkUpdates() = viewModelScope.launch {
-        app.releases.check(force = true)
-        app.releases.mirrorFirmware(app.firmware)
-    }
+    fun checkUpdates() = app.stickyUpdate.check()
+
+    fun updateSticky() = app.stickyUpdate.update()
 
     fun installApp() = viewModelScope.launch { app.releases.latest.value?.let { app.updater.install(it) } }
 
-    fun updateSticky(version: String) {
-        app.hub.install.value = version
-        log("INFO sticky update asked version=$version")
-    }
-
     fun showOnSticky(file: java.io.File) = viewModelScope.launch {
         val message = app.showOnSticky { file.inputStream() }
+        android.widget.Toast.makeText(app, message, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    fun showOnSticky(uri: android.net.Uri) = viewModelScope.launch {
+        val message = app.showOnSticky { app.contentResolver.openInputStream(uri) }
         android.widget.Toast.makeText(app, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 
@@ -270,6 +268,9 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     fun setHourFormat(format: String) = app.setHourFormat(format)
 
     val beep: StateFlow<Boolean> = app.hub.beep
+    val home: StateFlow<String> = app.hub.home
+
+    fun setHome(screen: String) = app.setHome(screen)
 
     fun setBeep(on: Boolean) = app.setBeep(on)
 
