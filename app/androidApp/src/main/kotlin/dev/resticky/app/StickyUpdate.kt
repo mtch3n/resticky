@@ -1,5 +1,6 @@
 package dev.resticky.app
 
+import dev.resticky.isNewer
 import dev.resticky.FRAME_OTA_BEGIN
 import dev.resticky.FRAME_OTA_CANCEL
 import dev.resticky.FRAME_OTA_DATA
@@ -118,12 +119,13 @@ class StickyUpdate(private val app: HubApp) {
         }
 
     private suspend fun run(): FwState {
-        val release = app.releases.latest.value ?: app.releases.check() ?: fail("No release found")
+        val release = app.releases.check() ?: fail("No release found")
         val (version, asset) = release.firmware ?: fail("The release has no firmware")
         val ble = app.ble
         val address = ble.state.value.address ?: fail("No Sticky is paired")
         val target = sticky()
         val from = target?.firmware.orEmpty()
+        if (!isNewer(version, from)) fail("The Sticky already has v$from; the newest release is v$version")
         val file = File(app.firmware.path(version).toString())
         file.delete()
         set(FwState.Downloading(version, 0))
