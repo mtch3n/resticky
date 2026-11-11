@@ -56,7 +56,7 @@ jobs:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         if: env.KEYSTORE != ''
         run: mkdir -p ~/.android && echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
-      - run: ./gradlew :shared:jvmTest :desktopApp:installDist :androidApp:assembleDebug
+      - run: ./gradlew -Dorg.gradle.java.home="$JAVA_HOME" :shared:jvmTest :desktopApp:installDist :androidApp:assembleDebug
         working-directory: app
       - run: app/contract/run.sh app/desktopApp/build/install/resticky-hub/bin/resticky-hub
       - run: |
