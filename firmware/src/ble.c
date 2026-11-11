@@ -87,6 +87,13 @@ static void on_frame(uint8_t type, const uint8_t *p, size_t n)
         cJSON_Delete(j);
         return;
     }
+    if (type == BLE_TYPE_HUB_TOKEN) {
+        cJSON *j = cJSON_ParseWithLength((const char *)p, n);
+        const char *token = cJSON_GetStringValue(cJSON_GetObjectItem(j, "token"));
+        if (token) net_set_hub_token(token);
+        cJSON_Delete(j);
+        return;
+    }
     if (type == HUB_FRAME_WEATHER || type == HUB_FRAME_AGENDA || type == HUB_FRAME_DISPLAY) {
         net_hub_frame(type, (const char *)p, n);
         return;

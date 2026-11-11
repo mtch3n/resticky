@@ -47,6 +47,7 @@ import dev.resticky.SUMMARY_SCHEMA
 import dev.resticky.WEATHER_SKETCH
 import dev.resticky.WEATHER_STYLES
 import dev.resticky.Store
+import dev.resticky.TOKEN_PATTERN
 import dev.resticky.Summarizer
 import dev.resticky.Summary
 import dev.resticky.Transcriber
@@ -327,8 +328,11 @@ fun main(args: Array<String>) {
     require(validNight(night)) { "-night must be off or HH:MM-HH:MM (minutes 00 or 30)" }
     val homeScreen = flags.string("home", HOME_APPS)
     require(homeScreen in HOME_SCREENS) { "-home must be one of ${HOME_SCREENS.joinToString("|")}" }
+    val token = flags.string("token", "").lowercase().ifEmpty { null }
+    require(token == null || TOKEN_PATTERN.matches(token)) { "-token must be 64 hex characters (the hub password from the phone)" }
+    if (token == null) log("WARN no hub password: every device on the network can use this hub; start with -token <hex>")
     val firmware = FirmwareShelf(IoPath(flags.string("firmware", "$home/.local/share/resticky/firmware")))
-    val hub = Hub(store, pipeline, weather, firmware, ::log)
+    val hub = Hub(store, pipeline, weather, firmware, ::log, token = token)
     hub.clockFace.value = clockFace
     hub.weatherStyle.value = weatherStyle
     hub.hourFormat.value = hourFormat

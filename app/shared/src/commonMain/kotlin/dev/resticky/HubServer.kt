@@ -1,9 +1,14 @@
 package dev.resticky
 
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondBytes
@@ -91,6 +96,27 @@ fun todoList(sessions: List<Session>): TodoList {
     return TodoList(open, done)
 }
 
+val TOKEN_PATTERN = Regex("^[0-9a-f]{64}$")
+
+expect fun hmacSha256(key: ByteArray, message: ByteArray): ByteArray
+
+fun hexBytes(hex: String): ByteArray = ByteArray(hex.length / 2) { hex.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
+
+fun ByteArray.hex(): String = joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+fun helloProof(token: String, nonce: String): String = hmacSha256(hexBytes(token), nonce.encodeToByteArray()).hex()
+
+fun sameSecret(given: String, secret: String): Boolean {
+    val x = given.encodeToByteArray()
+    val y = secret.encodeToByteArray()
+    if (y.isEmpty()) return false
+    var diff = x.size xor y.size
+    for (i in y.indices) diff = diff or (y[i].toInt() xor x.getOrElse(i) { 0 }.toInt())
+    return diff == 0
+}
+
+fun bearerOk(header: String?, token: String): Boolean = sameSecret(header.orEmpty(), "Bearer $token")
+
 class Hub(
     private val store: Store,
     private val pipeline: Pipeline,
@@ -98,6 +124,7 @@ class Hub(
     val firmware: FirmwareShelf,
     private val log: (String) -> Unit,
     private val newSession: suspend (device: String, session: String) -> Unit = { _, _ -> },
+    val token: String? = null,
 ) {
     val agenda = MutableStateFlow<Agenda?>(null)
     val clockFace = MutableStateFlow(CLOCK_DIAL)
@@ -200,9 +227,23 @@ class Hub(
         }
     }
 
-    fun module(app: Application) = app.routing {
+    fun module(app: Application) {
+        val token = token
+        if (token != null) app.intercept(ApplicationCallPipeline.Plugins) {
+            val open = context.request.httpMethod == HttpMethod.Get && context.request.path() == "/api/hello"
+            if (!open && !bearerOk(context.request.headers[HttpHeaders.Authorization], token)) {
+                context.json("""{"error":"need hub password"}""", HttpStatusCode.Unauthorized)
+                finish()
+            }
+        }
+        routes(app)
+    }
+
+    private fun routes(app: Application) = app.routing {
         get("/api/hello") {
-            call.json(hubJson.encodeToString(mapOf("service" to "resticky-hub", "version" to HUB_VERSION)))
+            val nonce = call.request.queryParameters["nonce"].orEmpty()
+            val proof = if (token != null && nonce.isNotEmpty()) mapOf("proof" to helloProof(token, nonce)) else emptyMap()
+            call.json(hubJson.encodeToString(mapOf("service" to "resticky-hub", "version" to HUB_VERSION) + proof))
         }
         post("/api/checkin") {
             val c = runCatching { hubJson.decodeFromString<Checkin>(call.receiveText()) }.getOrNull()

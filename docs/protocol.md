@@ -9,6 +9,30 @@ A hub announces the mDNS service `_resticky._tcp` on its LAN interfaces only (no
 virbr or loopback interfaces). The TXT record has `version=<hub version>`. The device uses the first IPv4
 address and port that it finds.
 
+## Hub password
+
+A hub can have a password (the token): 32 random bytes, written as 64 lowercase hex characters.
+
+- Phone hub: the app makes the password one time and keeps it in its preferences. App settings › Hub
+  password shows the first 8 characters; tap it to copy the full password.
+- Laptop hub: `-token <hex>` (copy it from the phone). A laptop hub without `-token` is open, as before, and
+  logs a `WARN` at start.
+- Delivery to the Sticky: BLE frame 26 `hub_token` (see "Message types"). The phone sends it each time the BLE
+  link becomes ready. The link is bonded and encrypted (LE Secure Connections). The Sticky keeps the password
+  in NVS (namespace `hub`, key `token`) and replaces the old one. A new password makes the Sticky find and
+  check the hub again.
+- Requests: when the Sticky has a password, each HTTP request to a hub has the header
+  `Authorization: Bearer <token>` (also `GET /api/firmware/bin`).
+- Hub check (no fake hub on the LAN): when the Sticky has a password and finds a hub (mDNS), it first sends
+  `GET /api/hello?nonce=<16 random bytes, 32 hex characters>` with no `Authorization` header. The hub answers
+  with `"proof":"<hex>"` in the hello JSON: hex(HMAC-SHA256(key = the 32 token bytes, message = the nonce hex
+  text)). The Sticky uses the hub only if the proof is correct (constant-time compare). If not, it logs
+  `WARN` and ignores that hub (BLE continues). A Sticky without a password does not check.
+- Hub rule: when the hub has a password, each request except `GET /api/hello` must have the exact header
+  `Authorization: Bearer <token>` (constant-time compare). If not, the hub answers `401`,
+  `{"error":"need hub password"}`. `GET /api/hello` gives `proof` only when the request has a `nonce` and the
+  hub has a password.
+
 ## Identifiers
 
 A device ID and a session ID are lowercase hex, 1 to 16 characters (`^[0-9a-f]{1,16}$`). The device ID is
@@ -19,7 +43,7 @@ with a bad ID gets `400`.
 
 | Method and path | Request | Response |
 |---|---|---|
-| `GET /api/hello` | — | `200`, `{"service":"resticky-hub","version":"<v>"}` |
+| `GET /api/hello` | Optional `nonce` (see "Hub password"). No `Authorization` header necessary. | `200`, `{"service":"resticky-hub","version":"<v>"}`, and `"proof":"<hex>"` when the hub has a password and the request has a `nonce`. |
 | `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound`, `home` and `night` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>","night":"off"|"HH:MM-HH:MM"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
 | `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` after the chunk is on disk. `400` if a header is missing or bad. A chunk that has the same device, session and sequence as a stored chunk replaces the file but does not add its duration again. |
 | `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
@@ -539,6 +563,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 23 | `lists` | hub → device | `{"transcripts":[transcript item],"todos":{"open":[todo],"done":[todo]}}`: the same items as `GET /api/transcripts` and `GET /api/todos` for the linked device. At most 40960 bytes (see "BLE-only mode"). |
 | 24 | `todo_set` | device → hub | `{"id":"<to-do id>","done":true\|false}`: `id` is the `id` of a to-do item. The hub applies it as `PUT /api/todos/{device}/{session}/{index}` with its current time as `at`, then sends a new `lists` frame. |
 | 25 | `buzz_test` | hub → device | `{"hz":<60–1000>}`: the Sticky plays the buzz pattern once at this pitch, also when Feedback is not Buzz. Firmware 0.15.0. |
+| 26 | `hub_token` | hub → device | `{"token":"<64 hex characters>"}`: the hub password (see "Hub password"). The phone sends it each time the link becomes ready. The Sticky stores it in NVS and replaces the old one. It ignores a token that is not 64 hex characters. Firmware 0.15.0. |
 
 All JSON payloads are UTF-8 with no terminating zero byte.
 

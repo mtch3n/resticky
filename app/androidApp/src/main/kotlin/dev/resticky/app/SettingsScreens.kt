@@ -1,5 +1,9 @@
 package dev.resticky.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.os.PersistableBundle
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -69,6 +73,18 @@ val WEATHER_STYLE = listOf(
 )
 
 fun optionName(options: List<PickerOption>, id: String): String = options.firstOrNull { it.id == id }?.name ?: id
+
+@Composable
+fun HubPasswordRow(first: Boolean = false) {
+    val context = LocalContext.current
+    val token = (context.applicationContext as HubApp).hubToken
+    val copy = {
+        val clip = ClipData.newPlainText("Hub password", token)
+        clip.description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+    }
+    ListRow("Hub password", "${token.take(8)}…", first = first, lead = { Glyph(R.drawable.ic_lock) }, onClick = copy) { Pill("Copy", onClick = copy) }
+}
 
 private val CONDITION = mapOf("sun" to "Sunny", "cloud" to "Cloudy", "rain" to "Rain", "storm" to "Storm", "snow" to "Snow", "fog" to "Fog")
 

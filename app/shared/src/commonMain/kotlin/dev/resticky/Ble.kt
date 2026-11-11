@@ -24,6 +24,7 @@ const val FRAME_OTA_CANCEL = 22
 const val FRAME_LISTS = 23
 const val FRAME_TODO_SET = 24
 const val FRAME_BUZZ_TEST = 25
+const val FRAME_HUB_TOKEN = 26
 const val LISTS_MAX = 40 * 1024
 private const val LISTS_FIELD = 300
 const val OTA_WINDOW = 16 * 1024
@@ -118,6 +119,9 @@ fun otaData(offset: Int, block: ByteArray): ByteArray = ByteArray(4) { (offset s
 
 @Serializable
 data class Lists(val transcripts: List<TranscriptItem>, val todos: TodoList)
+
+@Serializable
+data class HubToken(val token: String)
 
 @Serializable
 data class TodoSet(val id: String, val done: Boolean)

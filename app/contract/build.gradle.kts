@@ -15,6 +15,7 @@ tasks.test {
     useJUnitPlatform()
     systemProperty("hub.url", providers.gradleProperty("hubUrl").getOrElse(""))
     systemProperty("hub.data", providers.gradleProperty("hubData").getOrElse(""))
+    systemProperty("hub.token", providers.gradleProperty("hubToken").getOrElse(""))
     outputs.upToDateWhen { false }
     testLogging { events("passed", "failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }

@@ -79,7 +79,7 @@ bool ota_is_newer(const char *version)
     return false;
 }
 
-bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb progress, const volatile bool *cancel)
+bool ota_install(const char *base_url, const char *auth, const ota_info_t *info, ota_progress_cb progress, const volatile bool *cancel)
 {
     char url[160];
     snprintf(url, sizeof url, "%s/api/firmware/bin?version=%s", base_url, info->version);
@@ -88,6 +88,7 @@ bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb p
     esp_http_client_config_t cfg = {.url = info->url[0] ? info->url : url, .timeout_ms = 20000, .buffer_size = 4096, .buffer_size_tx = 1024,
                                     .crt_bundle_attach = info->url[0] ? esp_crt_bundle_attach : NULL};
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (c && auth[0] && !info->url[0]) esp_http_client_set_header(c, "Authorization", auth);
     esp_ota_handle_t h = 0;
     bool ok = c && buf && slot && info->size > 0 && info->size <= slot->size && esp_http_client_open(c, 0) == ESP_OK &&
               esp_http_client_fetch_headers(c) >= 0;
