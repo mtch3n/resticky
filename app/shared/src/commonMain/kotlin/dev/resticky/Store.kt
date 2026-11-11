@@ -117,27 +117,22 @@ class Store(val root: Path) {
         }
     }
 
-    suspend fun rerunAll(): Int = mutex.withLock {
+    suspend fun rerunAll(current: String): Int = mutex.withLock {
         if (!SystemFileSystem.exists(root)) return@withLock 0
         var count = 0
         for (device in SystemFileSystem.list(root)) for (m in listUnlocked(device.name)) {
-            if (m.chunks.isEmpty()) continue
-            var audio = false
-            for (seq in m.chunks.keys.toList()) {
-                if (SystemFileSystem.exists(Path(dir(m.device, m.id), "$seq.opus"))) {
-                    m.chunks[seq] = PENDING
-                    m.segments.remove(seq)
-                    audio = true
-                } else {
-                    m.chunks[seq] = cleanTranscript(m.chunks.getValue(seq))
-                    m.segments[seq]?.let { old -> cleanSegments(old).let { if (it.isEmpty()) m.segments.remove(seq) else m.segments[seq] = it } }
-                }
+            val stale = m.chunks.keys.filter { seq ->
+                m.chunks[seq] != PENDING && m.chunkEngine[seq] != current && SystemFileSystem.exists(Path(dir(m.device, m.id), "$seq.opus"))
             }
-            if (audio) {
-                m.diarized = false
-                m.speakersFailed = false
-                m.speakers.clear()
+            if (stale.isEmpty()) continue
+            for (seq in stale) {
+                m.chunks[seq] = PENDING
+                m.segments.remove(seq)
+                m.chunkEngine.remove(seq)
             }
+            m.diarized = false
+            m.speakersFailed = false
+            m.speakers.clear()
             m.recaps().forEach { (from, r) -> m.putRecap(from, r.copy(ready = false, input = "")) }
             save(m)
             count++

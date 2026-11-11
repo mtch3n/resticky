@@ -131,16 +131,23 @@ class SpeakersTest {
             it.speakers["0"] = "Sam"
         }
         SystemFileSystem.delete(Path(store.dir("ab", "01"), "1.opus"))
-        assertEquals(1, store.rerunAll())
+        assertEquals(1, store.rerunAll("whisper/2"))
         val m = store.list("ab").single()
         assertEquals(PENDING, m.chunks["0"])
-        assertEquals("Yes. Yes.", m.chunks["1"])
+        assertEquals("[inaudible] >> Yes. Yes. Yes. Yes.", m.chunks["1"])
         assertEquals(false, m.ready)
         assertEquals(false, m.diarized)
         assertEquals("", m.input)
         assertEquals(listOf("Blow the whistle"), m.todos)
         assertTrue(m.speakers.isEmpty())
-        assertEquals(1, store.rerunAll())
+        assertEquals(0, store.rerunAll("whisper/2"))
+        store.update("ab", "01") {
+            it.chunks["0"] = "new text"
+            it.chunkEngine["0"] = "whisper/2"
+        }
+        assertEquals(0, store.rerunAll("whisper/2"))
+        assertEquals("new text", store.list("ab").single().chunks["0"])
+        assertEquals(1, store.rerunAll("whisper/3"))
         assertEquals(PENDING, store.list("ab").single().chunks["0"])
     }
 

@@ -144,7 +144,7 @@ class HubApp : Application() {
         super.onCreate()
         store = Store(Path(File(filesDir, "data").path))
         engines = Engines(this) { onScreen }
-        pipeline = Pipeline(store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, ::log)
+        pipeline = Pipeline(store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId, log = ::log)
         locator = Locator(this)
         places = PlaceStore(this)
         photos = PhotoDesk(this, store)

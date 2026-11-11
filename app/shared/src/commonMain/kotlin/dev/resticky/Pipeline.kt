@@ -14,6 +14,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
+const val PIPELINE_VERSION = 2
+
 val SESSION_IDLE = 3.minutes
 
 fun interface Transcriber {
@@ -224,6 +226,7 @@ class Pipeline(
     private val summarizer: Summarizer,
     private val diarizer: Diarizer,
     private val diarizeWindowMs: Long = Long.MAX_VALUE,
+    private val speechId: () -> String = { "" },
     private val log: (String) -> Unit,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -249,6 +252,7 @@ class Pipeline(
             log("INFO transcribed session=${m.id} seq=$seq words=${text.split(' ').count { w -> w.isNotEmpty() }} segments=${segments.size} took=${start.elapsedNow()}")
             store.update(m.device, m.id) {
                 it.chunks[seq] = text
+                it.chunkEngine[seq] = speechId()
                 if (segments.isEmpty()) it.segments.remove(seq) else it.segments[seq] = segments
             }
             return true

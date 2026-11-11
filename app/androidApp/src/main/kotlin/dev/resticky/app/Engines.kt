@@ -51,6 +51,7 @@ import dev.resticky.SummaryContext
 import dev.resticky.Segment
 import dev.resticky.Token
 import dev.resticky.wordsFromTokens
+import dev.resticky.PIPELINE_VERSION
 import dev.resticky.Transcriber
 import dev.resticky.parseSummary
 import dev.resticky.NO_SPEECH
@@ -195,6 +196,8 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         prefs.edit().putString(if (open) "summaryOpen" else "summaryClosed", e.name).apply()
         (if (open) summaryOpen else summaryClosed).value = e
     }
+
+    fun speechId(): String = "${speech.value.label}/$PIPELINE_VERSION"
 
     fun speed(engine: String): Double? = prefs.getFloat("speed:$engine", -1f).takeIf { it >= 0 }?.toDouble()
 

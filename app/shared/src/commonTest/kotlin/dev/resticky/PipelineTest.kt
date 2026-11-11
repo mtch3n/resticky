@@ -116,7 +116,7 @@ class PipelineTest {
             it.todoChanges["0"] = t1
             it.todoChanges["1"] = t2
         }
-        store.rerunAll()
+        store.rerunAll("whisper/2")
         val sum = Summary("New", "S", listOf(Todo("Call Sam", "Sam checks"), Todo("send the report!", "ship the billing report"), Todo("Book a room", "the review meeting")))
         Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> sum }, NO_SPEAKERS) {}.drain()
         val m = store.list("ab").single()

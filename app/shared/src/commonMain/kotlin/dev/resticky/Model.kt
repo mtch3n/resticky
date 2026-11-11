@@ -87,6 +87,7 @@ class Session(
     val marks: MutableList<Long> = mutableListOf(),
     var diarized: Boolean = false,
     val speakers: MutableMap<String, String> = mutableMapOf(),
+    @SerialName("chunk_engine") val chunkEngine: MutableMap<String, String> = mutableMapOf(),
     val photos: MutableList<Photo> = mutableListOf(),
     @SerialName("todo_quotes") var todoQuotes: List<Quote> = emptyList(),
     var input: String = "",

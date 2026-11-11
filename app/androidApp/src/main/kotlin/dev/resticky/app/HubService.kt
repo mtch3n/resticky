@@ -59,7 +59,7 @@ class HubService : Service() {
         val app = application as HubApp
         intent?.getStringExtra("passkey")?.let { app.ble.enterPasskey(it) }
         if (intent?.getStringExtra("pipeline") == "rerun") CoroutineScope(Dispatchers.Default).launch {
-            log("INFO pipeline rerun sessions=${app.store.rerunAll()}")
+            log("INFO pipeline rerun sessions=${app.store.rerunAll(app.engines.speechId())}")
             app.pipeline.kick()
         }
         when (intent?.getStringExtra("firmware")) {

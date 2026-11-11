@@ -57,6 +57,7 @@ import dev.resticky.opusFramesToOgg
 import dev.resticky.parseWhisperJson
 import dev.resticky.summaryPrompt
 import dev.resticky.parseSummary
+import dev.resticky.PIPELINE_VERSION
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
 import kotlinx.coroutines.CoroutineScope
@@ -311,7 +312,7 @@ fun main(args: Array<String>) {
     val segmentation = flags.string("segmentation", "$home/.local/share/resticky/models/$SEGMENTATION_MODEL")
     val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
     val vad = flags.string("vad", "$home/.local/share/resticky/models/$VAD_MODEL")
-    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), log = ::log)
+    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, log = ::log)
     val city = flags.string("city", "").ifBlank { null }
     val weatherInterval = flags.string("weather-interval", "$WEATHER_INTERVAL").toInt()
     require(weatherInterval in WEATHER_INTERVALS) { "-weather-interval must be one of ${WEATHER_INTERVALS.joinToString("|")}" }
