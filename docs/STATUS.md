@@ -196,6 +196,17 @@ low power and storage use that we can profile.
 - Old data: the hub summarizes again each old conversation that has more than one session or a split. This uses
   the summary model once for each of them.
 
+## Vocabulary (hub, 2026-11-11)
+
+- `vocabulary.json` next to the data folder holds terms and fix rules (`Vocabulary.kt` in `app/shared`). See
+  "Vocabulary" in `plan-transcription.md`.
+- Each chunk gets a Whisper prompt from the vocabulary (phone `initial_prompt`, laptop `whisper-cli --prompt`).
+  The log line `INFO transcribed` shows `prompt_chars` and `replaced`.
+- Rules change new transcripts only. `chunk_rules` in `meta.json` records the changes for each chunk.
+- Phone: long-press a word on the transcript page to correct it; App settings › Vocabulary lists the terms and
+  rules. Not tested on a device yet.
+- Open: wire `extraNames` to the people library in `HubApp`.
+
 ## Documents
 
 - `plan-apps.md`: the approved plan (Kotlin Multiplatform apps, BLE and Wi-Fi links, engines, layers).

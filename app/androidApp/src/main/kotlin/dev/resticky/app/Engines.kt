@@ -278,7 +278,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         }
     }
 
-    val transcriber = Transcriber { opus ->
+    val transcriber = Transcriber { opus, prompt ->
         val m = speech.value
         val opusFile = File(opus.toString())
         track("${opusFile.parentFile!!.name}/${opusFile.nameWithoutExtension}", "speech", m.label) {
@@ -291,7 +291,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 val windows = speechWindows(regions, pcm.size, context.size, SAMPLE_RATE)
                 val routes = mutableListOf<String>()
                 val segments = windows.flatMap { w ->
-                    val (route, segs) = transcribeWindow(m, w.audio(pcm), w)
+                    val (route, segs) = transcribeWindow(m, w.audio(pcm), w, prompt)
                     routes += route
                     placeSegments(segs, w, context.size, SAMPLE_RATE)
                 }
@@ -309,15 +309,15 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         return pcm.copyOfRange(maxOf(0, pcm.size - (CONTEXT_MS * SAMPLE_RATE / 1000).toInt()), pcm.size)
     }
 
-    private fun transcribeWindow(m: Model, audio: FloatArray, w: SpeechWindow): Pair<String, List<Segment>> =
+    private fun transcribeWindow(m: Model, audio: FloatArray, w: SpeechWindow, prompt: String): Pair<String, List<Segment>> =
         when (m) {
             Model.SenseVoice -> senseVoice(audio, w).let { "sensevoice" to it.second }
             Model.Auto -> {
                 val sense = if (AUTO_PARTS.drop(1).all { modelPath(it) != null }) senseVoice(audio, w) else null
                 if (sense != null && mostlyChinese(sense.second.joinToString("") { it.text })) "sensevoice:${sense.first}" to sense.second
-                else "whisper:${sense?.first ?: "-"}" to whisper(AUTO_ENGLISH, audio)
+                else "whisper:${sense?.first ?: "-"}" to whisper(AUTO_ENGLISH, audio, prompt)
             }
-            else -> "whisper" to whisper(m, audio)
+            else -> "whisper" to whisper(m, audio, prompt)
         }
 
     private var recognizer: OfflineRecognizer? = null
@@ -359,9 +359,9 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         return parts
     }
 
-    private fun whisper(m: Model, audio: FloatArray): List<Segment> {
+    private fun whisper(m: Model, audio: FloatArray, prompt: String): List<Segment> {
         val ctx = whisperContext(m)
-        check(Whisper.transcribe(ctx, audio, WHISPER_THREADS)) { "whisper failed" }
+        check(Whisper.transcribe(ctx, audio, WHISPER_THREADS, prompt)) { "whisper failed" }
         return List(Whisper.segments(ctx)) { i ->
             val times = Whisper.tokenTimes(ctx, i)
             val tokens = (0 until Whisper.tokens(ctx, i)).filter { times[it * 3 + 2] == 0L }.map { j ->

@@ -13,6 +13,9 @@ import dev.resticky.PENDING
 import dev.resticky.Conversation
 import dev.resticky.NO_SPEECH
 import dev.resticky.Recap
+import dev.resticky.Rule
+import dev.resticky.VocabularyData
+import dev.resticky.applyRule
 import dev.resticky.closed
 import dev.resticky.conversations
 import dev.resticky.Session
@@ -212,6 +215,25 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     fun renameSpeaker(device: String, id: String, speaker: Int, name: String) = viewModelScope.launch {
         app.store.update(device, id) { it.renameSpeaker(speaker, name) }
+    }
+
+    val vocabulary: StateFlow<VocabularyData> = app.vocabulary.data
+
+    fun addTerm(text: String) = viewModelScope.launch { app.vocabulary.addTerm(text) }
+
+    fun removeTerm(text: String) = viewModelScope.launch { app.vocabulary.removeTerm(text) }
+
+    fun removeRule(rule: Rule) = viewModelScope.launch { app.vocabulary.removeRule(rule) }
+
+    fun correct(c: Conversation, from: String, to: String, here: Pair<String, Long>?) = viewModelScope.launch {
+        val rule = Rule(from.trim(), to.trim())
+        if (rule.from.isEmpty() || rule.to.isEmpty() || rule.from == rule.to) return@launch
+        for (p in c.parts) {
+            if (here != null && here.first != p.session.id) continue
+            app.store.update(p.session.device, p.session.id) { s -> s.applyRule(rule) { ms -> if (here == null) p.covers(ms) else ms == here.second } }
+        }
+        app.vocabulary.correct(rule.from, rule.to, everywhere = here == null)
+        app.pipeline.kick()
     }
 
     fun setHub(on: Boolean) {

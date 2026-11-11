@@ -28,7 +28,7 @@ class NightTest {
     fun theNewestChangeWins() = runTest {
         val root = Path(SystemTemporaryDirectory, "resticky-night-${Random.nextLong().toULong()}")
         val store = Store(root)
-        val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        val hub = Hub(store, Pipeline(store, { _, _ -> emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
         suspend fun report(night: String?) = hub.checkin(Checkin("ab", night = night), "wifi")
         report(null)
         assertEquals("off", hub.night.value)

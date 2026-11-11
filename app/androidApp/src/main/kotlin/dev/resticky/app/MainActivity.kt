@@ -77,6 +77,7 @@ sealed interface Detail {
     data object Models : Detail
     data object Sticky : Detail
     data object Calendars : Detail
+    data object Vocabulary : Detail
     data object Weather : Detail
     data object Wifi : Detail
     data object Health : Detail
@@ -149,7 +150,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 is Detail.Transcript -> {
                     val view = conversations.find { it.device == d.device && it.key == d.key }
                     val prefs by model.player.collectAsState()
-                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }) { session, i, done ->
+                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }, { from, to, here -> view?.let { model.correct(it.conversation, from, to, here) } }) { session, i, done ->
                         model.setTodo(d.device, session, i, done)
                     }
                 }
@@ -176,6 +177,10 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 Detail.Settings -> {
                     val transcribe by model.transcribe.collectAsState()
                     SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
+                }
+                Detail.Vocabulary -> {
+                    val vocabulary by model.vocabulary.collectAsState()
+                    VocabularyScreen(vocabulary, back, model::addTerm, model::removeTerm, model::removeRule)
                 }
                 Detail.HomeScreen -> HomeScreenPicker(home, back, model::setHome)
                 Detail.Photos -> PhotosScreen(unlinked, conversations, model::photoFile, { v, s, p -> stack.add(Detail.Transcript(v.device, v.key, Spot(s.id, p.offsetMs))) }, model::showOnSticky, model::attach, back)

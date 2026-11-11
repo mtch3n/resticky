@@ -24,6 +24,7 @@ import dev.resticky.PENDING
 import dev.resticky.placeTag
 import dev.resticky.Pipeline
 import dev.resticky.Store
+import dev.resticky.Vocabulary
 import dev.resticky.TOKEN_PATTERN
 import dev.resticky.hex
 import dev.resticky.WEATHER_SKETCH
@@ -53,6 +54,7 @@ class HubApp : Application() {
     lateinit var companion: Companion
     lateinit var weather: Weather
     lateinit var calendars: Calendars
+    lateinit var vocabulary: Vocabulary
     lateinit var locator: Locator
     lateinit var places: PlaceStore
     lateinit var photos: PhotoDesk
@@ -144,7 +146,11 @@ class HubApp : Application() {
         super.onCreate()
         store = Store(Path(File(filesDir, "data").path))
         engines = Engines(this) { onScreen }
-        pipeline = Pipeline(store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId, log = ::log)
+        vocabulary = Vocabulary(Path(File(filesDir, "vocabulary.json").path))
+        pipeline = Pipeline(
+            store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId,
+            vocabulary = vocabulary, calendarTerms = { from, to -> calendars.titles(from, to) }, log = ::log,
+        )
         locator = Locator(this)
         places = PlaceStore(this)
         photos = PhotoDesk(this, store)

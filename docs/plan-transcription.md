@@ -185,6 +185,34 @@ The script does not calculate `der` and `cpwer` for a file that has a speaker `S
   English without Chinese characters goes to Whisper small.en. Other windows (zh, yue, mixed) keep the SenseVoice
   text. Until the SenseVoice model is on the phone, all windows go to Whisper.
 
+## Vocabulary (phone and laptop)
+
+Whisper spells names and work words incorrectly ("Christa" for "Krista", "QI" for "QA"). The vocabulary corrects
+this in two steps.
+
+- Store: `vocabulary.json` next to the `data` folder (phone: app files; laptop: `~/.local/share/resticky/`). It
+  has terms (`text`, `source`: `user`, `correction`, `calendar` or `people`, `count`, `last_used`) and rules
+  (`from` → `to`). The store keeps 300 terms at most. When it has more, it removes the non-user terms that have the
+  oldest `last_used`. It never removes user terms.
+- Prompt: for each chunk, the hub makes a Whisper prompt in this order: user terms (newest first), people names,
+  titles of calendar events that overlap the session, correction terms (most used first). Each term occurs one
+  time. The hub stops at a cost of 400 (1 for each ASCII character, 3 for each other character, 2 for each
+  separator). This keeps the prompt below the Whisper limit of 224 tokens. Whisper.cpp keeps only the last
+  tokens of a prompt that is too long, thus the hub must cut it. The phone sends it as `initial_prompt`
+  (`no_context` stays true); the laptop sends `--prompt` to `whisper-cli`. SenseVoice has no prompt.
+- Calendar: the phone reads the titles of the events in the selected calendars from the session start to the
+  session end. Each title becomes a `calendar` term. Calendars.kt does not read attendees.
+- People: the pipeline gets the names from `extraNames` (empty until the people library connects to it).
+- Rules: after the clean-up step and before the summary, the hub applies each rule to the segment words and the
+  text. A rule matches whole words, ignores case, keeps the punctuation around the word ("Christa," → "Krista,")
+  and can have more than one word. The chunk records the number of changes in `chunk_rules` (key: the chunk). The
+  hub does not keep the engine text.
+- Correction on the phone: long-press a word in the transcript. The sheet shows the heard word and the correct
+  word. "Fix" changes all equal words in this conversation, adds the rule and adds the correct word as a
+  `correction` term. "Only here" changes only the line and adds the term, but no rule. The conversation then
+  gets a new summary because its input changed.
+- App settings › Vocabulary: shows the fixes and the words, adds a word (`user`) and deletes a word or a fix.
+
 ## Risks
 
 - No public benchmark matches our audio (far-field PDM mic, Opus 16 kbps); only the personal set decides.

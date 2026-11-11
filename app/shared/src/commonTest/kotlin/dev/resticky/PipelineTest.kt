@@ -32,7 +32,7 @@ class PipelineTest {
     fun shortSpeechIsANoteWithoutTheModel() = runTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
-        Pipeline(store, { listOf(Segment(0, 1000, words(10))) }, unused, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, words(10))) }, unused, NO_SPEAKERS) {}.drain()
         val m = store.list("ab").single()
         assertEquals(SHORT_NOTE, m.title)
         assertEquals(words(10), m.summary)
@@ -44,7 +44,7 @@ class PipelineTest {
     fun fourWordsAreNoSpeech() = runTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
-        Pipeline(store, { listOf(Segment(0, 1000, words(4))) }, unused, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, words(4))) }, unused, NO_SPEAKERS) {}.drain()
         assertEquals(NO_SPEECH, store.list("ab").single().title)
         assertEquals(emptyList(), transcriptItems(store.list("ab")))
     }
@@ -60,7 +60,7 @@ class PipelineTest {
             if (inputs.size == 1) store.addChunk("ab", "01", 1, true, 30_000, ByteArray(5))
             Summary("T${inputs.size}", "S")
         }
-        Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, summarizer, NO_SPEAKERS) { logs += it }.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, summarizer, NO_SPEAKERS) { logs += it }.drain()
         val m = store.list("ab").single()
         assertEquals(2, inputs.size)
         assertEquals("$SPOKEN $SPOKEN", inputs[1])
@@ -76,7 +76,7 @@ class PipelineTest {
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4), capturedAt = now - 20.minutes)
         store.addChunk("ab", "02", 0, true, 30_000, ByteArray(4), capturedAt = now - 15.minutes)
         val inputs = mutableListOf<String>()
-        Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { t, _ -> inputs += t; Summary("Both", "S", listOf(Todo("Ship it", "ship the billing report"))) }, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { t, _ -> inputs += t; Summary("Both", "S", listOf(Todo("Ship it", "ship the billing report"))) }, NO_SPEAKERS) {}.drain()
         assertEquals(listOf("$SPOKEN\n$SPOKEN"), inputs)
         val head = store.list("ab").single { it.id == "01" }
         assertEquals("Both", head.title)
@@ -95,7 +95,7 @@ class PipelineTest {
         store.addChunk("ab", "01", 0, false, 30_000, ByteArray(4), 1_000_000, now - 20.minutes)
         store.addChunk("ab", "01", 1, false, 30_000, ByteArray(5), 1_030_000)
         store.addChunk("ab", "02", 0, false, 30_000, ByteArray(4), 2_000_000, now - 1.minutes)
-        Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, NO_SPEAKERS) {}.drain()
         assertTrue(store.list("ab").single { it.id == "01" }.ready)
         assertTrue(!store.list("ab").single { it.id == "02" }.ready)
     }
@@ -118,7 +118,7 @@ class PipelineTest {
         }
         store.rerunAll("whisper/2")
         val sum = Summary("New", "S", listOf(Todo("Call Sam", "Sam checks"), Todo("send the report!", "ship the billing report"), Todo("Book a room", "the review meeting")))
-        Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> sum }, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> sum }, NO_SPEAKERS) {}.drain()
         val m = store.list("ab").single()
         assertEquals(listOf("Call Sam", "send the report!", "Book a room"), m.todos)
         assertEquals(mapOf("1" to t1), m.done)
@@ -129,7 +129,7 @@ class PipelineTest {
     @Test
     fun ticksOnASplitConversationUseItsOwnIds() = runTest {
         val store = Store(root)
-        val hub = Hub(store, Pipeline(store, { emptyList() }, unused, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        val hub = Hub(store, Pipeline(store, { _, _ -> emptyList() }, unused, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
         store.update("ab", "01") {
             it.chunks["0"] = "x"

@@ -47,7 +47,7 @@ Java_dev_resticky_app_Whisper_free(JNIEnv *, jclass, jlong ctx) {
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_dev_resticky_app_Whisper_transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads) {
+Java_dev_resticky_app_Whisper_transcribe(JNIEnv *env, jclass, jlong handle, jfloatArray pcm, jint threads, jstring prompt) {
     auto *ctx = reinterpret_cast<whisper_context *>(handle);
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH);
     params.n_threads = threads;
@@ -61,6 +61,10 @@ Java_dev_resticky_app_Whisper_transcribe(JNIEnv *env, jclass, jlong handle, jflo
     params.token_timestamps = true;
     params.suppress_nst = true;
     params.no_context = true;
+    const char *p = env->GetStringUTFChars(prompt, nullptr);
+    std::string hint = p;
+    env->ReleaseStringUTFChars(prompt, p);
+    if (!hint.empty()) params.initial_prompt = hint.c_str();
     jsize n = env->GetArrayLength(pcm);
     jfloat *data = env->GetFloatArrayElements(pcm, nullptr);
     int rc = whisper_full(ctx, params, data, n);

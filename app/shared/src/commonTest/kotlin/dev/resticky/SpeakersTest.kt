@@ -109,7 +109,7 @@ class SpeakersTest {
         store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
         var input = ""
         val diarizer = Diarizer { Diarization(listOf(Turn(0, 600, 0), Turn(600, 1000, 1)), emptyList()) }
-        Pipeline(store, { listOf(Segment(0, 500, "hello $SPOKEN"), Segment(500, 1000, "world $SPOKEN")) }, { t, _ -> input = t; Summary("T", "S") }, diarizer) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 500, "hello $SPOKEN"), Segment(500, 1000, "world $SPOKEN")) }, { t, _ -> input = t; Summary("T", "S") }, diarizer) {}.drain()
         val m = store.list("ab").single()
         assertTrue(m.diarized && m.ready)
         assertEquals(listOf(0, 1), m.segments.getValue("0").map { it.speaker })
@@ -193,7 +193,7 @@ class SpeakersTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
         var calls = 0
-        val pipeline = Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, { calls++; error("no models") }) {}
+        val pipeline = Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, { calls++; error("no models") }) {}
         pipeline.drain()
         var m = store.list("ab").single()
         assertEquals(1, calls)
@@ -211,7 +211,7 @@ class SpeakersTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
         var calls = 0
-        val pipeline = Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, {
+        val pipeline = Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, {
             if (calls++ == 0) error("busy") else Diarization(listOf(Turn(0, 1000, 0)), emptyList())
         }) {}
         pipeline.drain()

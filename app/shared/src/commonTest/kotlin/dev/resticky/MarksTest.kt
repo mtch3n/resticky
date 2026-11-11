@@ -111,7 +111,7 @@ class MarksTest {
         val store = Store(root)
         store.addMarks(device, "77", listOf(500))
         assertEquals(emptyList(), transcriptItems(store.list(device)))
-        Pipeline(store, { emptyList() }, noSummary, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> emptyList() }, noSummary, NO_SPEAKERS) {}.drain()
         assertFalse(store.list(device).single().ready)
     }
 
@@ -119,7 +119,7 @@ class MarksTest {
     fun pipelineStoresSegments() = runTest {
         val store = Store(root)
         store.addChunk(device, "aa", 0, false, 30_000, ByteArray(4))
-        Pipeline(store, { listOf(Segment(0, 1000, " hi [BLANK_AUDIO]"), Segment(1000, 2000, " [BLANK_AUDIO]"), Segment(2000, 3000, " there")) }, noSummary, NO_SPEAKERS) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 1000, " hi [BLANK_AUDIO]"), Segment(1000, 2000, " [BLANK_AUDIO]"), Segment(2000, 3000, " there")) }, noSummary, NO_SPEAKERS) {}.drain()
         val m = store.list(device).single()
         assertEquals("hi there", m.chunks["0"])
         assertEquals(listOf(Segment(0, 1000, "hi"), Segment(2000, 3000, "there")), m.segments["0"])

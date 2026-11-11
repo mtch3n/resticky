@@ -12,6 +12,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.time.TimeSource
 
 const val PIPELINE_VERSION = 2
@@ -19,7 +20,7 @@ const val PIPELINE_VERSION = 2
 val SESSION_IDLE = 3.minutes
 
 fun interface Transcriber {
-    suspend fun transcribe(opus: Path): List<Segment>
+    suspend fun transcribe(opus: Path, prompt: String): List<Segment>
 }
 
 fun interface Summarizer {
@@ -227,6 +228,9 @@ class Pipeline(
     private val diarizer: Diarizer,
     private val diarizeWindowMs: Long = Long.MAX_VALUE,
     private val speechId: () -> String = { "" },
+    private val vocabulary: Vocabulary? = null,
+    private val extraNames: () -> List<String> = { emptyList() },
+    private val calendarTerms: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
     private val log: (String) -> Unit,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -243,16 +247,23 @@ class Pipeline(
         for (m in all) {
             val seq = m.chunks.entries.firstOrNull { it.value == PENDING }?.key ?: continue
             val start = TimeSource.Monotonic.markNow()
-            val segments = runCatching { cleanSegments(transcriber.transcribe(Path(store.dir(m.device, m.id), "$seq.opus"))) }
+            val prompt = vocabulary?.let { v ->
+                val calendar = runCatching { calendarTerms(m.started, m.wallAt(m.endMs())) }.getOrElse { emptyList() }
+                v.prompt(extraNames(), calendar)
+            }.orEmpty()
+            val raw = runCatching { cleanSegments(transcriber.transcribe(Path(store.dir(m.device, m.id), "$seq.opus"), prompt)) }
                 .getOrElse {
                     log("WARN transcribe session=${m.id} seq=$seq err=${it.message}")
                     return false
                 }
+            val fixed = vocabulary?.let { applyRules(raw, it.rules()) }
+            val segments = fixed?.value ?: raw
             val text = segments.joinToString(" ") { it.text }
-            log("INFO transcribed session=${m.id} seq=$seq words=${text.split(' ').count { w -> w.isNotEmpty() }} segments=${segments.size} took=${start.elapsedNow()}")
+            log("INFO transcribed session=${m.id} seq=$seq words=${text.split(' ').count { w -> w.isNotEmpty() }} segments=${segments.size} prompt_chars=${prompt.length} replaced=${fixed?.count ?: 0} took=${start.elapsedNow()}")
             store.update(m.device, m.id) {
                 it.chunks[seq] = text
                 it.chunkEngine[seq] = speechId()
+                if (fixed == null) it.chunkRules.remove(seq) else it.chunkRules[seq] = fixed.count
                 if (segments.isEmpty()) it.segments.remove(seq) else it.segments[seq] = segments
             }
             return true

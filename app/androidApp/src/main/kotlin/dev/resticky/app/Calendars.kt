@@ -43,6 +43,22 @@ class Calendars(private val context: Context) {
         return out.sortedWith(compareBy({ it.account }, { it.name }))
     }
 
+    fun titles(from: Instant, to: Instant): List<String> {
+        val ids = choice.value.selected
+        if (!allowed || ids.isEmpty()) return emptyList()
+        val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+            ContentUris.appendId(it, from.toEpochMilliseconds())
+            ContentUris.appendId(it, to.toEpochMilliseconds())
+        }.build()
+        val cols = arrayOf(CalendarContract.Instances.TITLE)
+        val where = "${CalendarContract.Instances.CALENDAR_ID} IN (${ids.joinToString(",")})"
+        val out = mutableListOf<String>()
+        context.contentResolver.query(uri, cols, where, null, null)?.use { cur ->
+            while (cur.moveToNext()) cur.getString(0)?.trim()?.takeIf { it.isNotEmpty() }?.let { out += it }
+        }
+        return out.distinct()
+    }
+
     fun agenda(): Agenda {
         val now = Clock.System.now()
         val tz = TimeZone.currentSystemDefault()

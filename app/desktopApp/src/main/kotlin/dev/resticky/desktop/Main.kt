@@ -51,6 +51,7 @@ import dev.resticky.TOKEN_PATTERN
 import dev.resticky.Summarizer
 import dev.resticky.Summary
 import dev.resticky.Transcriber
+import dev.resticky.Vocabulary
 import dev.resticky.Weather
 import dev.resticky.hubJson
 import dev.resticky.opusFramesToOgg
@@ -174,7 +175,7 @@ private fun previousTail(opus: File): FloatArray {
     return samples.copyOfRange(maxOf(0, samples.size - (CONTEXT_MS * RATE / 1000).toInt()), samples.size)
 }
 
-private fun whisper(model: String, detector: SpeechDetector) = Transcriber { opus ->
+private fun whisper(model: String, detector: SpeechDetector) = Transcriber { opus, prompt ->
     runInterruptible(Dispatchers.IO) {
         val file = File(opus.toString())
         val frames = file.readBytes()
@@ -187,7 +188,8 @@ private fun whisper(model: String, detector: SpeechDetector) = Transcriber { opu
         val dir = Files.createTempDirectory("resticky-asr").toFile()
         try {
             val wavs = windows.mapIndexed { i, w -> File(dir, "$i.wav").also { writeWav(it, w.audio(all)) } }
-            run(null, "whisper-cli", "-m", model, *wavs.flatMap { listOf("-f", it.path) }.toTypedArray(), "-l", "en", "-np", "-t", "8", "-ojf", merge = false)
+            val hint = if (prompt.isEmpty()) emptyArray() else arrayOf("--prompt", prompt)
+            run(null, "whisper-cli", "-m", model, *wavs.flatMap { listOf("-f", it.path) }.toTypedArray(), "-l", "en", "-np", "-t", "8", "-ojf", *hint, merge = false)
             windows.flatMapIndexed { i, w -> placeSegments(parseWhisperJson(File(dir, "$i.wav.json").readText()), w, context.size, RATE) }
         } finally {
             dir.deleteRecursively()
@@ -312,7 +314,7 @@ fun main(args: Array<String>) {
     val segmentation = flags.string("segmentation", "$home/.local/share/resticky/models/$SEGMENTATION_MODEL")
     val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
     val vad = flags.string("vad", "$home/.local/share/resticky/models/$VAD_MODEL")
-    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, log = ::log)
+    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, vocabulary = Vocabulary(IoPath(File(File(data).absoluteFile.parentFile, "vocabulary.json").path)), log = ::log)
     val city = flags.string("city", "").ifBlank { null }
     val weatherInterval = flags.string("weather-interval", "$WEATHER_INTERVAL").toInt()
     require(weatherInterval in WEATHER_INTERVALS) { "-weather-interval must be one of ${WEATHER_INTERVALS.joinToString("|")}" }

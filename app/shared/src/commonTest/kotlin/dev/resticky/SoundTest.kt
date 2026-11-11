@@ -12,7 +12,7 @@ class SoundTest {
     fun theNewestChangeWins() = runTest {
         val root = Path(SystemTemporaryDirectory, "resticky-sound-${Random.nextLong().toULong()}")
         val store = Store(root)
-        val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        val hub = Hub(store, Pipeline(store, { _, _ -> emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
         suspend fun report(sound: String?) = hub.checkin(Checkin("ab", sound = sound), "wifi")
         report(null)
         assertEquals("beep", hub.sound.value)
@@ -33,7 +33,7 @@ class SoundTest {
     fun homeScreenFollowsTheSameRule() = runTest {
         val root = Path(SystemTemporaryDirectory, "resticky-home-${Random.nextLong().toULong()}")
         val store = Store(root)
-        val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        val hub = Hub(store, Pipeline(store, { _, _ -> emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
         suspend fun report(home: String?) = hub.checkin(Checkin("ab", home = home), "wifi")
         assertEquals("apps", hub.home.value)
         report("weather")
@@ -54,7 +54,7 @@ class SoundTest {
     fun buzzPitchFollowsTheSameRule() = runTest {
         val root = Path(SystemTemporaryDirectory, "resticky-buzz-${Random.nextLong().toULong()}")
         val store = Store(root)
-        val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
+        val hub = Hub(store, Pipeline(store, { _, _ -> emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
         suspend fun report(hz: Int?) = hub.checkin(Checkin("ab", buzzHz = hz), "wifi")
         assertEquals(175, hub.buzzHz.value)
         report(300)

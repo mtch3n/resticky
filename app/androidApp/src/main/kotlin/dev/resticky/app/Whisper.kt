@@ -12,7 +12,7 @@ object Whisper {
     @JvmStatic external fun opusReset(dec: Long)
     @JvmStatic external fun opusClose(dec: Long)
     @JvmStatic external fun opusFrame(dec: Long, packet: ByteArray, offset: Int, length: Int, out: FloatArray): Int
-    @JvmStatic external fun transcribe(ctx: Long, pcm: FloatArray, threads: Int): Boolean
+    @JvmStatic external fun transcribe(ctx: Long, pcm: FloatArray, threads: Int, prompt: String): Boolean
     @JvmStatic external fun segments(ctx: Long): Int
     @JvmStatic external fun segmentStartMs(ctx: Long, i: Int): Long
     @JvmStatic external fun segmentEndMs(ctx: Long, i: Int): Long
