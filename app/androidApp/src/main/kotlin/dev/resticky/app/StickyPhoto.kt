@@ -20,7 +20,7 @@ import kotlin.math.roundToInt
 
 fun stickyFrame(open: () -> InputStream?): ByteArray? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    open()?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    (open() ?: return null).use { BitmapFactory.decodeStream(it, null, bounds) }
     if (bounds.outWidth <= 0) return null
     var sample = 1
     while (minOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= PHOTO_H) sample *= 2

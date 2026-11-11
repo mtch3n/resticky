@@ -267,19 +267,19 @@ enum class Tab(val label: String, val icon: Int) {
 fun BottomNav(selected: Tab, onSelect: (Tab) -> Unit, onSnap: () -> Unit) {
     Column(Modifier.fillMaxWidth().background(Ink.white).navigationBarsPadding()) {
         HorizontalDivider(thickness = 1.dp, color = Ink.navLine)
-        Row(Modifier.fillMaxWidth().height(79.dp).padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(79.dp).padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Tab.entries.forEach { tab ->
-                if (tab == Tab.Todo) SnapButton(onSnap)
+                if (tab == Tab.Todo) SnapButton(onSnap, Modifier.weight(1f))
                 val on = tab == selected
                 Column(
-                    Modifier.clip(RoundedCornerShape(16.dp)).clickable { onSelect(tab) }.padding(horizontal = 4.dp),
+                    Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable { onSelect(tab) },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Box(Modifier.width(64.dp).height(32.dp).clip(CircleShape).background(if (on) Ink.black else Color.Transparent), contentAlignment = Alignment.Center) {
+                    Box(Modifier.width(56.dp).height(32.dp).clip(CircleShape).background(if (on) Ink.black else Color.Transparent), contentAlignment = Alignment.Center) {
                         Glyph(tab.icon, 22.dp, if (on) Ink.white else Ink.nav)
                     }
-                    Text(tab.label, style = Type.nav.copy(color = if (on) Ink.black else Ink.nav))
+                    Text(tab.label, style = Type.nav.copy(color = if (on) Ink.black else Ink.nav), maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -287,13 +287,13 @@ fun BottomNav(selected: Tab, onSelect: (Tab) -> Unit, onSnap: () -> Unit) {
 }
 
 @Composable
-private fun SnapButton(onSnap: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+private fun SnapButton(onSnap: () -> Unit, modifier: Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(
-            Modifier.offset(y = (-14).dp).size(64.dp).clip(CircleShape).background(Ink.white).padding(5.dp).clip(CircleShape).background(Ink.black).clickable(onClick = onSnap),
+            Modifier.offset(y = (-12).dp).size(58.dp).clip(CircleShape).background(Ink.white).padding(4.dp).clip(CircleShape).background(Ink.black).clickable(onClick = onSnap),
             contentAlignment = Alignment.Center,
-        ) { Glyph(R.drawable.ic_camera, 28.dp, Ink.white) }
-        Text("Snap", style = Type.nav, modifier = Modifier.offset(y = (-14).dp))
+        ) { Glyph(R.drawable.ic_camera, 26.dp, Ink.white) }
+        Text("Snap", style = Type.nav, maxLines = 1, softWrap = false, modifier = Modifier.offset(y = (-12).dp))
     }
 }
 
