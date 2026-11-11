@@ -11,8 +11,8 @@ android {
         applicationId = "dev.resticky.app"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1401
-        versionName = "0.14.1"
+        versionCode = 1402
+        versionName = "0.14.2"
         ndk { abiFilters += "arm64-v8a" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild { cmake { arguments += listOf("-DCMAKE_BUILD_TYPE=Release", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON") } }
