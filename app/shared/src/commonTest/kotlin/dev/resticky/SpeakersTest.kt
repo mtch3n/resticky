@@ -115,6 +115,34 @@ class SpeakersTest {
         assertEquals(listOf(0, 1), m.segments.getValue("0").map { it.speaker })
         assertEquals("Speaker A: hello $SPOKEN\nSpeaker B: world $SPOKEN", input)
     }
+
+    @Test
+    fun rerunQueuesAudioAgainAndCleansTextWithoutAudio() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, false, 30_000, ByteArray(4))
+        store.addChunk("ab", "01", 1, true, 30_000, ByteArray(4))
+        store.update("ab", "01") {
+            it.chunks["0"] = "old text"
+            it.chunks["1"] = "[inaudible] >> Yes. Yes. Yes. Yes."
+            it.ready = true
+            it.diarized = true
+            it.title = "Old"
+            it.todos = listOf("Blow the whistle")
+            it.speakers["0"] = "Sam"
+        }
+        SystemFileSystem.delete(Path(store.dir("ab", "01"), "1.opus"))
+        assertEquals(1, store.rerunAll())
+        val m = store.list("ab").single()
+        assertEquals(PENDING, m.chunks["0"])
+        assertEquals("Yes. Yes.", m.chunks["1"])
+        assertEquals(false, m.ready)
+        assertEquals(false, m.diarized)
+        assertEquals("", m.title)
+        assertEquals(emptyList(), m.todos)
+        assertTrue(m.speakers.isEmpty())
+        assertEquals(1, store.rerunAll())
+        assertEquals(PENDING, store.list("ab").single().chunks["0"])
+    }
 }
 
 class DiarizationTest {

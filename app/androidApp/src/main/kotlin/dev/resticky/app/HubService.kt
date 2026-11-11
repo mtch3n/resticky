@@ -58,6 +58,10 @@ class HubService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as HubApp
         intent?.getStringExtra("passkey")?.let { app.ble.enterPasskey(it) }
+        if (intent?.getStringExtra("pipeline") == "rerun") CoroutineScope(Dispatchers.Default).launch {
+            log("INFO pipeline rerun sessions=${app.store.rerunAll()}")
+            app.pipeline.kick()
+        }
         when (intent?.getStringExtra("firmware")) {
             "check" -> app.stickyUpdate.check()
             "update" -> app.stickyUpdate.update()

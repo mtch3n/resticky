@@ -105,6 +105,39 @@ class Store(val root: Path) {
         }
     }
 
+    suspend fun rerunAll(): Int = mutex.withLock {
+        if (!SystemFileSystem.exists(root)) return@withLock 0
+        var count = 0
+        for (device in SystemFileSystem.list(root)) for (m in listUnlocked(device.name)) {
+            if (m.chunks.isEmpty()) continue
+            var audio = false
+            for (seq in m.chunks.keys.toList()) {
+                if (SystemFileSystem.exists(Path(dir(m.device, m.id), "$seq.opus"))) {
+                    m.chunks[seq] = PENDING
+                    m.segments.remove(seq)
+                    audio = true
+                } else {
+                    m.chunks[seq] = cleanTranscript(m.chunks.getValue(seq))
+                    m.segments[seq]?.let { old -> cleanSegments(old).let { if (it.isEmpty()) m.segments.remove(seq) else m.segments[seq] = it } }
+                }
+            }
+            if (audio) {
+                m.diarized = false
+                m.speakers.clear()
+            }
+            m.title = ""
+            m.summary = ""
+            m.todos = emptyList()
+            m.engine = ""
+            m.done.clear()
+            m.todoChanges.clear()
+            m.ready = false
+            save(m)
+            count++
+        }
+        count
+    }
+
     suspend fun all(): List<Session> = mutex.withLock {
         if (!SystemFileSystem.exists(root)) return@withLock emptyList()
         SystemFileSystem.list(root).flatMap { listUnlocked(it.name) }
