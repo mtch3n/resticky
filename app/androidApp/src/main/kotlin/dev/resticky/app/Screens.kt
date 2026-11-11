@@ -819,6 +819,7 @@ fun SettingsScreen(
     item {
         CardList {
             ListRow("This phone", if (hub.running) hub.address ?: "No Wi-Fi" else "Off", first = true, lead = { Glyph(R.drawable.ic_server) })
+            HubPasswordRow()
         }
     }
 }
