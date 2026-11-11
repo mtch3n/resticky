@@ -18,7 +18,7 @@ class SnapActivity : ComponentActivity() {
         val app = application as HubApp
         val file = snap
         if (ok && file != null) app.scope.launch {
-            val message = app.photos.save(file, null)
+            val message = app.photos.save(file)
             withContext(Dispatchers.Main) { Toast.makeText(app, message, Toast.LENGTH_SHORT).show() }
         } else file?.delete()
         finish()

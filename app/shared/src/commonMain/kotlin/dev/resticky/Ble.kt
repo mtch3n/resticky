@@ -14,6 +14,7 @@ const val FRAME_WEATHER_SET = 12
 const val FRAME_TIME = 13
 const val FRAME_DISPLAY = 14
 const val FRAME_INSTALL = 16
+const val FRAME_PHOTO = 17
 const val MAX_DATA_PAYLOAD = 2048
 private const val CHUNK_HEADER = 31
 

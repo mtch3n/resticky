@@ -358,6 +358,12 @@ A mark is a moment that the user marked on the Sticky with a double press while 
   linked" (`files/unlinked/<unix ms>.jpg` and `.txt` with the text) on the Photos tab, where the user attaches it.
 - The Photos tab shows the photos grouped by session, newest first (3 columns; tap: the viewer with the text and
   "Play from mm:ss", which opens the transcript at that time), then "Not linked".
+- Show on Sticky (photo viewer, and the Android share target "Show on Sticky" for `image/*`, for example from
+  Google Photos): the phone decodes the photo with its EXIF orientation, scales it to cover 480×800 and crops the
+  center, makes it gray (0.299 R + 0.587 G + 0.114 B), stretches the levels (1 % and 99 % points, contrast 1.15)
+  and dithers it to 1 bit with Atkinson dithering (cleaner whites and less noise than Floyd–Steinberg on the
+  e-paper, good for text and whiteboards). It sends the BLE `photo` frame; with no BLE link it says that the
+  Sticky is not connected.
 - `meta.json` `photos`: `[{"offset_ms","file","text","taken_ms"}]`, sorted by offset. The summary prompt gets
   "photo text at mm:ss" lines. `/api/transcripts` has only the count.
 
@@ -489,6 +495,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 14 | `display` | hub → device | `{"clock_face","weather_style","hour_format","beep"}` (see "Display") |
 | 15 | reserved | | |
 | 16 | `install` | hub → device | `{"version":"<x.y.z>"}`: the user asked for this firmware (see "Firmware updates") |
+| 17 | `photo` | hub → device | exactly 48000 bytes: a 480×800 portrait picture, row-major, 1 bit per pixel, the most significant bit first, 1 = black. The Sticky shows it full screen (full refresh) until the next touch or key and stores nothing. Needs firmware 0.14.1. |
 
 All JSON payloads are UTF-8 with no terminating zero byte.
 

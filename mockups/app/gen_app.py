@@ -83,13 +83,17 @@ p.q{font-size:15px;line-height:1.5;font-weight:500}
 """
 
 SYS = '<div class=sys><span>10:42</span><span style="display:flex;gap:6px;align-items:center">' + icon("wifi", 16) + icon("battery-4", 18) + "</span></div>"
-TABS = [("Hub", "home"), ("Transcripts", "file-text"), ("To-do", "list-check")]
+TABS = [("Hub", "home"), ("Transcripts", "file-text"), ("Snap", "camera"), ("To-do", "list-check"), ("Photos", "photo")]
 
 
 def nav(on):
-    return "<div class=nav>" + "".join(
-        f'<div class={"on" if n == on else ""}><i>{icon(i, 22, 2, "#fff" if n == on else "#555")}</i>{n}</div>' for n, i in TABS
-    ) + "</div>"
+    cells = []
+    for n, i in TABS:
+        if n == "Snap":
+            cells.append(f'<div style="position:relative"><span style="position:absolute;top:-34px;left:50%;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;background:#111;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 6px #fff">{icon("camera", 30, 2.2, "#fff")}</span><span style="margin-top:34px">Snap</span></div>')
+        else:
+            cells.append(f'<div class={"on" if n == on else ""}><i>{icon(i, 22, 2, "#fff" if n == on else "#555")}</i>{n}</div>')
+    return "<div class=nav>" + "".join(cells) + "</div>"
 
 
 def page(name, title, body, tab=None, back=False, act="", foot=""):
@@ -141,8 +145,7 @@ CHEV = icon("chevron-right", 20)
 SHEET = '<div style="position:absolute;left:0;top:0;width:412px;height:915px;background:rgba(0,0,0,.45)"></div><div style="position:absolute;left:0;bottom:0;width:412px;background:#fff;border-radius:28px 28px 0 0;padding:14px 16px 28px;display:flex;flex-direction:column;gap:14px"><div style="width:40px;height:5px;border-radius:3px;background:#ccc;align-self:center"></div>'
 
 TILES = [("device-mobile", "Sticky", "Wi-Fi, clock, sounds"), ("cloud", "Weather", "Lisbon · 18°"), ("map-pin", "Places", "Home, Office"),
-         ("calendar", "Calendars", "4 calendars"), ("photo", "Photos", "2 not linked"), ("settings", "App settings", "Models, transcribe, hubs")]
-CAMERA = f'<span style="width:38px;height:38px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center">{icon("camera", 22, 2.2, "#111")}</span>'
+         ("calendar", "Calendars", "4 calendars"), ("heart-rate-monitor", "Health", "OK · 34 °C"), ("settings", "App settings", "Models, transcribe, hubs")]
 
 
 def sticky_card(extra=""):
@@ -157,9 +160,9 @@ def tiles(items):
         for i, n, d in items) + "</div>"
 
 
-page("hub", "Hub", sticky_card(CAMERA) + tiles(TILES), "Hub")
+page("hub", "Hub", sticky_card() + tiles(TILES), "Hub")
 
-page("device-picker", "Hub", sticky_card(CAMERA) + tiles(TILES), "Hub", foot=SHEET + f"""
+page("device-picker", "Hub", sticky_card() + tiles(TILES), "Hub", foot=SHEET + f"""
 <div class=h style="font-size:20px;padding:0 4px">Choose a Sticky</div>
 {lst(li("Sticky · desk", "Connected over Bluetooth · 93%", radio(True)), li("Sticky · kitchen", "Paired", radio(False)))}
 <div class=btn>{icon("plus", 20)}Pair a new Sticky</div></div>""")
@@ -283,18 +286,14 @@ rows.insert(3, PHOTO_ROW)
 CAM_MARK = f'<span class=mk style="left:{pct(39 * 60 + 30)};top:-7px">{icon("camera", 14, 2.2)}</span>'
 page("transcript-photo", "Product launch", '<div class=row style="gap:8px">' + pill("13:12") + pill("Office") + pill("1 h 11 min") + pill(f'{icon("photo", 14)} 1') + "</div>"
      + sec("Transcript") + '<div style="display:flex;flex-direction:column;margin:0 -12px">' + "".join(rows) + "</div>",
-     back=True, act=icon("camera", 26, 2.2), foot=player().replace("</div>\n<div class=row", CAM_MARK + "</div>\n<div class=row", 1))
+     back=True, foot=player().replace("</div>\n<div class=row", CAM_MARK + "</div>\n<div class=row", 1))
 
 page("photo-view", "Whiteboard · 39:30", f"""
 <div style="height:420px;{THUMB};border-radius:20px">{icon("photo", 64, 1.6, "#666")}</div>
 {sec("Text in the photo")}
 <div class=card><p class=q>Restore test env by tomorrow · DNS switch Friday night · keep old servers 2 days</p></div>
+<div class=btn>{icon("device-mobile", 20)}Show on Sticky</div>
 <div class="btn on">{icon("player-play", 20, 2, "#fff")}Play from 39:30</div>""", back=True)
-
-page("photos-unlinked", "Unlinked photos", f"""
-<div class=s style="padding:0 4px">Taken when no recording was near. Attach each one to a session.</div>
-""" + lst(*[li(t, d, f'<div style="width:72px;height:52px;{THUMB}">{icon("photo", 20, 2, "#666")}</div>', '<span class=sp style="font-size:14px;font-weight:700">Attach</span>')
-            for t, d in [("Today 08:12", "No session within 10 min"), ("Yesterday 19:40", "No session within 10 min")]]), back=True)
 
 page("qs-tile", "", f"""
 <div style="position:absolute;left:0;top:0;width:412px;height:915px;background:#1b1b1b"></div>
@@ -411,39 +410,7 @@ page("updates", "Updates", f"""
 <div class=btn>{icon("refresh", 20)}Check now</div>""", back=True)
 
 
-def nav_custom(items, on, center=None):
-    cells = []
-    for n, i in items:
-        if n == center:
-            cells.append(f'<div style="position:relative"><span style="position:absolute;top:-34px;left:50%;transform:translateX(-50%);width:64px;height:64px;border-radius:50%;background:#111;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 6px #fff">{icon("camera", 30, 2.2, "#fff")}</span><span style="margin-top:34px">Snap</span></div>')
-        else:
-            cells.append(f'<div class={"on" if n == on else ""}><i>{icon(i, 22, 2, "#fff" if n == on else "#555")}</i>{n}</div>')
-    return "<div class=nav>" + "".join(cells) + "</div>"
-
-
-def page_nav(name, title, body, navhtml, act=""):
-    head = title + (f"<span class=act>{act}</span>" if act else "")
-    open(f"{root}/{name}.html", "w").write(f"<!doctype html><meta charset=utf-8><style>{CSS}</style><body>{SYS}<div class=bar>{head}</div><div class=main>{body}</div>{navhtml}</body>")
-
-
-HOME_BODY = open(f"{root}/hub.html").read().split("<div class=main>")[1].rsplit("</div><div class=nav>", 1)[0] if (root / "hub.html").exists() else ""
-page_nav("cam-a", "Hub", HOME_BODY, nav_custom([("Hub", "home"), ("Transcripts", "file-text"), ("Snap", "camera"), ("To-do", "list-check"), ("Photos", "photo")], "Hub", center="Snap"))
-
-THUMB = lambda w, h: f'<div style="width:{w}px;height:{h}px;border-radius:12px;background:linear-gradient(135deg,#e6e6e6,#bfbfbf);display:flex;align-items:center;justify-content:center;flex:none">{icon("photo", 24, 2, "#666")}</div>'
-page_nav("cam-b", "Capture", f"""
-<div class="card dark" style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:26px">
-<div class=s style="color:#bbb">Joins: Product launch · live · 39:30</div>
-<div style="width:120px;height:120px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center">{icon("camera", 54, 2, "#111")}</div>
-<div class=h>Take a photo</div></div>
-<div class=sec>Recent</div>
-<div class=list>""" + "".join(f'<div class=li>{THUMB(72, 52)}<span class=t><b>{t}</b><span class=s>{d}</span></span>{icon("chevron-right", 20)}</div>' for t, d in [("Whiteboard", "Product launch · 39:30"), ("Slide 4", "Weekly planning · 12:05"), ("Receipt", "Not linked · Attach")]) + "</div>",
-    nav_custom([("Hub", "home"), ("Transcripts", "file-text"), ("Capture", "camera"), ("To-do", "list-check")], "Capture"))
-
-page_nav("cam-c", "Photos", f"""
-<div class=sec>Product launch · today 13:12</div>
-<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">""" + "".join(THUMB(118, 118) for _ in range(3)) + f"""</div>
-<div class=sec>Weekly planning · yesterday</div>
-<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">""" + "".join(THUMB(118, 118) for _ in range(2)) + f"""</div>
-<div class=sec>Not linked</div>
-<div class=list><div class=li>{THUMB(72, 52)}<span class=t><b>Today 08:12</b><span class=s>No session near</span></span><span class=sp style="font-size:14px;font-weight:700">Attach</span></div></div>""",
-    nav_custom([("Hub", "home"), ("Transcripts", "file-text"), ("Photos", "photo"), ("To-do", "list-check")], "Photos"), act=icon("camera", 26, 2.2))
+GRID = lambda n: '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">' + "".join(
+    f'<div style="height:118px;{THUMB};border-radius:12px">{icon("photo", 24, 2, "#666")}</div>' for _ in range(n)) + "</div>"
+page("photos", "Photos", sec("Product launch · today 13:12") + GRID(3) + sec("Weekly planning · yesterday 09:30") + GRID(2) + sec("Not linked")
+     + lst(li("Today 08:12", "No session within 10 min", f'<div style="width:72px;height:52px;{THUMB}">{icon("photo", 20, 2, "#666")}</div>', '<span class=sp style="font-size:14px;font-weight:700">Attach</span>')), "Photos")

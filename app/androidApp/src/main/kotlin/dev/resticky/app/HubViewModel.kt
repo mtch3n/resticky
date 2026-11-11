@@ -181,12 +181,17 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         log("INFO sticky update asked version=$version")
     }
 
+    fun showOnSticky(file: java.io.File) = viewModelScope.launch {
+        val message = app.showOnSticky { file.inputStream() }
+        android.widget.Toast.makeText(app, message, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     val unlinked = app.photos.unlinked
 
     fun newSnap() = app.photos.newSnap()
 
-    fun savePhoto(file: java.io.File, target: PhotoTarget?) = viewModelScope.launch {
-        val message = app.photos.save(file, target)
+    fun savePhoto(file: java.io.File) = viewModelScope.launch {
+        val message = app.photos.save(file)
         android.widget.Toast.makeText(app, message, android.widget.Toast.LENGTH_SHORT).show()
     }
 

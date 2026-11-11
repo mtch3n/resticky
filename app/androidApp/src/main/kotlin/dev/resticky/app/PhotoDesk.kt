@@ -27,8 +27,6 @@ import kotlin.time.Instant
 
 data class Unlinked(val file: File, val takenMs: Long, val text: String)
 
-class PhotoTarget(val device: String, val id: String, val offsetMs: Long?)
-
 class PhotoDesk(private val context: Context, private val store: Store) {
     private val snaps = File(context.cacheDir, "snaps")
     private val unlinkedDir = File(context.filesDir, "unlinked")
@@ -73,11 +71,11 @@ class PhotoDesk(private val context: Context, private val store: Store) {
             .addOnCompleteListener { recognizer.close() }
     }
 
-    suspend fun save(snap: File, target: PhotoTarget?): String = withContext(Dispatchers.IO) {
+    suspend fun save(snap: File): String = withContext(Dispatchers.IO) {
         val taken = snap.nameWithoutExtension.toLong()
         val bitmap = shrink(snap) ?: return@withContext "The photo could not be read"
         val text = runCatching { read(bitmap) }.getOrElse { "" }
-        val session = target?.let { t -> store.all().find { it.device == t.device && it.id == t.id } } ?: linkPhoto(store.all(), Instant.fromEpochMilliseconds(taken))
+        val session = linkPhoto(store.all(), Instant.fromEpochMilliseconds(taken))
         val dest = if (session == null) File(unlinkedDir, "$taken.jpg") else File(store.dir(session.device, session.id).toString(), "photos/$taken.jpg")
         dest.parentFile!!.mkdirs()
         dest.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
@@ -88,7 +86,7 @@ class PhotoDesk(private val context: Context, private val store: Store) {
             log("INFO photo unlinked taken=$taken chars=${text.length}")
             return@withContext "Saved to Unlinked photos"
         }
-        val offset = target?.offsetMs ?: photoOffset(session, Instant.fromEpochMilliseconds(taken))
+        val offset = photoOffset(session, Instant.fromEpochMilliseconds(taken))
         store.update(session.device, session.id) { it.photos += Photo(offset, "photos/$taken.jpg", text, taken); it.photos.sortBy { p -> p.offsetMs } }
         log("INFO photo session=${session.id} offset_ms=$offset chars=${text.length}")
         "Added to ${session.title.ifEmpty { "the live session" }}"

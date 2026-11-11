@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
 }
 
 sealed interface Detail {
-    data class Transcript(val device: String, val id: String) : Detail
+    data class Transcript(val device: String, val id: String, val startAt: Long? = null) : Detail
     data object Models : Detail
     data object Sticky : Detail
     data object Calendars : Detail
@@ -83,7 +83,6 @@ sealed interface Detail {
     data class PlaceEdit(val place: dev.resticky.NamedPlace?) : Detail
     data object Clock : Detail
     data object Settings : Detail
-    data object Photos : Detail
     data object Updates : Detail
     data object Pipeline : Detail
     data class WifiAdd(val network: ScanItem?) : Detail
@@ -116,15 +115,13 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val offer = FirmwareOffer(hub.sticky?.firmware?.takeIf { it.isNotEmpty() }, release?.firmware?.first, firmwareReady, hub.sticky?.wifiSsid?.isNotEmpty() == true, installAsked)
     val updatesLabel = release?.takeIf { dev.resticky.isNewer(it.version, model.appVersion) }?.let { "Version ${it.version} is ready" } ?: "resticky ${model.appVersion}"
     var snapPath by rememberSaveable { mutableStateOf<String?>(null) }
-    var snapTarget by remember { mutableStateOf<PhotoTarget?>(null) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        snapPath?.let { path -> if (ok) model.savePhoto(java.io.File(path), snapTarget) else java.io.File(path).delete() }
+        snapPath?.let { path -> if (ok) model.savePhoto(java.io.File(path)) else java.io.File(path).delete() }
         snapPath = null
     }
-    val snap = { target: PhotoTarget? ->
+    val snap = {
         val (file, uri) = model.newSnap()
         snapPath = file.path
-        snapTarget = target
         camera.launch(uri)
     }
     val calendarList by model.calendars.collectAsState()
@@ -145,9 +142,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 is Detail.Transcript -> {
                     val view = sessions.find { it.device == d.device && it.id == d.id }
                     val prefs by model.player.collectAsState()
-                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { speaker, name -> model.renameSpeaker(d.device, d.id, speaker, name) }, { p -> model.photoFile(view!!.session, p) }, { at ->
-                        snap(PhotoTarget(d.device, d.id, at))
-                    }) { i, done ->
+                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { speaker, name -> model.renameSpeaker(d.device, d.id, speaker, name) }, { p -> model.photoFile(view!!.session, p) }, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }) { i, done ->
                         model.setTodo(d.device, d.id, i, done)
                     }
                 }
@@ -230,7 +225,6 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                     WifiScreen(hub.sticky, scan, back, { model.forgetWifi(it) }) { stack.add(Detail.WifiAdd(it)) }
                 }
                 is Detail.WifiAdd -> WifiAddScreen(d.network, back, model::addWifi)
-                Detail.Photos -> UnlinkedScreen(unlinked, sessions, back, model::attach)
                 Detail.Updates -> UpdatesScreen(
                     model.appVersion, release, releaseChecked, updateStatus, stickyName(hub, ble), offer, back,
                     { model.checkUpdates() }, { model.installApp() }, model::updateSticky,
@@ -243,10 +237,10 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                             HubTile(R.drawable.ic_cloud, "Weather", weatherLabel) { stack.add(Detail.Weather) },
                             HubTile(R.drawable.ic_map_pin, "Places", placesLabel) { stack.add(Detail.Places) },
                             HubTile(R.drawable.ic_calendar, "Calendars", calendarsLabel) { stack.add(Detail.Calendars) },
-                            HubTile(R.drawable.ic_photo, "Photos", if (unlinked.isEmpty()) "All linked" else "${unlinked.size} not linked") { stack.add(Detail.Photos) },
+                            HubTile(R.drawable.ic_heart_rate_monitor, "Health", healthStatus(hub.sticky)) { stack.add(Detail.Health) },
                             HubTile(R.drawable.ic_settings, "App settings", "Models, transcribe, hubs") { stack.add(Detail.Settings) },
                         )
-                        HubScreen(hub, ble, tiles, { stack.add(Detail.Sticky) }, { snap(null) }) { choosing = true }
+                        HubScreen(hub, ble, tiles, { stack.add(Detail.Sticky) }) { choosing = true }
                         if (choosing) StickySheet(hub, ble, { choosing = false }) {
                             choosing = false
                             stack.add(Detail.Sticky)
@@ -254,6 +248,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                         }
                     }
                     Tab.Transcripts -> TranscriptsScreen(sessions) { stack.add(Detail.Transcript(it.device, it.id)) }
+                    Tab.Photos -> PhotosScreen(unlinked, sessions, model::photoFile, { s, p -> stack.add(Detail.Transcript(s.device, s.id, p.offsetMs)) }, model::showOnSticky, model::attach)
                     Tab.Todo -> {
                         val todos by model.todos.collectAsState()
                         TodoScreen(todos) { device, t, done ->
@@ -263,6 +258,6 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 }
             }
         }
-        if (stack.isEmpty()) BottomNav(tab) { tab = it }
+        if (stack.isEmpty()) BottomNav(tab, { tab = it }) { snap() }
     }
 }

@@ -68,6 +68,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.navigationBarsPadding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -159,7 +161,7 @@ private fun Tile(icon: Int, name: String, status: String, modifier: Modifier, on
 class HubTile(val icon: Int, val name: String, val status: String, val open: () -> Unit)
 
 @Composable
-fun HubScreen(state: HubState, ble: BleState, tiles: List<HubTile>, sticky: () -> Unit, snap: () -> Unit, choose: () -> Unit) = Page("Hub") {
+fun HubScreen(state: HubState, ble: BleState, tiles: List<HubTile>, sticky: () -> Unit, choose: () -> Unit) = Page("Hub") {
     item {
         val c = state.sticky
         Column(Modifier.fillMaxWidth().clip(CardShape).background(Ink.black).clickable(onClick = sticky).padding(horizontal = 18.dp, vertical = 16.dp)) {
@@ -169,7 +171,6 @@ fun HubScreen(state: HubState, ble: BleState, tiles: List<HubTile>, sticky: () -
                     Text(stickyName(state, ble), style = Type.heading.copy(color = Ink.white), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(linkLabel(state, ble), style = Type.small.copy(color = Ink.mutedDark), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Box(Modifier.size(38.dp).clip(CircleShape).background(Ink.white).clickable(onClick = snap), contentAlignment = Alignment.Center) { Glyph(R.drawable.ic_camera, 22.dp) }
                 Box(Modifier.clip(CircleShape).clickable(onClick = choose).padding(6.dp)) { Glyph(R.drawable.ic_chevron_down, 22.dp, Ink.white) }
             }
             if (c != null || state.todayMs > 0) {
@@ -384,7 +385,7 @@ private fun PhotoRow(photo: Photo, file: File, near: Boolean, onClick: () -> Uni
 }
 
 @Composable
-private fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, play: () -> Unit) {
+fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, show: () -> Unit, play: () -> Unit) {
     androidx.compose.ui.window.Dialog(dismiss, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(Ink.white).navigationBarsPadding()) {
             TopBar("Photo · ${timeLabel(photo.offsetMs)}", dismiss)
@@ -395,7 +396,8 @@ private fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, play: () 
                 gap()
                 item { Card { Text(photo.text.ifBlank { "No text found." }, style = Type.body) } }
             }
-            Box(Modifier.padding(16.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlineButton("Show on Sticky", R.drawable.ic_device_mobile, show)
                 Row(
                     Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(Ink.black).clickable(onClick = play),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -410,14 +412,40 @@ private fun PhotoViewer(photo: Photo, file: File, dismiss: () -> Unit, play: () 
 }
 
 @Composable
-fun UnlinkedScreen(photos: List<Unlinked>, sessions: List<SessionView>, back: () -> Unit, attach: (Unlinked, Session) -> Unit) {
+fun PhotosScreen(
+    photos: List<Unlinked>,
+    sessions: List<SessionView>,
+    photoFile: (Session, Photo) -> File,
+    play: (Session, Photo) -> Unit,
+    showOnSticky: (File) -> Unit,
+    attach: (Unlinked, Session) -> Unit,
+) {
     var choosing by remember { mutableStateOf<Unlinked?>(null) }
-    Page("Unlinked photos", back) {
-        item { Text("Taken when no recording was near. Attach each one to a session.", style = Type.small, modifier = Modifier.padding(horizontal = 4.dp)) }
-        gap()
-        item {
+    var viewing by remember { mutableStateOf<Pair<Session, Photo>?>(null) }
+    val withPhotos = sessions.map { it.session }.filter { it.photos.isNotEmpty() }
+    Page("Photos") {
+        if (withPhotos.isEmpty() && photos.isEmpty()) item { CardList { ListRow("No photos yet", "Tap Snap during a meeting", first = true) } }
+        withPhotos.forEachIndexed { k, s ->
+            if (k > 0) gap()
+            item { Section("${s.title.ifEmpty { "Untitled session" }} · ${dayLabel(s.started.date()).lowercase().replaceFirstChar { it.uppercase() }} ${whenLabel(s.started).substringAfterLast(' ')}") }
+            gap()
+            s.photos.chunked(3).forEachIndexed { r, row ->
+                if (r > 0) item { Gap(8.dp) }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { p -> Thumb(photoFile(s, p), Modifier.weight(1f).aspectRatio(1f).clickable { viewing = s to p }) }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        }
+        if (photos.isNotEmpty()) {
+            gap()
+            item { Section("Not linked") }
+            gap()
+        }
+        if (photos.isNotEmpty()) item {
             CardList {
-                if (photos.isEmpty()) ListRow("No unlinked photos", "Photos taken during a recording go to it", first = true)
                 photos.forEachIndexed { i, p ->
                     val taken = kotlin.time.Instant.fromEpochMilliseconds(p.takenMs)
                     ListRow(
@@ -428,6 +456,12 @@ fun UnlinkedScreen(photos: List<Unlinked>, sessions: List<SessionView>, back: ()
                     ) { Box(Modifier.clip(CircleShape).clickable { choosing = p }.padding(horizontal = 4.dp, vertical = 6.dp)) { Text("Attach", style = Type.button.copy(fontSize = 14.sp)) } }
                 }
             }
+        }
+    }
+    viewing?.let { (s, p) ->
+        PhotoViewer(p, photoFile(s, p), { viewing = null }, { showOnSticky(photoFile(s, p)) }) {
+            viewing = null
+            play(s, p)
         }
     }
     choosing?.let { photo ->
@@ -492,7 +526,9 @@ fun TranscriptScreen(
     setPrefs: (PlayerPrefs) -> Unit,
     rename: (Int, String) -> Unit,
     photoFile: (Photo) -> File,
-    snap: (Long?) -> Unit,
+    showOnSticky: (File) -> Unit,
+    startAt: Long?,
+    started: () -> Unit,
     onTodo: (Int, Boolean) -> Unit,
 ) {
     val s = view?.session ?: return Page("Transcript", back) {}
@@ -524,6 +560,12 @@ fun TranscriptScreen(
     }
     val lineRow = remember(rows) { IntArray(lines.size).also { a -> rows.forEachIndexed { r, v -> if (v is Int) a[v] = r } } }
     val list = rememberLazyListState()
+    LaunchedEffect(startAt, ready) {
+        if (startAt == null || !ready) return@LaunchedEffect
+        playback.seek(startAt)
+        if (!playback.playing) playback.toggle()
+        started()
+    }
     LaunchedEffect(current) {
         if (current < 0 || !playback.playing) return@LaunchedEffect
         val visible = list.layoutInfo.visibleItemsInfo
@@ -533,9 +575,7 @@ fun TranscriptScreen(
         if (item == null || item.offset < 0 || item.offset + item.size > end - end / 4) list.animateScrollToItem((row - 2).coerceAtLeast(1))
     }
     Column(Modifier.fillMaxSize()) {
-        TopBar(s.title.ifEmpty { if (view.live) "Live session" else "Untitled session" }, back) {
-            Box(Modifier.clip(CircleShape).clickable { snap(if (view.live) null else playback.positionMs) }.padding(6.dp)) { Glyph(R.drawable.ic_camera, 26.dp) }
-        }
+        TopBar(s.title.ifEmpty { if (view.live) "Live session" else "Untitled session" }, back)
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = MAIN) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -596,7 +636,7 @@ fun TranscriptScreen(
         if (playback.audio != Audio.Missing) PlayerBar(playback, marks, photos.map { it.offsetMs }, prefs, setPrefs)
     }
     viewing?.let { photo ->
-        PhotoViewer(photo, photoFile(photo), { viewing = null }) {
+        PhotoViewer(photo, photoFile(photo), { viewing = null }, { showOnSticky(photoFile(photo)) }) {
             viewing = null
             playback.seek(photo.offsetMs)
             if (!playback.playing) playback.toggle()

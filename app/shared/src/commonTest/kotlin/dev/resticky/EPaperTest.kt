@@ -16,7 +16,7 @@ class EPaperTest {
 
     @Test
     fun aFrameIsExactly48000Bytes() {
-        val frame = panelPhoto(FloatArray(PANEL_W * PANEL_H) { (it % PANEL_W).toFloat() / PANEL_W })
+        val frame = panelPhoto(FloatArray(PHOTO_W * PHOTO_H) { (it % PHOTO_W).toFloat() / PHOTO_W })
         assertEquals(48_000, frame.size)
         assertEquals(PHOTO_FRAME_SIZE, frame.size)
     }

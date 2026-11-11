@@ -26,6 +26,7 @@ import dev.resticky.FRAME_AGENDA
 import dev.resticky.FRAME_CHUNK
 import dev.resticky.FRAME_DISPLAY
 import dev.resticky.FRAME_INSTALL
+import dev.resticky.FRAME_PHOTO
 import dev.resticky.FRAME_TIME
 import dev.resticky.FRAME_WEATHER
 import dev.resticky.FRAME_WEATHER_SET
@@ -248,6 +249,13 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         sendIfChanged(FRAME_AGENDA, hubJson.encodeToString(hub.agendaNow()))
         sendIfChanged(FRAME_DISPLAY, hubJson.encodeToString(hub.display()))
         hub.install.value?.let { sendIfChanged(FRAME_INSTALL, """{"version":"$it"}""") }
+    }
+
+    fun sendPhoto(frame: ByteArray): Boolean {
+        if (state.value.status != LinkStatus.Ready) return false
+        write(frame(FRAME_PHOTO, frame))
+        log("INFO ble photo sent bytes=${frame.size}")
+        return true
     }
 
     fun addWifi(ssid: String, password: String): Boolean {

@@ -260,14 +260,16 @@ enum class Tab(val label: String, val icon: Int) {
     Hub("Hub", R.drawable.ic_home),
     Transcripts("Transcripts", R.drawable.ic_file_text),
     Todo("To-do", R.drawable.ic_list_check),
+    Photos("Photos", R.drawable.ic_photo),
 }
 
 @Composable
-fun BottomNav(selected: Tab, onSelect: (Tab) -> Unit) {
+fun BottomNav(selected: Tab, onSelect: (Tab) -> Unit, onSnap: () -> Unit) {
     Column(Modifier.fillMaxWidth().background(Ink.white).navigationBarsPadding()) {
         HorizontalDivider(thickness = 1.dp, color = Ink.navLine)
         Row(Modifier.fillMaxWidth().height(79.dp).padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
             Tab.entries.forEach { tab ->
+                if (tab == Tab.Todo) SnapButton(onSnap)
                 val on = tab == selected
                 Column(
                     Modifier.clip(RoundedCornerShape(16.dp)).clickable { onSelect(tab) }.padding(horizontal = 4.dp),
@@ -281,6 +283,17 @@ fun BottomNav(selected: Tab, onSelect: (Tab) -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SnapButton(onSnap: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(
+            Modifier.offset(y = (-14).dp).size(64.dp).clip(CircleShape).background(Ink.white).padding(5.dp).clip(CircleShape).background(Ink.black).clickable(onClick = onSnap),
+            contentAlignment = Alignment.Center,
+        ) { Glyph(R.drawable.ic_camera, 28.dp, Ink.white) }
+        Text("Snap", style = Type.nav, modifier = Modifier.offset(y = (-14).dp))
     }
 }
 

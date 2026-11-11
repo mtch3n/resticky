@@ -15,14 +15,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import kotlin.time.Clock
 
 @RunWith(AndroidJUnit4::class)
 class PhotoDeskTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun photoIsShrunkReadAndLinkedToTheSession() = runBlocking {
+    fun photoIsShrunkReadAndLinkedToTheLiveSession() = runBlocking {
         val root = File(context.cacheDir, "photo-test").apply { deleteRecursively() }
         val store = Store(Path(root.path))
         store.addChunk("ab", "c1", 0, true, 30_000, ByteArray(4))
@@ -34,10 +33,10 @@ class PhotoDeskTest {
             drawText("RESTORE TEST ENV", 200f, 800f, Paint().apply { textSize = 220f; color = Color.BLACK })
         }
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-        desk.save(file, PhotoTarget("ab", "c1", 12_000))
+        desk.save(file)
         val s: Session = store.all().single()
         val photo = s.photos.single()
-        assertEquals(12_000L, photo.offsetMs)
+        assertTrue(photo.offsetMs in 25_000L..30_000L)
         assertTrue(photo.text, "RESTORE" in photo.text.uppercase())
         val saved = android.graphics.BitmapFactory.decodeFile(desk.file(s, photo).path)
         assertEquals(2048, saved.width)

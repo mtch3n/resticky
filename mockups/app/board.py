@@ -9,12 +9,12 @@ h1, h2, cap, tag = ImageFont.truetype(BOLD, 64), ImageFont.truetype(BOLD, 44), I
 P = True
 groups = [
     ("Home", [("hub", "Hub"), ("device-picker", "Choose a Sticky")]),
-    ("Sticky settings", [("sticky", "Sticky settings", P), ("sticky-pair", "Sticky settings (pairing)", P), ("faces", "Clock"), ("weather-settings", "Weather"),
+    ("Sticky settings", [("sticky", "Sticky settings"), ("sticky-pair", "Sticky settings (pairing)"), ("faces", "Clock"), ("weather-settings", "Weather"),
                          ("sticky-wifi", "Wi-Fi networks"), ("sticky-wifi-add", "Add a network"), ("health", "Health")]),
-    ("App settings", [("settings", "App settings", P), ("updates", "Updates", P), ("models", "Models"), ("pipeline", "Pipeline"), ("places", "Places"), ("place-edit", "Add a place"), ("calendars", "Calendars")]),
+    ("App settings", [("settings", "App settings"), ("updates", "Updates"), ("models", "Models"), ("pipeline", "Pipeline"), ("places", "Places"), ("place-edit", "Add a place"), ("calendars", "Calendars")]),
     ("Transcripts & playback", [("transcripts", "Transcripts"), ("transcript", "Transcript · top"), ("transcript-player", "Transcript · playing"),
                                 ("transcript-speakers", "Speakers, Clean up, Crisp voice"), ("speaker-rename", "Name a speaker")]),
-    ("Photos", [("transcript-photo", "Photo in the timeline"), ("photo-view", "Photo viewer"), ("photos-unlinked", "Unlinked photos"), ("qs-tile", "Quick Settings tile")]),
+    ("Photos", [("photos", "Photos tab"), ("transcript-photo", "Photo in the timeline"), ("photo-view", "Photo viewer"), ("qs-tile", "Quick Settings tile")]),
     ("To-do", [("todo", "To-do")]),
 ]
 W, H, pad, gap = 824, 1830, 60, 50
@@ -22,7 +22,7 @@ cols = max(len(items) for _, items in groups)
 bw = pad * 2 + cols * W + (cols - 1) * gap
 board = Image.new("RGB", (bw, 180 + len(groups) * (110 + 60 + H + gap)), "white")
 d = ImageDraw.Draw(board)
-d.text((pad, 50), "resticky phone app · approved designs; PROPOSED = settings split and updates", font=h1, fill="black")
+d.text((pad, 50), "resticky phone app · approved designs (camera: design A, Snap in the tab bar)", font=h1, fill="black")
 y = 180
 for title, items in groups:
     d.text((pad, y), title, font=h2, fill="black")
