@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
 }
 
 sealed interface Detail {
-    data class Transcript(val device: String, val id: String, val startAt: Long? = null) : Detail
+    data class Transcript(val device: String, val key: String, val startAt: Spot? = null) : Detail
     data object Models : Detail
     data object Sticky : Detail
     data object Calendars : Detail
@@ -102,7 +102,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val runs by model.runs.collectAsState()
     val ble by model.ble.collectAsState()
     val hub by model.hub.collectAsState()
-    val sessions by model.sessions.collectAsState()
+    val conversations by model.conversations.collectAsState()
     val speech by model.speech.collectAsState()
     val open by model.summaryOpen.collectAsState()
     val closed by model.summaryClosed.collectAsState()
@@ -146,10 +146,10 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
         Box(Modifier.weight(1f).then(if (stack.isEmpty()) Modifier else Modifier.navigationBarsPadding())) {
             when (val d = stack.lastOrNull()) {
                 is Detail.Transcript -> {
-                    val view = sessions.find { it.device == d.device && it.id == d.id }
+                    val view = conversations.find { it.device == d.device && it.key == d.key }
                     val prefs by model.player.collectAsState()
-                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { speaker, name -> model.renameSpeaker(d.device, d.id, speaker, name) }, { p -> model.photoFile(view!!.session, p) }, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }) { i, done ->
-                        model.setTodo(d.device, d.id, i, done)
+                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }) { session, i, done ->
+                        model.setTodo(d.device, session, i, done)
                     }
                 }
                 Detail.Models -> {
@@ -177,7 +177,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                     SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
                 }
                 Detail.HomeScreen -> HomeScreenPicker(home, back, model::setHome)
-                Detail.Photos -> PhotosScreen(unlinked, sessions, model::photoFile, { s, p -> stack.add(Detail.Transcript(s.device, s.id, p.offsetMs)) }, model::showOnSticky, model::attach, back)
+                Detail.Photos -> PhotosScreen(unlinked, conversations, model::photoFile, { v, s, p -> stack.add(Detail.Transcript(v.device, v.key, Spot(s.id, p.offsetMs))) }, model::showOnSticky, model::attach, back)
                 Detail.Night -> NightScreen(night, back, model::setNight)
                 Detail.Clock -> {
                     ClockScreen(face, hourFormat, back, model::setClockFace, model::setHourFormat)
@@ -260,7 +260,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                             pair()
                         }
                     }
-                    Tab.Transcripts -> TranscriptsScreen(sessions) { stack.add(Detail.Transcript(it.device, it.id)) }
+                    Tab.Transcripts -> TranscriptsScreen(conversations) { stack.add(Detail.Transcript(it.device, it.key)) }
                     Tab.Todo -> {
                         val todos by model.todos.collectAsState()
                         TodoScreen(todos) { device, t, done ->

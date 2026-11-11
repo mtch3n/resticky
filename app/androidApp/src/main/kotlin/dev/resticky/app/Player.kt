@@ -319,16 +319,16 @@ private fun Option(text: String, on: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-fun PlayerBar(playback: Playback, marks: List<Long>, photos: List<Long>, prefs: PlayerPrefs, setPrefs: (PlayerPrefs) -> Unit) {
+fun PlayerBar(playback: Playback, marks: List<Long>, photos: List<Long>, prefs: PlayerPrefs, setPrefs: (PlayerPrefs) -> Unit, clock: (Long) -> Long) {
     val total = playback.durationMs.coerceAtLeast(1)
     Column(Modifier.fillMaxWidth().background(Ink.white)) {
         HorizontalDivider(thickness = 1.dp, color = Ink.navLine)
         Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             SeekBar(playback.positionMs.toFloat() / total, marks.map { it.toFloat() / total }, photos.map { it.toFloat() / total }) { playback.seek((it * total).toLong()) }
             Row {
-                Text(timeLabel(playback.positionMs), style = Type.pill.copy(color = Ink.muted))
+                Text(timeLabel(clock(playback.positionMs)), style = Type.pill.copy(color = Ink.muted))
                 Spacer(Modifier.weight(1f))
-                Text(timeLabel(playback.durationMs), style = Type.pill.copy(color = Ink.muted))
+                Text(timeLabel(clock(playback.durationMs)), style = Type.pill.copy(color = Ink.muted))
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(34.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.clip(CircleShape).clickable { playback.skip(-SKIP_MS) }.padding(6.dp)) { Glyph(R.drawable.ic_rewind_backward_15, 30.dp) }

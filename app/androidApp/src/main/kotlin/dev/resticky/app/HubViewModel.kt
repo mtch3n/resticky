@@ -10,7 +10,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import dev.resticky.NamedPlace
 import dev.resticky.PENDING
-import dev.resticky.SESSION_IDLE
+import dev.resticky.Conversation
+import dev.resticky.NO_SPEECH
+import dev.resticky.Recap
+import dev.resticky.closed
+import dev.resticky.conversations
 import dev.resticky.Session
 import dev.resticky.TodoList
 import dev.resticky.TodoState
@@ -49,9 +53,9 @@ data class HubState(
 
 data class StickyInfo(val address: String, val name: String)
 
-data class SessionView(val session: Session, val live: Boolean) {
-    val device get() = session.device
-    val id get() = session.id
+class ConversationView(val conversation: Conversation, val recap: Recap, val ready: Boolean, val live: Boolean) {
+    val device get() = conversation.device
+    val key get() = conversation.key
 }
 
 data class DeviceTodos(val device: String, val list: TodoList)
@@ -92,12 +96,16 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    val sessions: StateFlow<List<SessionView>> = poll(emptyList(), 2000) {
-        val now = Clock.System.now()
-        app.store.all()
-            .filterNot { it.chunks.isEmpty() || it.ready && it.title == "No speech" }
-            .sortedByDescending { it.started }
-            .map { SessionView(it, !it.ready && !it.final && now - it.lastChunk <= SESSION_IDLE) }
+    val conversations: StateFlow<List<ConversationView>> = poll(emptyList(), 2000) {
+        val sessions = app.store.all()
+        withContext(Dispatchers.Default) {
+            val now = Clock.System.now()
+            conversations(sessions).map { c ->
+                val tail = c.parts.last()
+                val ready = c.ready()
+                ConversationView(c, c.recap(), ready, !ready && tail.toMs == tail.session.endMs() && !tail.session.closed(now))
+            }.filterNot { it.ready && it.recap.title == NO_SPEECH }
+        }
     }
 
     val todos: StateFlow<List<DeviceTodos>> = poll(emptyList(), 1000) {

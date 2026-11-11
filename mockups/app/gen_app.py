@@ -205,10 +205,10 @@ page("sticky-wifi-add", "Phone hotspot", f"""
 page("transcripts", "Transcripts", f"""
 {sec("Today")}
 {lst(li("Live · started 10:35 · Office", "“…the launch checklist, who owns the launch checklist…”", "", '<span class="pill on sp">Live</span>'),
-     li("Product launch and Partner Plans", "13:12 · Office · 1 h 11 min · 11 to-dos", "", f'<span class="pill sp" style="background:#fff">{STAR}2</span>{CHEV}'),
-     li("Quick note", "14:33 · 3 min · no to-dos", "", CHEV))}
+     li("Product launch and Partner Plans", "13:12–14:23 · Office · 11 to-dos", "", f'<span class="pill sp" style="background:#fff">{STAR}2</span><span class=pill style="background:#fff">{icon("photo", 13)}1</span>{CHEV}'),
+     li("Quick note", "14:33–14:36 · no to-dos", "", CHEV))}
 {sec("Yesterday")}
-{lst(li("Weekly planning", "13:09 · Home · 2 min · no to-dos", "", CHEV))}""", "Transcripts")
+{lst(li("Weekly planning", "13:09–13:11 · Home · no to-dos", "", CHEV))}""", "Transcripts")
 
 TOTAL = 71 * 60 + 12
 MARKS = [12 * 60 + 40, 40 * 60 + 47]
@@ -245,7 +245,7 @@ def player(options=""):
 
 PILLS = '<div class=row style="gap:8px">' + pill("13:12") + pill("Office") + pill("1 h 11 min") + pill("Gemini Nano") + "</div>"
 SUMMARY = '<div class=card><div class=sec style="padding:0 0 8px">Summary</div><p class=q>The team plans the new server rollout and a test environment for two customer users. Priya and Alex meet on Friday.</p></div>'
-TODOS = sec("To-dos · 11") + lst(li("Restore the test environment by tomorrow", "", chk(False)), li("Meet Priya and Alex on Friday", "", chk(True)).replace("<b>", '<b style="text-decoration:line-through;color:#888">'))
+TODOS = sec("To-dos · 11") + lst(li("Restore the test environment by tomorrow", "", chk(False), icon("player-play", 18)), li("Meet Priya and Alex on Friday", "", chk(True), icon("player-play", 18)).replace("<b>", '<b style="text-decoration:line-through;color:#888">'))
 PLAIN = [
     ("38:52", "And the backup job moves to the new box at the same time."),
     ("39:05", "Priya asked if the customers see any downtime.", "near"),
