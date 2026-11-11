@@ -60,6 +60,110 @@ than 20 s or 2 % of the talk time joins the closest main voice.
 - Engines in the A/B: SenseVoice-Small, the SenseVoice Cantonese fine-tune (2025-09), Qwen3-ASR-0.6B,
   Qwen3-ASR-1.7B (laptop), FireRedASR2-CTC, Whisper (baseline). Measure RTF on the phone.
 
+## How to build and score the test set
+
+The tools are in `tools/eval/`. They are uv scripts. Run them with `uv run --script`. Do not use pip.
+
+### 1. Get the audio
+
+- Use hub session folders. A session folder has the chunk files `0.opus`, `1.opus`, … and `meta.json`. Each
+  chunk file is a list of Opus packets: a 2-byte length (little-endian), then the packet. Each packet is 20 ms,
+  16 kHz, mono. A packet with length 0 is 20 ms of silence.
+- You can also use WAV or OGG files.
+- Record 30–60 min. Use all three language mixes and 2–4 speakers. Also record 10–20 min of noise and music
+  without speech.
+- Keep 5–10 min as a fixed regression set. Do not change it.
+
+### 2. Make a draft reference
+
+1. Download the large model one time:
+
+   ```
+   mkdir -p /tmp/resticky-models
+   curl -L -o /tmp/resticky-models/ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+   ```
+
+2. Make the draft:
+
+   ```
+   uv run --script tools/eval/draft.py ~/.local/share/resticky/data/<device>/<session> --out eval/refs
+   ```
+
+   Options: `--model PATH` (default `/tmp/resticky-models/ggml-large-v3-turbo.bin`), `--language en|zh|yue|auto`
+   (default `auto`), `--threads N`. For a session folder, the script joins the chunks in sequence order. A missing
+   chunk becomes silence of its `chunk_ms` length. Thus the times in the draft are the same as the session times on
+   the hub.
+
+3. The script writes two files: `<name>.wav` (16 kHz mono) and `<name>.ref.txt`.
+
+### 3. Correct the draft
+
+Each line of `<name>.ref.txt` is `START END SPEAKER | TEXT`, for example:
+
+```
+00:01:02.500 00:01:06.120 S1 | 我哋聽日 send the slides 啦
+00:01:06.200 00:01:30.000 - | <noise>
+# todo: Send the slides to Anna
+```
+
+- Listen to the WAV file and correct each word. Write what the speaker says. Write colloquial Cantonese
+  characters (嘅, 喺, 咗). Write English words in Latin script. Do not translate.
+- Change the speaker `S?` to `S1`, `S2`, … Use the same label for the same person in the full file.
+- Split a line where the speaker changes.
+- Write `<noise>` as the text of a span that has only noise or music.
+- Add one `# todo:` line for each to-do that a person in the meeting asks for or promises.
+- Lines that start with `#` are comments.
+
+### 4. Score the hub
+
+```
+uv run --script tools/eval/score.py \
+  --pair eval/refs/<session>.ref.txt ~/.local/share/resticky/data/<device>/<session>/meta.json \
+  --pair eval/refs/<other>.ref.txt ~/.local/share/resticky/data/<device>/<other>/meta.json
+```
+
+Add `--json` to get the totals as JSON. The script prints one line for each pair and one total line.
+
+| Metric | What it measures |
+|---|---|
+| `mer` | Mixed error rate. Each Chinese character is one token. Each English word is one token. |
+| `wer` | Word error rate on the English tokens only. |
+| `cer` | Character error rate on the Chinese tokens only. |
+| `hallucinated_words_per_hour` | Hub words in the `<noise>` spans, for each hour of noise. |
+| `der` | Diarization error rate (missed speech + false alarm + speaker confusion), 10 ms frames, no collar. |
+| `cpwer` | Concatenated minimum-permutation word error rate (meeteval), with the mixed tokens. |
+| `todo_precision`, `todo_recall` | Hub to-dos against the `# todo:` lines. Two to-dos match when their text similarity is 0.5 or more. |
+
+Normalization is the same on both sides: NFKC (full-width to half-width), OpenCC Traditional to Simplified,
+lowercase, no punctuation, no model tags (`<|en|>`, `[BLANK_AUDIO]`, `(music)`). The script does not change
+numbers or fillers. Thus write numbers and fillers in the reference as the speaker says them.
+
+The script does not calculate `der` and `cpwer` for a file that has a speaker `S?` in it.
+
+### 5. Compare engines
+
+1. Set the speech model on the phone (Models › Speech-to-text).
+2. On the phone, run all sessions again (adb: `--es pipeline rerun`).
+3. Copy the new `meta.json` files and score them. Keep one copy of `meta.json` for each engine.
+4. Read the time for each 30 s chunk in the phone log (`run job=speech … seconds=`). The `speech` log line
+   shows the windows and the engine for each window (`routes=whisper:en,sensevoice:yue`).
+
+## Speech windows (phone and laptop)
+
+- The transcriber decodes the chunk and the last 2 s of the previous chunk (`<seq-1>.opus`) as left context.
+- Silero VAD finds the speech. Each speech part gets 0.25 s padding. The parts go into windows of 28 s or less.
+  A window ends between two speech parts, thus not in a word. Noise between the speech parts does not go to the
+  engine.
+- The engine transcribes each window. The times go back to the chunk timeline. A word whose middle is in the left
+  context belongs to the previous chunk. The transcriber removes it.
+- A chunk with less than 0.5 s of speech is not transcribed.
+- Right edge: the transcriber does not wait for the next chunk. Thus a word that crosses the end of the chunk can
+  be cut. The next chunk then has the full word, because its middle is after the chunk boundary. Thus the
+  transcript can show a part of a word and then the full word.
+- Auto (English + Chinese), the phone default: SenseVoice reads each window and gives the language. A window in
+  English without Chinese characters goes to Whisper small.en. Other windows (zh, yue, mixed) keep the SenseVoice
+  text. Until the SenseVoice model is on the phone, all windows go to Whisper.
+
 ## Risks
 
 - No public benchmark matches our audio (far-field PDM mic, Opus 16 kbps); only the personal set decides.

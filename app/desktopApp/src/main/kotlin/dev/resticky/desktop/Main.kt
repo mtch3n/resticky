@@ -7,7 +7,16 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import dev.resticky.AUDIO_KEEP
+import dev.resticky.CONTEXT_MS
+import dev.resticky.MIN_SPEECH_MS
+import dev.resticky.Piece
+import dev.resticky.placeSegments
+import dev.resticky.speechMs
+import dev.resticky.speechWindows
 import dev.resticky.CLUSTER_THRESHOLD
 import dev.resticky.Diarizer
 import dev.resticky.MIN_DURATION_OFF
@@ -69,6 +78,9 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.io.files.Path as IoPath
 
 private const val SHERPA_THREADS = 4
+private const val RATE = 16_000
+private const val VAD_WINDOW = 512
+private const val VAD_MODEL = "silero_vad.onnx"
 private const val SEGMENTATION_MODEL = "pyannote-segmentation-3-0.onnx"
 private const val EMBEDDING_MODEL = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
 
@@ -104,28 +116,84 @@ private fun run(dir: File?, vararg command: String, input: String? = null, merge
     return out
 }
 
-private fun whisper(model: String) = Transcriber { opus ->
+private class SpeechDetector(private val model: String) {
+    private val vad by lazy {
+        check(File(model).isFile) { "speech detector missing: $model" }
+        Vad(
+            VadModelConfig.builder()
+                .setSileroVadModelConfig(
+                    SileroVadModelConfig.builder().setModel(model).setThreshold(0.5f).setMinSilenceDuration(0.4f)
+                        .setMinSpeechDuration(0.25f).setWindowSize(VAD_WINDOW).setMaxSpeechDuration(20f).build(),
+                )
+                .setSampleRate(RATE).setNumThreads(1).build(),
+        )
+    }
+
+    @Synchronized
+    fun regions(pcm: FloatArray): List<Piece> {
+        vad.reset()
+        val parts = mutableListOf<Piece>()
+        fun drain() {
+            while (!vad.empty()) {
+                val s = vad.front()
+                parts += Piece(s.start.toInt(), s.start.toInt() + s.samples.size)
+                vad.pop()
+            }
+        }
+        var i = 0
+        while (i < pcm.size) {
+            vad.acceptWaveform(pcm.copyOfRange(i, minOf(i + VAD_WINDOW, pcm.size)))
+            i += VAD_WINDOW
+            drain()
+        }
+        vad.flush()
+        drain()
+        return parts
+    }
+}
+
+private fun writeWav(file: File, pcm: FloatArray) {
+    val b = ByteBuffer.allocate(44 + pcm.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+    b.put("RIFF".toByteArray()).putInt(36 + pcm.size * 2).put("WAVEfmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
+        .putInt(RATE).putInt(RATE * 2).putShort(2).putShort(16).put("data".toByteArray()).putInt(pcm.size * 2)
+    pcm.forEach { b.putShort((it.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()) }
+    file.writeBytes(b.array())
+}
+
+private fun previousTail(opus: File): FloatArray {
+    val seq = opus.nameWithoutExtension.toIntOrNull() ?: return FloatArray(0)
+    val prev = File(opus.parentFile, "${seq - 1}.opus")
+    if (!prev.isFile) return FloatArray(0)
+    val samples = pcm(prev.readBytes())
+    return samples.copyOfRange(maxOf(0, samples.size - (CONTEXT_MS * RATE / 1000).toInt()), samples.size)
+}
+
+private fun whisper(model: String, detector: SpeechDetector) = Transcriber { opus ->
     runInterruptible(Dispatchers.IO) {
-        val base = opus.toString().removeSuffix(".opus")
-        File("$base.ogg").writeBytes(opusFramesToOgg(File(opus.toString()).readBytes()))
-        val wav = File("$base.wav")
-        val json = File("$base.json")
+        val file = File(opus.toString())
+        val frames = file.readBytes()
+        File(file.path.removeSuffix(".opus") + ".ogg").writeBytes(opusFramesToOgg(frames))
+        val context = previousTail(file)
+        val all = context + pcm(frames)
+        val regions = detector.regions(all)
+        if (speechMs(regions, context.size, RATE) < MIN_SPEECH_MS) return@runInterruptible emptyList()
+        val windows = speechWindows(regions, all.size, context.size, RATE)
+        val dir = Files.createTempDirectory("resticky-asr").toFile()
         try {
-            run(null, "ffmpeg", "-y", "-loglevel", "error", "-i", "$base.ogg", "-ar", "16000", "-ac", "1", wav.path)
-            run(null, "whisper-cli", "-m", model, "-f", wav.path, "-l", "en", "-np", "-t", "8", "-ojf", "-of", base, merge = false)
-            parseWhisperJson(json.readText())
+            val wavs = windows.mapIndexed { i, w -> File(dir, "$i.wav").also { writeWav(it, w.audio(all)) } }
+            run(null, "whisper-cli", "-m", model, *wavs.flatMap { listOf("-f", it.path) }.toTypedArray(), "-l", "en", "-np", "-t", "8", "-ojf", merge = false)
+            windows.flatMapIndexed { i, w -> placeSegments(parseWhisperJson(File(dir, "$i.wav.json").readText()), w, context.size, RATE) }
         } finally {
-            wav.delete()
-            json.delete()
+            dir.deleteRecursively()
         }
     }
 }
 
 private fun pcm(frames: ByteArray): FloatArray {
-    val ogg = Files.createTempFile("resticky-diar", ".ogg").toFile()
+    val ogg = Files.createTempFile("resticky-pcm", ".ogg").toFile()
     try {
         ogg.writeBytes(opusFramesToOgg(frames))
-        val p = ProcessBuilder("ffmpeg", "-loglevel", "error", "-i", ogg.path, "-f", "f32le", "-ac", "1", "-ar", "16000", "-")
+        val p = ProcessBuilder("ffmpeg", "-loglevel", "error", "-i", ogg.path, "-f", "f32le", "-ac", "1", "-ar", "$RATE", "-")
             .redirectError(ProcessBuilder.Redirect.DISCARD).start()
         p.outputStream.close()
         val bytes = p.inputStream.readBytes()
@@ -237,7 +305,8 @@ fun main(args: Array<String>) {
     val store = Store(IoPath(data))
     val segmentation = flags.string("segmentation", "$home/.local/share/resticky/models/$SEGMENTATION_MODEL")
     val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
-    val pipeline = Pipeline(store, whisper(model), codex, speakers(segmentation, embedding), log = ::log)
+    val vad = flags.string("vad", "$home/.local/share/resticky/models/$VAD_MODEL")
+    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), log = ::log)
     val city = flags.string("city", "").ifBlank { null }
     val weatherInterval = flags.string("weather-interval", "$WEATHER_INTERVAL").toInt()
     require(weatherInterval in WEATHER_INTERVALS) { "-weather-interval must be one of ${WEATHER_INTERVALS.joinToString("|")}" }
@@ -280,7 +349,7 @@ fun main(args: Array<String>) {
             store.deleteOldAudio(Clock.System.now() - AUDIO_KEEP)
         }
     }
-    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen night=$night weather_interval=$weatherInterval")
+    log("INFO resticky hub listening port=$port data=$data model=$model vad=$vad segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen night=$night weather_interval=$weatherInterval")
     embeddedServer(CIO, port = port) {
         hub.module(this)
     }.start(wait = true)

@@ -21,7 +21,6 @@ import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
-import com.k2fsa.sherpa.onnx.SpeechSegment
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
@@ -31,6 +30,13 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import dev.resticky.CLUSTER_THRESHOLD
+import dev.resticky.CONTEXT_MS
+import dev.resticky.MIN_SPEECH_MS
+import dev.resticky.Piece
+import dev.resticky.SpeechWindow
+import dev.resticky.placeSegments
+import dev.resticky.speechMs
+import dev.resticky.speechWindows
 import dev.resticky.Diarization
 import dev.resticky.Diarizer
 import dev.resticky.MIN_DURATION_OFF
@@ -67,6 +73,7 @@ private const val MAX_RUNS = 200
 private const val JOB_WAKE_MS = 15 * 60 * 1000L
 
 enum class Model(val label: String, val url: String, val file: String, val megabytes: Int) {
+    Auto("Auto (English + Chinese)", "", "", 502),
     WhisperTinyQ8("whisper tiny.en q8_0", whisper("ggml-tiny.en-q8_0.bin"), "ggml-tiny.en-q8_0.bin", 44),
     WhisperBaseQ8("whisper base.en q8_0", whisper("ggml-base.en-q8_0.bin"), "ggml-base.en-q8_0.bin", 82),
     WhisperBase("whisper base.en", whisper("ggml-base.en.bin"), "ggml-base.en.bin", 148),
@@ -108,12 +115,17 @@ enum class Model(val label: String, val url: String, val file: String, val megab
 
 private const val SENSE_VOICE = "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09/resolve/main"
 private const val SAMPLE_RATE = 16_000
+private const val VAD_WINDOW = 512
+
+private fun isCjk(c: Char) = c in '\u3400'..'\u9fff' || c in '\uf900'..'\ufaff'
 
 private fun whisper(file: String) = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$file"
 
-val SPEECH_MODELS get() = Model.entries.filter { it.name.startsWith("Whisper") } + Model.SenseVoice
-val DEFAULT_SPEECH = Model.WhisperSmallQ8
-private const val MIN_SPEECH_MS = 1000L
+val SPEECH_MODELS get() = listOf(Model.Auto) + Model.entries.filter { it.name.startsWith("Whisper") } + Model.SenseVoice
+val DEFAULT_SPEECH = Model.Auto
+private val AUTO_ENGLISH = Model.WhisperSmallQ8
+private val AUTO_PARTS = listOf(AUTO_ENGLISH, Model.SenseVoice, Model.SenseVoiceTokens)
+private val CHINESE = setOf("zh", "yue", "ja", "ko")
 val SPEAKER_MODELS = listOf(Model.SpeakerSegmentation, Model.SpeakerEmbedding)
 val DIARIZE_WINDOW_MS = 20 * 60 * 1000L
 const val LISTEN_FILE = "listen.opus"
@@ -186,6 +198,12 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
     fun file(m: Model) = File(dir, m.file)
 
     fun state(m: Model): ModelState {
+        if (m == Model.Auto) {
+            val parts = AUTO_PARTS.map(::state)
+            return parts.filterIsInstance<ModelState.Failed>().firstOrNull()
+                ?: parts.filterIsInstance<ModelState.Downloading>().minByOrNull { it.percent }
+                ?: if (parts.all { it == ModelState.Ready }) ModelState.Ready else ModelState.Missing
+        }
         val id = prefs.getLong("download:${m.name}", -1)
         if (id >= 0) downloads.query(DownloadManager.Query().setFilterById(id)).use { c ->
             if (c.moveToFirst()) {
@@ -203,6 +221,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
     }
 
     fun download(m: Model) {
+        if (m == Model.Auto) return AUTO_PARTS.filter { state(it) == ModelState.Missing || state(it) is ModelState.Failed }.forEach(::download)
         file(m).delete()
         val request = DownloadManager.Request(Uri.parse(m.url))
             .setTitle("resticky: ${m.label}")
@@ -258,27 +277,48 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         val opusFile = File(opus.toString())
         track("${opusFile.parentFile!!.name}/${opusFile.nameWithoutExtension}", "speech", m.label) {
             withContext(Dispatchers.Default) {
-                val pcm = Whisper.decodeOpus(opusFile.readBytes()) ?: error("opus decoder failed")
-                val parts = speechParts(pcm)
-                if (parts.sumOf { it.samples.size } * 1000L / SAMPLE_RATE < MIN_SPEECH_MS) return@withContext emptyList()
-                if (m == Model.SenseVoice) return@withContext senseVoice(parts)
-                val ctx = whisperContext(m)
-                check(Whisper.transcribe(ctx, pcm, WHISPER_THREADS)) { "whisper failed" }
-                List(Whisper.segments(ctx)) { i ->
-                    val times = Whisper.tokenTimes(ctx, i)
-                    val tokens = (0 until Whisper.tokens(ctx, i)).filter { times[it * 3 + 2] == 0L }.map { j ->
-                        Token(Whisper.tokenText(ctx, i, j).decodeToString(), times[j * 3], times[j * 3 + 1])
-                    }
-                    Segment(Whisper.segmentStartMs(ctx, i), Whisper.segmentEndMs(ctx, i), Whisper.segmentText(ctx, i).decodeToString(), words = wordsFromTokens(tokens))
+                val chunk = Whisper.decodeOpus(opusFile.readBytes()) ?: error("opus decoder failed")
+                val context = previousTail(opusFile)
+                val pcm = context + chunk
+                val regions = speechRegions(pcm)
+                if (speechMs(regions, context.size, SAMPLE_RATE) < MIN_SPEECH_MS) return@withContext emptyList()
+                val windows = speechWindows(regions, pcm.size, context.size, SAMPLE_RATE)
+                val routes = mutableListOf<String>()
+                val segments = windows.flatMap { w ->
+                    val (route, segs) = transcribeWindow(m, w.audio(pcm), w)
+                    routes += route
+                    placeSegments(segs, w, context.size, SAMPLE_RATE)
                 }
+                log("INFO speech key=${opusFile.parentFile!!.name}/${opusFile.nameWithoutExtension} windows=${windows.size} routes=${routes.joinToString(",")} audio_ms=${windows.sumOf { it.size } * 1000L / SAMPLE_RATE}")
+                segments
             }
         }
     }
 
-    private var recognizer: OfflineRecognizer? = null
+    private fun previousTail(opus: File): FloatArray {
+        val seq = opus.nameWithoutExtension.toIntOrNull() ?: return FloatArray(0)
+        val prev = File(opus.parentFile, "${seq - 1}.opus")
+        if (!prev.isFile) return FloatArray(0)
+        val pcm = Whisper.decodeOpus(prev.readBytes()) ?: return FloatArray(0)
+        return pcm.copyOfRange(maxOf(0, pcm.size - (CONTEXT_MS * SAMPLE_RATE / 1000).toInt()), pcm.size)
+    }
 
-    private fun speechParts(pcm: FloatArray): List<SpeechSegment> {
-        val vad = Vad(
+    private fun transcribeWindow(m: Model, audio: FloatArray, w: SpeechWindow): Pair<String, List<Segment>> =
+        when (m) {
+            Model.SenseVoice -> senseVoice(audio, w).let { "sensevoice" to it.second }
+            Model.Auto -> {
+                val sense = if (AUTO_PARTS.drop(1).all { modelPath(it) != null }) senseVoice(audio, w) else null
+                if (sense != null && (sense.first in CHINESE || sense.second.any { s -> s.text.any(::isCjk) })) "sensevoice:${sense.first}" to sense.second
+                else "whisper:${sense?.first ?: "-"}" to whisper(AUTO_ENGLISH, audio)
+            }
+            else -> "whisper" to whisper(m, audio)
+        }
+
+    private var recognizer: OfflineRecognizer? = null
+    private var vad: Vad? = null
+
+    private fun speechRegions(pcm: FloatArray): List<Piece> {
+        val v = vad ?: Vad(
             null,
             VadModelConfig(
                 sileroVadModelConfig = SileroVadModelConfig(
@@ -286,30 +326,46 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                     threshold = 0.5f,
                     minSilenceDuration = 0.4f,
                     minSpeechDuration = 0.25f,
-                    windowSize = 512,
+                    windowSize = VAD_WINDOW,
                     maxSpeechDuration = 20f,
                 ),
                 sampleRate = SAMPLE_RATE,
                 numThreads = 1,
             ),
-        )
-        try {
-            val parts = mutableListOf<SpeechSegment>()
-            var i = 0
-            while (i < pcm.size) {
-                vad.acceptWaveform(pcm.copyOfRange(i, minOf(i + 512, pcm.size)))
-                i += 512
-                while (!vad.empty()) parts += vad.front().also { vad.pop() }
+        ).also { vad = it }
+        v.reset()
+        val parts = mutableListOf<Piece>()
+        fun drain() {
+            while (!v.empty()) {
+                val s = v.front()
+                parts += Piece(s.start.toInt(), s.start.toInt() + s.samples.size)
+                v.pop()
             }
-            vad.flush()
-            while (!vad.empty()) parts += vad.front().also { vad.pop() }
-            return parts
-        } finally {
-            vad.release()
+        }
+        var i = 0
+        while (i < pcm.size) {
+            v.acceptWaveform(pcm.copyOfRange(i, minOf(i + VAD_WINDOW, pcm.size)))
+            i += VAD_WINDOW
+            drain()
+        }
+        v.flush()
+        drain()
+        return parts
+    }
+
+    private fun whisper(m: Model, audio: FloatArray): List<Segment> {
+        val ctx = whisperContext(m)
+        check(Whisper.transcribe(ctx, audio, WHISPER_THREADS)) { "whisper failed" }
+        return List(Whisper.segments(ctx)) { i ->
+            val times = Whisper.tokenTimes(ctx, i)
+            val tokens = (0 until Whisper.tokens(ctx, i)).filter { times[it * 3 + 2] == 0L }.map { j ->
+                Token(Whisper.tokenText(ctx, i, j).decodeToString(), times[j * 3], times[j * 3 + 1])
+            }
+            Segment(Whisper.segmentStartMs(ctx, i), Whisper.segmentEndMs(ctx, i), Whisper.segmentText(ctx, i).decodeToString(), words = wordsFromTokens(tokens))
         }
     }
 
-    private fun senseVoice(parts: List<SpeechSegment>): List<Segment> {
+    private fun senseVoice(audio: FloatArray, w: SpeechWindow): Pair<String, List<Segment>> {
         val rec = recognizer ?: OfflineRecognizer(
             null,
             OfflineRecognizerConfig(
@@ -320,24 +376,28 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 ),
             ),
         ).also { recognizer = it }
-        return parts.mapNotNull { part ->
-            val stream = rec.createStream()
-            try {
-                stream.acceptWaveform(part.samples, SAMPLE_RATE)
-                rec.decode(stream)
-                val r = rec.getResult(stream)
-                val startMs = part.start * 1000 / SAMPLE_RATE
-                val endMs = startMs + part.samples.size * 1000L / SAMPLE_RATE
-                val tokens = r.tokens.mapIndexed { k, t ->
-                    val from = startMs + (r.timestamps.getOrElse(k) { 0f } * 1000).toLong()
-                    val to = if (k + 1 < r.tokens.size) startMs + (r.timestamps.getOrElse(k + 1) { 0f } * 1000).toLong() else endMs
-                    val cjk = t.firstOrNull()?.let { it in '\u3400'..'\u9fff' } == true
-                    Token(if (t.startsWith("\u2581")) " " + t.drop(1) else if (cjk) " $t" else t, from, to)
-                }
-                r.text.trim().takeIf { it.isNotEmpty() }?.let { Segment(startMs, endMs, it, words = wordsFromTokens(tokens)) }
-            } finally {
-                stream.release()
+        val stream = rec.createStream()
+        try {
+            stream.acceptWaveform(audio, SAMPLE_RATE)
+            rec.decode(stream)
+            val r = rec.getResult(stream)
+            val endMs = audio.size * 1000L / SAMPLE_RATE
+            val tokens = r.tokens.mapIndexed { k, t ->
+                val from = (r.timestamps.getOrElse(k) { 0f } * 1000).toLong()
+                val to = if (k + 1 < r.tokens.size) (r.timestamps.getOrElse(k + 1) { 0f } * 1000).toLong() else endMs
+                Token(if (t.startsWith("\u2581")) " " + t.drop(1) else if (t.firstOrNull()?.let(::isCjk) == true) " $t" else t, from, to)
             }
+            val words = wordsFromTokens(tokens)
+            var from = 0L
+            val segments = w.ends(SAMPLE_RATE).mapNotNull { end ->
+                val part = words.filter { it.startMs in from until end }
+                val start = from
+                from = end
+                part.takeIf { it.isNotEmpty() }?.let { Segment(start, end, it.joinToString(" ") { x -> x.text }, words = it) }
+            }
+            return r.lang.removePrefix("<|").removeSuffix("|>") to segments
+        } finally {
+            stream.release()
         }
     }
 
