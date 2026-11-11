@@ -42,14 +42,17 @@ fun whenLabel(t: Instant): String {
     return if (local.date == Clock.System.now().toLocalDateTime(tz).date) local.format(clock) else local.format(dated)
 }
 
-fun transcriptItems(sessions: List<Session>): List<TranscriptItem> = sessions
-    .filterNot { it.chunks.isEmpty() || it.ready && it.title == "No speech" }
+fun transcriptItems(sessions: List<Session>): List<TranscriptItem> = conversations(sessions)
+    .map { it to it.ready() }
+    .filterNot { (c, ready) -> ready && c.recap().title == NO_SPEECH }
     .take(MAX_ITEMS)
-    .map {
-        val text = it.transcript().trim()
+    .map { (c, ready) ->
+        val r = if (ready) c.recap() else Recap()
+        val text = c.transcript().trim()
         val cps = text.codePointList()
-        val tail = if (cps.size > TEXT_TAIL) "..." + cps.takeLast(TEXT_TAIL).joinToString("") { c -> c.codePointString() } else text
-        TranscriptItem(whenLabel(it.started), it.title, it.summary, it.todos, it.ready, tail, if (it.place == PENDING) "" else it.place, it.marks.size, it.photos.size)
+        val tail = if (cps.size > TEXT_TAIL) "..." + cps.takeLast(TEXT_TAIL).joinToString("") { it.codePointString() } else text
+        val place = c.head.session.place
+        TranscriptItem(whenLabel(c.start), r.title, r.summary, r.todos, ready, tail, if (place == PENDING) "" else place, c.marks(), c.photos())
     }
 
 internal fun String.codePointList(): List<Int> {
@@ -77,10 +80,13 @@ fun todoList(sessions: List<Session>): TodoList {
     val today = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date.atStartOfDayIn(TimeZone.currentSystemDefault())
     val open = mutableListOf<TodoItem>()
     val done = mutableListOf<TodoItem>()
-    for (m in sessions) m.todos.forEachIndexed { i, text ->
-        val item = TodoItem("${m.id}-$i", text, "${m.title} · ${whenLabel(m.started)}")
-        val at = m.done["$i"]
-        if (at == null) open += item else if (at > today) done += item
+    for (c in conversations(sessions)) {
+        val r = c.recap()
+        r.todos.forEachIndexed { i, text ->
+            val item = TodoItem(c.todoId(i), text, "${r.title} · ${whenLabel(c.start)}")
+            val at = r.done["$i"]
+            if (at == null) open += item else if (at > today) done += item
+        }
     }
     return TodoList(open, done)
 }
@@ -144,10 +150,12 @@ class Hub(
     }
 
     suspend fun receiveChunk(device: String, session: String, seq: Int, final: Boolean, startMs: Long, durationMs: Long, data: ByteArray, link: String) {
-        val created = store.addChunk(device, session, seq, final, durationMs, data)
-        log("INFO chunk link=$link device=$device session=$session seq=$seq bytes=${data.size} duration_ms=$durationMs final=$final")
-        if (created) {
-            val age = chunkAge(devicesLock.withLock { devices[device] }, startMs, Clock.System.now())
+        val now = Clock.System.now()
+        val age = chunkAge(devicesLock.withLock { devices[device] }, startMs, now)
+        val added = store.addChunk(device, session, seq, final, durationMs, data, startMs, age?.takeIf { startMs > 0 }?.let { now - it })
+        if (added == Added.CONFLICT) log("WARN chunk conflict link=$link device=$device session=$session seq=$seq bytes=${data.size} kept=first")
+        else log("INFO chunk link=$link device=$device session=$session seq=$seq bytes=${data.size} duration_ms=$durationMs final=$final added=${added.name.lowercase()}")
+        if (added == Added.SESSION) {
             if (age == null || age <= PLACE_MAX_AGE) newSession(device, session) else log("INFO session from backlog session=$session age=$age")
         }
         pipeline.kick()
@@ -165,13 +173,15 @@ class Hub(
     suspend fun devices(): Map<String, Checkin> = devicesLock.withLock { devices.toMap() }
 
     suspend fun setTodo(device: String, session: String, index: Int, want: TodoState): TodoState? = store.update(device, session) { m ->
-        if (index !in m.todos.indices) return@update null
-        val last = m.todoChanges["$index"]
+        val (from, i) = m.todoRecap(index) ?: return@update null
+        var r = m.recap(from)
+        if (i !in r.todos.indices) return@update null
+        val last = r.todoChanges["$i"]
         if (last == null || want.at >= last) {
-            m.todoChanges["$index"] = want.at
-            if (want.done) m.done["$index"] = want.at else m.done.remove("$index")
+            r = r.copy(todoChanges = r.todoChanges + ("$i" to want.at), done = if (want.done) r.done + ("$i" to want.at) else r.done - "$i")
+            m.putRecap(from, r)
         }
-        TodoState("$index" in m.done, m.todoChanges.getValue("$index"))
+        TodoState("$i" in r.done, r.todoChanges.getValue("$i"))
     }
 
     fun module(app: Application) = app.routing {

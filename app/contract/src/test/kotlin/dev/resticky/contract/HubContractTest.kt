@@ -192,6 +192,19 @@ class HubContractTest {
         assertEquals(2000, m.getValue("duration_ms").jsonPrimitive.int)
         assertEquals(setOf("0", "1"), m.getValue("chunks").jsonObject.keys)
         assertTrue(data.exists("$device/$s/0.opus"))
+        assertEquals(200, chunk(s, 0, frames = 70).status)
+        assertEquals(1000, meta(s).getValue("chunk_ms").jsonObject.getValue("0").jsonPrimitive.int)
+        assertEquals(2000, meta(s).getValue("duration_ms").jsonPrimitive.int)
+    }
+
+    @Test
+    fun sessionsMinutesApartAreOneTranscript() {
+        val now = ZonedDateTime.now()
+        seed("f1", now.minusMinutes(8), """"chunks":{"0":"one two three"}""")
+        seed("f2", now.minusMinutes(4), """"chunks":{"0":"four five six"}""")
+        val items = get("/api/transcripts?device=$device").json.jsonArray
+        assertEquals(1, items.size)
+        assertEquals("one two three four five six", items[0].jsonObject.getValue("text").jsonPrimitive.content)
     }
 
     @Test
@@ -219,7 +232,7 @@ class HubContractTest {
     @Test
     fun transcriptsAreNewestFirstAndLimited() {
         val now = ZonedDateTime.now()
-        repeat(20) { i -> seed("a%04x".format(i), now.minusMinutes(60L - i), """"chunks":{"0":"words $i"},"title":"T$i","summary":"S","ready":true""") }
+        repeat(20) { i -> seed("a%04x".format(i), now.minusMinutes(12L * (20 - i)), """"chunks":{"0":"words $i"},"title":"T$i","summary":"S","ready":true""") }
         seed("ffff", now, """"chunks":{"0":""},"title":"No speech","ready":true""")
         val items = get("/api/transcripts?device=$device").json.jsonArray
         assertEquals(18, items.size)
@@ -233,9 +246,9 @@ class HubContractTest {
     @Test
     fun transcriptPlace() {
         val now = ZonedDateTime.now()
-        seed("c1", now.minusMinutes(3), """"chunks":{"0":"a"},"title":"Untagged","ready":true""")
-        seed("c2", now.minusMinutes(2), """"chunks":{"0":"b"},"title":"Office","ready":true,"place":"Office"""")
-        seed("c3", now.minusMinutes(1), """"chunks":{"0":"c"},"title":"Away","ready":true,"place":"Elsewhere","place_lat":25.03,"place_lon":121.57""")
+        seed("c1", now.minusMinutes(36), """"chunks":{"0":"a"},"title":"Untagged","ready":true""")
+        seed("c2", now.minusMinutes(24), """"chunks":{"0":"b"},"title":"Office","ready":true,"place":"Office"""")
+        seed("c3", now.minusMinutes(12), """"chunks":{"0":"c"},"title":"Away","ready":true,"place":"Elsewhere","place_lat":25.03,"place_lon":121.57""")
         seed("c4", now, """"chunks":{"0":"d"},"title":"Locating","ready":false,"place":"\u0000pending"""")
         val items = get("/api/transcripts?device=$device").json.jsonArray.map { it.jsonObject }
         assertEquals(listOf("", "Elsewhere", "Office", ""), items.map { it.getValue("place").jsonPrimitive.content })

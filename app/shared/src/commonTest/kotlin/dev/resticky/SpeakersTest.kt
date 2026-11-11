@@ -91,11 +91,11 @@ class SpeakersTest {
             chunkMs = mutableMapOf("0" to 3000))
         s.assignSpeakers(listOf(Turn(0, 1200, 0), Turn(1200, 2600, 1), Turn(3000, 4000, 0)))
         assertEquals(listOf(0, 1, 1, 0), s.lines().map { it.speaker })
-        assertEquals("Speaker A: hi\nSpeaker B: there ok\nSpeaker A: bye", s.labelledTranscript())
+        assertEquals("Speaker A: hi\nSpeaker B: there ok\nSpeaker A: bye", conversations(listOf(s)).single().labelledTranscript())
         s.todos = listOf("Speaker A sends the list", "Speaker AB stays")
         s.summary = "Speaker A and Speaker B talk."
         s.renameSpeaker(0, " Priya ")
-        assertEquals("Priya: hi\nSpeaker B: there ok\nPriya: bye", s.labelledTranscript())
+        assertEquals("Priya: hi\nSpeaker B: there ok\nPriya: bye", conversations(listOf(s)).single().labelledTranscript())
         assertEquals(listOf("Priya sends the list", "Speaker AB stays"), s.todos)
         assertEquals("Priya and Speaker B talk.", s.summary)
         s.renameSpeaker(0, "")
@@ -137,11 +137,81 @@ class SpeakersTest {
         assertEquals("Yes. Yes.", m.chunks["1"])
         assertEquals(false, m.ready)
         assertEquals(false, m.diarized)
-        assertEquals("", m.title)
-        assertEquals(emptyList(), m.todos)
+        assertEquals("", m.input)
+        assertEquals(listOf("Blow the whistle"), m.todos)
         assertTrue(m.speakers.isEmpty())
         assertEquals(1, store.rerunAll())
         assertEquals(PENDING, store.list("ab").single().chunks["0"])
+    }
+
+    @Test
+    fun minorSpeakerWithAFarVoiceStays() {
+        val d = Diarization(
+            listOf(Turn(0, 60_000, 0), Turn(60_000, 120_000, 1), Turn(120_000, 126_000, 2)),
+            listOf(v(0, 1f, 0f, 0f), v(1, 0f, 1f, 0f), v(2, 0.3f, 0.2f, 0.93f)),
+        )
+        assertEquals(listOf(0, 1, 2), mergeSpeakers(d).map { it.speaker })
+    }
+
+    @Test
+    fun onlyShortSpeakersWithoutAVoiceJoinByTime() {
+        val d = Diarization(
+            listOf(Turn(0, 60_000, 0), Turn(60_000, 64_000, 2), Turn(64_000, 120_000, 1), Turn(120_000, 127_000, 3)),
+            listOf(v(0, 1f, 0f), v(1, 0f, 1f)),
+        )
+        assertEquals(listOf(0, 0, 1, 2), mergeSpeakers(d).map { it.speaker })
+    }
+
+    @Test
+    fun speakersWhoTalkAtOnceNeverMerge() {
+        val close = Diarization(
+            listOf(Turn(0, 10_000, 0), Turn(8_000, 20_000, 1)),
+            listOf(v(0, 1f, 0f), v(1, 0.99f, 0.05f)),
+        )
+        assertEquals(listOf(0, 1), mergeSpeakers(close).map { it.speaker })
+        val brief = Diarization(
+            listOf(Turn(0, 10_000, 0), Turn(9_500, 20_000, 1)),
+            listOf(v(0, 1f, 0f), v(1, 0.99f, 0.05f)),
+        )
+        assertEquals(listOf(0, 0), mergeSpeakers(brief).map { it.speaker })
+        val minor = Diarization(
+            listOf(Turn(0, 60_000, 0), Turn(30_000, 33_000, 1)),
+            listOf(v(0, 1f, 0f)),
+        )
+        assertEquals(listOf(0, 1), mergeSpeakers(minor).map { it.speaker })
+    }
+
+    @Test
+    fun failedDiarizationIsTriedAgainThenFlagged() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
+        var calls = 0
+        val pipeline = Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, { calls++; error("no models") }) {}
+        pipeline.drain()
+        var m = store.list("ab").single()
+        assertEquals(1, calls)
+        assertTrue(!m.diarized && !m.speakersFailed && !m.ready)
+        pipeline.drain()
+        m = store.list("ab").single()
+        assertEquals(2, calls)
+        assertTrue(m.diarized && m.speakersFailed && m.ready)
+        store.addChunk("ab", "01", 1, true, 1000, byteArrayOf(0, 0, 1, 0))
+        assertTrue(!store.list("ab").single().speakersFailed)
+    }
+
+    @Test
+    fun diarizationThatWorksOnTheRetryIsNotFlagged() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
+        var calls = 0
+        val pipeline = Pipeline(store, { listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, {
+            if (calls++ == 0) error("busy") else Diarization(listOf(Turn(0, 1000, 0)), emptyList())
+        }) {}
+        pipeline.drain()
+        pipeline.drain()
+        val m = store.list("ab").single()
+        assertTrue(m.diarized && !m.speakersFailed && m.ready)
+        assertEquals(0, m.segments.getValue("0").single().speaker)
     }
 }
 

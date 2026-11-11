@@ -7,12 +7,13 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readByteArray
 import kotlinx.io.readString
-import kotlinx.io.writeString
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 
 private val AUDIO = setOf("opus", "ogg", "wav")
+
+enum class Added { SESSION, CHUNK, REPEAT, CONFLICT }
 
 class Store(val root: Path) {
     private val mutex = Mutex()
@@ -24,16 +25,13 @@ class Store(val root: Path) {
         hubJson.decodeFromString<Session>(text)
     }.getOrNull()
 
-    private fun save(s: Session) {
-        val path = Path(dir(s.device, s.id), "meta.json")
-        val tmp = Path(path.toString() + ".tmp")
-        SystemFileSystem.sink(tmp).buffered().use { it.writeString(hubJson.encodeToString(s)) }
-        SystemFileSystem.atomicMove(tmp, path)
-    }
+    private fun save(s: Session) = write(Path(dir(s.device, s.id), "meta.json"), hubJson.encodeToString(s).encodeToByteArray())
 
     fun write(path: Path, data: ByteArray) {
         path.parent?.let { SystemFileSystem.createDirectories(it) }
-        SystemFileSystem.sink(path).buffered().use { it.write(data) }
+        val tmp = Path("$path.tmp")
+        SystemFileSystem.sink(tmp).buffered().use { it.write(data) }
+        SystemFileSystem.atomicMove(tmp, path)
     }
 
     fun read(path: Path): ByteArray? =
@@ -48,40 +46,50 @@ class Store(val root: Path) {
         return out.readByteArray()
     }
 
-    suspend fun addChunk(device: String, id: String, seq: Int, final: Boolean, durationMs: Long, data: ByteArray): Boolean = mutex.withLock {
-        SystemFileSystem.createDirectories(dir(device, id))
+    suspend fun addChunk(
+        device: String, id: String, seq: Int, final: Boolean, durationMs: Long, data: ByteArray,
+        startMs: Long = 0, capturedAt: Instant? = null,
+    ): Added = mutex.withLock {
         val now = Clock.System.now()
         val m = load(device, id) ?: Session(device, id, now, now, 0, chunks = mutableMapOf())
-        val first = m.chunks.isEmpty()
-        if (first) m.started = now - durationMs.milliseconds
-        write(Path(dir(device, id), "$seq.opus"), data)
-        if ("$seq" !in m.chunks) {
-            m.chunks["$seq"] = PENDING
-            m.durationMs += durationMs
+        val file = Path(dir(device, id), "$seq.opus")
+        if ("$seq" in m.chunks) {
+            val stored = read(file) ?: return@withLock Added.REPEAT
+            return@withLock if (stored.contentEquals(data)) Added.REPEAT else Added.CONFLICT
         }
+        val first = m.chunks.isEmpty()
+        if (first) m.started = capturedAt ?: (now - durationMs.milliseconds)
+        write(file, data)
+        m.chunks["$seq"] = PENDING
+        m.durationMs += durationMs
         m.chunkMs["$seq"] = durationMs
+        if (startMs > 0) m.chunkStart["$seq"] = startMs
         m.diarized = false
+        m.speakersFailed = false
         m.lastChunk = now
         m.final = m.final || final
         m.ready = false
         save(m)
-        first
+        if (first) Added.SESSION else Added.CHUNK
     }
 
     suspend fun addMarks(device: String, id: String, offsets: List<Long>): Int = mutex.withLock {
         val now = Clock.System.now()
         val m = load(device, id) ?: Session(device, id, now, now, 0, chunks = mutableMapOf())
         val added = m.addMarks(offsets)
-        if (added > 0) {
-            SystemFileSystem.createDirectories(dir(device, id))
-            save(m)
-        }
+        if (added > 0) save(m)
         added
     }
 
     suspend fun <T> update(device: String, id: String, change: (Session) -> T): T? = mutex.withLock {
         val m = load(device, id) ?: return@withLock null
         change(m).also { save(m) }
+    }
+
+    suspend fun updateDevice(device: String, change: (List<Session>) -> List<Session>): Int = mutex.withLock {
+        val changed = change(listUnlocked(device))
+        changed.forEach(::save)
+        changed.size
     }
 
     suspend fun list(device: String): List<Session> = mutex.withLock { listUnlocked(device) }
@@ -97,11 +105,15 @@ class Store(val root: Path) {
 
     suspend fun deleteOldAudio(cutoff: Instant) = mutex.withLock {
         if (!SystemFileSystem.exists(root)) return@withLock
-        for (device in SystemFileSystem.list(root)) for (m in listUnlocked(device.name)) {
-            if (m.lastChunk >= cutoff) continue
-            SystemFileSystem.list(dir(m.device, m.id))
-                .filter { it.name.substringAfterLast('.') in AUDIO }
-                .forEach { SystemFileSystem.delete(it) }
+        for (device in SystemFileSystem.list(root)) {
+            val sessions = listUnlocked(device.name)
+            val open = conversations(sessions).filterNot { it.ready() }.flatMap { c -> c.parts.map { it.session.id } }.toSet()
+            for (m in sessions) {
+                if (m.lastChunk >= cutoff || m.pending || m.id in open) continue
+                SystemFileSystem.list(dir(m.device, m.id))
+                    .filter { it.name.substringAfterLast('.') in AUDIO }
+                    .forEach { SystemFileSystem.delete(it) }
+            }
         }
     }
 
@@ -123,15 +135,10 @@ class Store(val root: Path) {
             }
             if (audio) {
                 m.diarized = false
+                m.speakersFailed = false
                 m.speakers.clear()
             }
-            m.title = ""
-            m.summary = ""
-            m.todos = emptyList()
-            m.engine = ""
-            m.done.clear()
-            m.todoChanges.clear()
-            m.ready = false
+            m.recaps().forEach { (from, r) -> m.putRecap(from, r.copy(ready = false, input = "")) }
             save(m)
             count++
         }

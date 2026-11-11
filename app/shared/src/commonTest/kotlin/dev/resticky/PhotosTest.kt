@@ -40,8 +40,8 @@ class PhotosTest {
         val a = session("a", t0, 30)
         a.photos += Photo(90_000, "photos/1.jpg", "Restore test env\nDNS Friday", 1)
         a.photos += Photo(100_000, "photos/2.jpg", "", 2)
-        assertEquals(listOf("01:30 Restore test env DNS Friday"), a.photoTexts())
-        val p = summaryPrompt(SummaryContext(photos = a.photoTexts()))
+        assertEquals(listOf("01:30 Restore test env DNS Friday"), conversations(listOf(a)).single().photoTexts())
+        val p = summaryPrompt(SummaryContext(photos = conversations(listOf(a)).single().photoTexts()))
         assertEquals(true, "- 01:30 Restore test env DNS Friday" in p)
         assertEquals(1, transcriptItems(listOf(a.apply { photos.removeLast() })).single().photos)
     }

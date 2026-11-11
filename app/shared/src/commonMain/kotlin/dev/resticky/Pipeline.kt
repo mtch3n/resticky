@@ -11,6 +11,7 @@ import kotlin.coroutines.coroutineContext
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 val SESSION_IDLE = 3.minutes
@@ -30,7 +31,10 @@ const val SUMMARY_SCHEMA = """{"type":"object","additionalProperties":false,"req
 "required":["task","quote"],"properties":{"task":{"type":"string"},"quote":{"type":"string"}}}}}}"""
 
 const val NO_SPEECH = "No speech"
+const val SHORT_NOTE = "Short note"
 const val MIN_SPEECH_UNITS = 25
+const val MIN_NOTE_UNITS = 5
+val RETRY_WAIT = 10.seconds
 
 class SummaryContext(val place: String = "", val moments: List<String> = emptyList(), val photos: List<String> = emptyList())
 
@@ -57,28 +61,88 @@ private class SummaryDraft(val title: String, val summary: String, val todos: Li
 
 private fun isCjk(c: Char) = c in '\u3400'..'\u9fff' || c in '\uf900'..'\ufaff'
 
-private fun normalized(text: String): String =
+internal fun normalized(text: String): String =
     text.lowercase().map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("").split(' ').filter { it.isNotEmpty() }.joinToString(" ")
 
 fun speechUnits(text: String): Int =
     text.count(::isCjk) + text.split(Regex("\\s+")).count { w -> w.any { it.isLetterOrDigit() && !isCjk(it) } }
 
-fun quoteFound(quote: String, transcript: String): Boolean {
-    val q = normalized(quote)
-    if (speechUnits(q) < 2) return false
-    val t = normalized(transcript)
-    if (q in t) return true
-    val words = q.split(' ')
-    val have = t.split(' ').toHashSet()
-    return words.size >= 4 && words.count { it in have } * 10 >= words.size * 9
+private class Tok(val text: String, val start: Int, val end: Int)
+
+private fun toks(text: String): List<Tok> {
+    val out = mutableListOf<Tok>()
+    var i = 0
+    while (i < text.length) {
+        val c = text[i]
+        if (isCjk(c)) out += Tok("$c", i, i + 1)
+        if (!c.isLetterOrDigit() || isCjk(c)) {
+            i++
+            continue
+        }
+        var j = i
+        while (j < text.length && text[j].isLetterOrDigit() && !isCjk(text[j])) j++
+        out += Tok(text.substring(i, j).lowercase(), i, j)
+        i = j
+    }
+    return out
 }
+
+fun tokens(text: String): List<String> = toks(text).map { it.text }
+
+fun findQuote(quote: List<String>, text: List<String>): IntRange? {
+    if (quote.isEmpty()) return null
+    for (i in 0..text.size - quote.size) if (quote.indices.all { text[i + it] == quote[it] }) return i until i + quote.size
+    val need = (quote.size * 9 + 9) / 10
+    val window = (quote.size * 3 + 1) / 2
+    val words = quote.toHashSet()
+    for (i in text.indices) {
+        if (text[i] !in words) continue
+        val end = minOf(text.size, i + window) - 1
+        if (inOrder(quote, text, i, end) < need) continue
+        val j = (i..end).first { inOrder(quote, text, i, it) >= need }
+        var from = i
+        while (from < j && inOrder(quote, text, from + 1, j) >= need) from++
+        return from..j
+    }
+    return null
+}
+
+private fun inOrder(quote: List<String>, text: List<String>, from: Int, to: Int): Int {
+    val lcs = IntArray(quote.size + 1)
+    for (j in from..to) {
+        var diagonal = 0
+        for (k in 1..quote.size) {
+            val above = lcs[k]
+            lcs[k] = if (quote[k - 1] == text[j]) diagonal + 1 else maxOf(lcs[k], lcs[k - 1])
+            diagonal = above
+        }
+    }
+    return lcs[quote.size]
+}
+
+fun quoteSpan(quote: String, transcript: String): String? {
+    val q = tokens(quote)
+    if (q.size < 2) return null
+    val t = toks(transcript)
+    val r = findQuote(q, t.map { it.text }) ?: return null
+    return transcript.substring(t[r.first].start, t[r.last].end)
+}
+
+private val NEGATION = Regex("""\b(not|cannot)\b|n't\b""")
+
+fun negated(text: String): Boolean = NEGATION.containsMatchIn(text.lowercase().replace('’', '\''))
 
 fun parseSummary(raw: String, transcript: String): Summary {
     val text = raw.trim()
     val json = text.substring(text.indexOf('{').coerceAtLeast(0), text.lastIndexOf('}').let { if (it < 0) text.length else it + 1 })
     val d = hubJson.decodeFromString<SummaryDraft>(json)
     if (d.title.trim().equals(NO_SPEECH, ignoreCase = true)) return Summary(NO_SPEECH, "")
-    return Summary(d.title.trim(), d.summary.trim(), d.todos.filter { it.task.isNotBlank() && quoteFound(it.quote, transcript) }.map { it.task.trim() }.distinct())
+    val todos = d.todos.mapNotNull { t ->
+        val task = t.task.trim()
+        val span = quoteSpan(t.quote, transcript)
+        if (task.isEmpty() || span == null || negated(task) != negated(span)) null else Todo(task, span)
+    }
+    return Summary(d.title.trim(), d.summary.trim(), todos.distinctBy { it.task })
 }
 
 private val TAG_OPEN = setOf('[', '(', '*', '<')
@@ -164,76 +228,123 @@ class Pipeline(
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val running = Mutex()
+    private val failedOnce = mutableSetOf<String>()
+    private val waiting = mutableSetOf<String>()
 
     fun kick() {
         wake.trySend(Unit)
     }
 
     private suspend fun step(): Boolean {
-        for (m in store.all()) {
-            val seq = m.chunks.entries.firstOrNull { it.value == PENDING }?.key
-            if (seq != null) {
-                val start = TimeSource.Monotonic.markNow()
-                val segments = runCatching { cleanSegments(transcriber.transcribe(Path(store.dir(m.device, m.id), "$seq.opus"))) }
-                    .getOrElse {
-                        log("WARN transcribe session=${m.id} seq=$seq err=${it.message}")
-                        return false
-                    }
-                val text = segments.joinToString(" ") { it.text }
-                log("INFO transcribed session=${m.id} seq=$seq words=${text.split(' ').count { w -> w.isNotEmpty() }} segments=${segments.size} took=${start.elapsedNow()}")
-                store.update(m.device, m.id) {
-                    it.chunks[seq] = text
-                    if (segments.isEmpty()) it.segments.remove(seq) else it.segments[seq] = segments
-                }
-                return true
-            }
-            if (m.chunks.isEmpty()) continue
-            val now = Clock.System.now()
-            val closed = m.final || now - m.lastChunk > SESSION_IDLE
-            val locating = m.place == PENDING && now - m.lastChunk < PLACE_WAIT
-            if (m.ready || !closed || m.pending || locating) continue
-            if (!m.diarized) {
-                val frames = if (m.transcript().isBlank()) null else store.sessionFrames(m)
-                val start = TimeSource.Monotonic.markNow()
-                val turns = frames?.let { f ->
-                    runCatching { diarizeSession(f, diarizer, diarizeWindowMs) }
-                        .onFailure { log("WARN diarize session=${m.id} err=${it.message}") }
-                        .getOrNull()
-                }
-                store.update(m.device, m.id) {
-                    it.diarized = true
-                    if (turns != null) it.assignSpeakers(turns)
-                }
-                if (turns != null) log("INFO diarized session=${m.id} speakers=${turns.map { it.speaker }.distinct().size} turns=${turns.size} took=${start.elapsedNow()}")
-                return true
-            }
-            val text = m.labelledTranscript().trim()
-            val sum = if (speechUnits(m.transcript()) < MIN_SPEECH_UNITS) null else {
-                val start = TimeSource.Monotonic.markNow()
-                runCatching { summarizer.summarize(text, SummaryContext(placeContext(m.place), m.moments(), m.photoTexts())) }.getOrElse {
-                    log("WARN summarize session=${m.id} err=${it.message}")
+        val all = store.all()
+        for (m in all) {
+            val seq = m.chunks.entries.firstOrNull { it.value == PENDING }?.key ?: continue
+            val start = TimeSource.Monotonic.markNow()
+            val segments = runCatching { cleanSegments(transcriber.transcribe(Path(store.dir(m.device, m.id), "$seq.opus"))) }
+                .getOrElse {
+                    log("WARN transcribe session=${m.id} seq=$seq err=${it.message}")
                     return false
-                }.also { log("INFO summarized session=${m.id} title=\"${it.title}\" todos=${it.todos.size} marks=${m.marks.size} took=${start.elapsedNow()}") }
-            }
+                }
+            val text = segments.joinToString(" ") { it.text }
+            log("INFO transcribed session=${m.id} seq=$seq words=${text.split(' ').count { w -> w.isNotEmpty() }} segments=${segments.size} took=${start.elapsedNow()}")
             store.update(m.device, m.id) {
-                it.title = sum?.title ?: NO_SPEECH
-                it.summary = sum?.summary.orEmpty()
-                it.todos = sum?.todos.orEmpty()
-                it.engine = sum?.engine.orEmpty()
-                it.ready = true
-                if (it.place == PENDING) it.place = ""
+                it.chunks[seq] = text
+                if (segments.isEmpty()) it.segments.remove(seq) else it.segments[seq] = segments
             }
             return true
+        }
+        val now = Clock.System.now()
+        for (m in all) {
+            if (m.chunks.isEmpty() || !m.needsSpeakers || !m.closed(now) || "${m.device}/${m.id}" in waiting) continue
+            diarize(m)
+            return true
+        }
+        for (c in conversations(all)) {
+            val sessions = c.parts.map { it.session }.distinct()
+            if (sessions.any { it.pending || it.needsSpeakers || !it.closed(now) || it.place == PENDING && now - it.lastChunk < PLACE_WAIT }) continue
+            if (c.ready()) continue
+            return summarize(c)
         }
         return false
     }
 
-    suspend fun drain() = running.withLock { while (step()) Unit }
+    private suspend fun diarize(m: Session) {
+        val key = "${m.device}/${m.id}"
+        val frames = if (m.transcript().isBlank()) null else store.sessionFrames(m)
+        val start = TimeSource.Monotonic.markNow()
+        val turns = frames?.let { f ->
+            runCatching { diarizeSession(f, diarizer, diarizeWindowMs) }
+                .onFailure { log("WARN diarize session=${m.id} retry=${key !in failedOnce} err=${it.message}") }
+                .getOrNull()
+        }
+        if (frames != null && turns == null && failedOnce.add(key)) {
+            waiting += key
+            return
+        }
+        failedOnce -= key
+        store.update(m.device, m.id) {
+            it.diarized = true
+            it.speakersFailed = frames != null && turns == null
+            if (turns != null) it.assignSpeakers(turns)
+        }
+        if (turns != null) log("INFO diarized session=${m.id} speakers=${turns.map { it.speaker }.distinct().size} turns=${turns.size} took=${start.elapsedNow()}")
+    }
+
+    private suspend fun summarize(c: Conversation): Boolean {
+        val input = c.input()
+        val units = speechUnits(c.transcript())
+        val start = TimeSource.Monotonic.markNow()
+        val sum = when {
+            units < MIN_NOTE_UNITS -> Summary(NO_SPEECH, "")
+            units < MIN_SPEECH_UNITS -> Summary(SHORT_NOTE, c.transcript().trim())
+            else -> runCatching { summarizer.summarize(c.labelledTranscript().trim(), c.context()) }.getOrElse {
+                log("WARN summarize conversation=${c.key} err=${it.message}")
+                return false
+            }.also { log("INFO summarized conversation=${c.key} parts=${c.parts.size} title=\"${it.title}\" todos=${it.todos.size} took=${start.elapsedNow()}") }
+        }
+        val todos = sum.todos.take(TODO_SLOTS)
+        val quotes = todos.map { c.quote(it.quote) }
+        val saved = store.updateDevice(c.device) { sessions ->
+            val now = conversations(sessions).firstOrNull { it.key == c.key }
+            if (now == null || now.input() != input) return@updateDevice emptyList()
+            val members = now.parts.map { it.session }.distinct()
+            val ticks = members.flatMap { s -> s.recaps().flatMap { it.second.ticks() } }
+            val texts = todos.map { it.task }
+            val done = mutableMapOf<String, Time>()
+            val changes = mutableMapOf<String, Time>()
+            texts.forEachIndexed { i, t ->
+                val tick = ticks.filter { it.text == normalized(t) }.maxByOrNull { it.last } ?: return@forEachIndexed
+                tick.done?.let { done["$i"] = it }
+                tick.changed?.let { changes["$i"] = it }
+            }
+            val head = now.head.session
+            head.putRecap(now.head.fromMs, Recap(sum.title, sum.summary, texts, quotes, sum.engine, done, changes, true, input))
+            members.filter { it.place == PENDING }.forEach { it.place = "" }
+            members
+        }
+        if (saved == 0) log("INFO summary dropped conversation=${c.key} reason=input_changed")
+        return true
+    }
+
+    suspend fun drain() = running.withLock {
+        waiting.clear()
+        while (step()) Unit
+    }
 
     suspend fun run() {
         while (coroutineContext.isActive) {
             drain()
-            withTimeoutOrNull(1.minutes) { wake.receive() }
+            withTimeoutOrNull(if (waiting.isEmpty()) 1.minutes else RETRY_WAIT) { wake.receive() }
         }
     }
+}
+
+private class Tick(val text: String, val done: Time?, val changed: Time?) {
+    val last: Time get() = listOfNotNull(done, changed).max()
+}
+
+private fun Recap.ticks(): List<Tick> = todos.mapIndexedNotNull { i, t ->
+    val done = done["$i"]
+    val changed = todoChanges["$i"]
+    if (done == null && changed == null) null else Tick(normalized(t), done, changed)
 }

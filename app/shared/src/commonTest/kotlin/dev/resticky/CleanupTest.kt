@@ -2,7 +2,7 @@ package dev.resticky
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class CleanupTest {
@@ -46,9 +46,38 @@ class CleanupTest {
             {"task":"Send the billing report on Friday (Sam)","quote":"can you send the billing report on Friday"},
             {"task":"Review the perverts issues","quote":"resolve the perverts issues"},
             {"task":"Call Alex","quote":""}]}"""
-        assertEquals(listOf("Send the billing report on Friday (Sam)"), parseSummary(raw, transcript).todos)
-        assertTrue(quoteFound("Can you send the billing report, on Friday?", transcript))
-        assertFalse(quoteFound("ok", transcript))
+        assertEquals(listOf(Todo("Send the billing report on Friday (Sam)", "can you send the billing report on Friday")), parseSummary(raw, transcript).todos)
+        assertEquals("can you send the billing report on Friday", quoteSpan("Can you send the billing report, on Friday?", transcript))
+        assertNull(quoteSpan("ok", transcript))
+    }
+
+    @Test
+    fun quoteWordsMustComeInOrder() {
+        val transcript = "the report is late. Friday we send nothing. Can you please send the full billing report on Friday morning?"
+        assertNull(quoteSpan("send the report on Friday we", "we send the report on Friday"))
+        assertNull(quoteSpan("Friday send the report", transcript))
+        assertEquals("send the full billing report on Friday", quoteSpan("send the billing report on Friday", transcript))
+        assertEquals("Can you please send the full billing report on", quoteSpan("can you please send the full billing report on Fryday", transcript))
+        assertNull(quoteSpan("send the full billing report on Friday mornin", transcript))
+        assertNull(quoteSpan("send report", "send a very long and winding report"))
+    }
+
+    @Test
+    fun chineseQuotesMatchByCharacter() {
+        assertEquals("聽日交報告", quoteSpan("聽日交報告", "我哋聽日交報告 ok"))
+        assertNull(quoteSpan("報告交聽日", "我哋聽日交報告 ok"))
+    }
+
+    @Test
+    fun todoWithANegationMismatchIsDropped() {
+        val transcript = "Please do not send the invoice to Alex yet. We won't call the bank. Sam, book the room for Monday."
+        val raw = """{"title":"Plans","summary":"S.","todos":[
+            {"task":"Send the invoice to Alex","quote":"do not send the invoice to Alex"},
+            {"task":"Don't call the bank","quote":"We won't call the bank"},
+            {"task":"Book the room for Monday","quote":"book the room for Monday"},
+            {"task":"Do not book the room","quote":"book the room for Monday"}]}"""
+        assertEquals(listOf("Don't call the bank", "Book the room for Monday"), parseSummary(raw, transcript).todos.map { it.task })
+        assertTrue(negated("We can’t do it") && negated("do not") && !negated("notes and knots"))
     }
 
     @Test

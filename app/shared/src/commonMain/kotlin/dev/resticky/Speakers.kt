@@ -6,6 +6,9 @@ const val SPEAKER_MERGE = 0.6
 const val SPEAKER_MIN_MS = 20_000L
 const val SPEAKER_MIN_SHARE = 0.02
 const val VOICE_MIN_MS = 1500L
+const val ABSORB_MIN_COSINE = 0.4
+const val ABSORB_TIME_MAX_MS = 5_000L
+const val OVERLAP_MAX_MS = 1_000L
 private const val FRAME_MS = 20L
 
 class Turn(val startMs: Long, val endMs: Long, val speaker: Int)
@@ -36,14 +39,38 @@ fun voiceOf(speaker: Int, parts: List<Pair<FloatArray, Long>>): Voice? {
     return Voice(speaker, sum.unit(), parts.sumOf { it.second })
 }
 
+private fun overlaps(turns: List<Turn>): MutableMap<Int, MutableMap<Int, Long>> {
+    val out = mutableMapOf<Int, MutableMap<Int, Long>>()
+    fun add(a: Int, b: Int, ms: Long) {
+        val m = out.getOrPut(a) { mutableMapOf() }
+        m[b] = (m[b] ?: 0) + ms
+    }
+    val sorted = turns.sortedBy { it.startMs }
+    for (i in sorted.indices) {
+        val a = sorted[i]
+        var j = i + 1
+        while (j < sorted.size && sorted[j].startMs < a.endMs) {
+            val b = sorted[j++]
+            if (a.speaker == b.speaker) continue
+            val ms = minOf(a.endMs, b.endMs) - b.startMs
+            add(a.speaker, b.speaker, ms)
+            add(b.speaker, a.speaker, ms)
+        }
+    }
+    return out
+}
+
 fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn> {
     val voices = d.voices.associate { it.speaker to (it.embedding.unit() to it.weightMs) }.toMutableMap()
+    val together = overlaps(d.turns)
+    fun overlap(a: Int, b: Int): Long = together[a]?.get(b) ?: 0
     val target = mutableMapOf<Int, Int>()
     fun root(s: Int): Int = target[s]?.let(::root) ?: s
     while (voices.size > 1) {
         val keys = voices.keys.sorted()
         var best: Triple<Int, Int, Double>? = null
         for (i in keys.indices) for (j in i + 1 until keys.size) {
+            if (overlap(keys[i], keys[j]) > OVERLAP_MAX_MS) continue
             val c = cosine(voices.getValue(keys[i]).first, voices.getValue(keys[j]).first)
             if (best == null || c > best.third) best = Triple(keys[i], keys[j], c)
         }
@@ -54,6 +81,15 @@ fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn>
         voices[a] = FloatArray(ea.size) { ea[it] * wa + eb[it] * wb }.unit() to wa + wb
         voices.remove(b)
         target[b] = a
+        for ((x, ms) in together.remove(b).orEmpty()) {
+            if (x == a) continue
+            val ax = together.getOrPut(a) { mutableMapOf() }
+            ax[x] = (ax[x] ?: 0) + ms
+            val xs = together.getValue(x)
+            xs[a] = (xs[a] ?: 0) + ms
+            xs.remove(b)
+        }
+        together[a]?.remove(b)
     }
     val sorted = d.turns.sortedBy { it.startMs }.map { Turn(it.startMs, it.endMs, root(it.speaker)) }
     val talk = sorted.groupBy { it.speaker }.mapValues { (_, l) -> l.sumOf { it.endMs - it.startMs } }
@@ -61,11 +97,17 @@ fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn>
     val major = talk.filter { (_, ms) -> ms >= SPEAKER_MIN_MS && ms >= total * SPEAKER_MIN_SHARE }.keys
     val absorbed = if (major.isEmpty()) sorted else sorted.mapIndexed { i, t ->
         if (t.speaker in major) return@mapIndexed t
+        val allowed = major.filter { overlap(t.speaker, it) <= OVERLAP_MAX_MS }
         val own = voices[t.speaker]?.first
-        val byVoice = own?.let { e -> major.filter { it in voices }.maxByOrNull { cosine(e, voices.getValue(it).first) } }
-        val byTime = (i - 1 downTo 0).firstOrNull { sorted[it].speaker in major }?.let { sorted[it].speaker }
-            ?: (i + 1 until sorted.size).firstOrNull { sorted[it].speaker in major }?.let { sorted[it].speaker }
-        Turn(t.startMs, t.endMs, byVoice ?: byTime ?: t.speaker)
+        val into = when {
+            own != null -> allowed.filter { it in voices }.map { it to cosine(own, voices.getValue(it).first) }
+                .filter { it.second >= ABSORB_MIN_COSINE }.maxByOrNull { it.second }?.first
+            talk.getValue(t.speaker) < ABSORB_TIME_MAX_MS ->
+                (i - 1 downTo 0).firstOrNull { sorted[it].speaker in allowed }?.let { sorted[it].speaker }
+                    ?: (i + 1 until sorted.size).firstOrNull { sorted[it].speaker in allowed }?.let { sorted[it].speaker }
+            else -> null
+        }
+        Turn(t.startMs, t.endMs, into ?: t.speaker)
     }
     val order = mutableMapOf<Int, Int>()
     return absorbed.map { t -> Turn(t.startMs, t.endMs, order.getOrPut(t.speaker) { order.size }) }
