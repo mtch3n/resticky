@@ -43,6 +43,8 @@ import dev.resticky.MIN_DURATION_OFF
 import dev.resticky.MIN_DURATION_ON
 import dev.resticky.Turn
 import dev.resticky.diarization
+import dev.resticky.Voiceprint
+import dev.resticky.enrollVoice
 import dev.resticky.summaryPrompt
 import dev.resticky.SUMMARY_SCHEMA
 import dev.resticky.Summarizer
@@ -435,20 +437,34 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 try {
                     val rate = sd.sampleRate()
                     val turns = sd.process(samples).map { Turn((it.start * 1000).toLong(), (it.end * 1000).toLong(), it.speaker) }
-                    diarization(samples, rate, turns) { part ->
-                        val stream = extractor.createStream()
-                        try {
-                            stream.acceptWaveform(part, rate)
-                            stream.inputFinished()
-                            extractor.compute(stream)
-                        } finally {
-                            stream.release()
-                        }
-                    }
+                    diarization(samples, rate, turns) { embed(extractor, it, rate) }
                 } finally {
                     extractor.release()
                     sd.release()
                 }
+            }
+        }
+    }
+
+    private fun embed(extractor: SpeakerEmbeddingExtractor, part: FloatArray, rate: Int): FloatArray {
+        val stream = extractor.createStream()
+        try {
+            stream.acceptWaveform(part, rate)
+            stream.inputFinished()
+            return extractor.compute(stream)
+        } finally {
+            stream.release()
+        }
+    }
+
+    suspend fun voiceprint(pcm: FloatArray): Voiceprint? {
+        val embedding = requireReady(Model.SpeakerEmbedding).path
+        return withContext(Dispatchers.Default) {
+            val extractor = SpeakerEmbeddingExtractor(null, SpeakerEmbeddingExtractorConfig(model = embedding, numThreads = WHISPER_THREADS))
+            try {
+                enrollVoice(pcm, SAMPLE_RATE) { embed(extractor, it, SAMPLE_RATE) }
+            } finally {
+                extractor.release()
             }
         }
     }

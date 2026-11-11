@@ -231,6 +231,7 @@ class Pipeline(
     private val vocabulary: Vocabulary? = null,
     private val extraNames: () -> List<String> = { emptyList() },
     private val calendarTerms: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
+    private val people: () -> List<Person> = { emptyList() },
     private val log: (String) -> Unit,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -287,22 +288,25 @@ class Pipeline(
         val key = "${m.device}/${m.id}"
         val frames = if (m.transcript().isBlank()) null else store.sessionFrames(m)
         val start = TimeSource.Monotonic.markNow()
-        val turns = frames?.let { f ->
+        val found = frames?.let { f ->
             runCatching { diarizeSession(f, diarizer, diarizeWindowMs) }
                 .onFailure { log("WARN diarize session=${m.id} retry=${key !in failedOnce} err=${it.message}") }
                 .getOrNull()
         }
-        if (frames != null && turns == null && failedOnce.add(key)) {
+        if (frames != null && found == null && failedOnce.add(key)) {
             waiting += key
             return
         }
         failedOnce -= key
         store.update(m.device, m.id) {
             it.diarized = true
-            it.speakersFailed = frames != null && turns == null
-            if (turns != null) it.assignSpeakers(turns)
+            it.speakersFailed = frames != null && found == null
+            if (found != null) {
+                it.assignSpeakers(found.turns)
+                it.labelVoices(found.voices, people())
+            }
         }
-        if (turns != null) log("INFO diarized session=${m.id} speakers=${turns.map { it.speaker }.distinct().size} turns=${turns.size} took=${start.elapsedNow()}")
+        if (found != null) log("INFO diarized session=${m.id} speakers=${found.turns.map { it.speaker }.distinct().size} turns=${found.turns.size} took=${start.elapsedNow()}")
     }
 
     private suspend fun summarize(c: Conversation): Boolean {

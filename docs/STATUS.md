@@ -141,11 +141,17 @@ low power and storage use that we can profile.
   middle, camera design A), To-do, Photos. Hub: the Sticky card (tap: Sticky settings; ⌄: "Choose a Sticky") and
   tiles Sticky, Weather, Places, Calendars, Health, App settings. Sticky settings: pairing, Clock (face, 12/24 h),
   Weather (style, location, units, refresh), Feedback on the Sticky (`sound`: off, beep, buzz), Wi-Fi networks, Health, firmware,
-  Forget. App settings: hub switch, Models, Pipeline, Places, Calendars, Updates, Transcribe, Hubs. The CDM sheet
+  Forget. App settings: hub switch, Models, Pipeline, Places, Calendars, People, Updates, Transcribe, Hubs. The CDM sheet
   shows all associations, but the app links only to the first one.
 - Transcript page: summary, to-dos, Marks chips, timed lines with speaker chips (tap: name the speaker), photos in
   the timeline, and the player (own Opus decoder and `AudioTrack`; Clean up, Skip silence, Crisp voice). See
   "Segments", "Speakers", "Playback view" and "Photos" in `protocol.md`.
+- People (2026-11-11, built, not tested on a device): the hub keeps the voice of each session speaker in `meta.json`
+  (`voices`), and a people library in `people.json`. After diarization it names a speaker when the cosine to a
+  person is ≥ 0.62 and 0.05 above the next person; from 0.5 it only suggests the name ("Speaker A: Krista?" pill on
+  the transcript page). A rename on the phone teaches the library. App settings › People: the list, delete, and
+  "Your voice" (45 s phone recording). The name sheet offers the attendees of overlapping calendar events. The
+  thresholds are start values: tune them on the test set. See `plan-people.md`.
 - Speakers on the Phone hotspot XL (2026-11-10): a 22.5-minute session took 98 s for the first 20-minute window and
   20 s for the rest (5 speakers). Laptop: RTF 0.044. Models are in `~/.local/share/resticky/models` (laptop) and in
   the app external files `models/` (phone).
@@ -213,6 +219,7 @@ low power and storage use that we can profile.
   Layers 1 (protocol, contract tests, JVM hub), 2 (flash outbox) and 3 (firmware BLE) are done.
 - `protocol.md`: the hub HTTP API and the data format.
 - `plan-recording.md`: recording, power and profiling plan.
+- `plan-people.md`: speaker identity (voiceprints, people library, matching thresholds, privacy).
 - `ui-screens.md`, `../DESIGN.md`, `../mockups/board.png`: UI. `../mockups/stock-reference/` (git-ignored)
   has the stock UI extracted from the backup.
 

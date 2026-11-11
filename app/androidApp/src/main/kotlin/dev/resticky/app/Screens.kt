@@ -85,6 +85,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import dev.resticky.MARK_WINDOW_MS
 import dev.resticky.Session
+import dev.resticky.Person
+import dev.resticky.speakerLetter
 import dev.resticky.Conversation
 import dev.resticky.linkPhoto
 import dev.resticky.wallAt
@@ -581,7 +583,7 @@ private fun AttachSheet(conversations: List<ConversationView>, dismiss: () -> Un
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RenameSheet(label: String, quote: String?, dismiss: () -> Unit, save: (String) -> Unit) {
+private fun RenameSheet(label: String, quote: String?, choices: List<String>, dismiss: () -> Unit, save: (String) -> Unit) {
     var name by remember { mutableStateOf(if (label.startsWith("Speaker ")) "" else label) }
     ModalBottomSheet(
         dismiss,
@@ -595,6 +597,11 @@ private fun RenameSheet(label: String, quote: String?, dismiss: () -> Unit, save
             Text("Name $label", style = Type.heading.copy(fontSize = 20.sp), modifier = Modifier.padding(horizontal = 4.dp))
             Text("For the whole session. The summary and the to-dos use the name.", style = Type.small, modifier = Modifier.padding(horizontal = 4.dp))
             Field("Name", name, { name = it }, onDone = { save(name) })
+            if (choices.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    choices.forEach { Chip(it, false) { save(it) } }
+                }
+            }
             quote?.let { Text("“$it”", style = Type.small, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp)) }
             FilledButton("Save") { save(name) }
         }
@@ -610,6 +617,8 @@ fun TranscriptScreen(
     prefs: PlayerPrefs,
     setPrefs: (PlayerPrefs) -> Unit,
     rename: (Session, Int, String) -> Unit,
+    people: List<Person>,
+    attendees: suspend () -> List<String>,
     photoFile: (Session, Photo) -> File,
     showOnSticky: (File) -> Unit,
     startAt: Spot?,
@@ -741,6 +750,14 @@ fun TranscriptScreen(
                         }
                     }
                     if (sessions.any { it.speakersFailed }) Text("Speakers not available", style = Type.small)
+                    val offers = sessions.flatMap { s ->
+                        s.suggested.filterKeys { it !in s.speakers }.mapNotNull { (k, id) -> people.find { it.id == id }?.let { Triple(s, k.toInt(), it.name) } }
+                    }
+                    if (offers.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            offers.forEach { (s, speaker, name) -> Pill("${speakerLetter(speaker)}: $name?", Ink.card, onClick = { rename(s, speaker, name) }) }
+                        }
+                    }
                     if (playback.audio == Audio.Missing) Text("The audio is deleted 7 days after the recording.", style = Type.small)
                     if (said.isEmpty()) Text(if (v.live) "Listening" else "No words yet.", style = Type.body)
                     Gap(0.dp)
@@ -786,7 +803,11 @@ fun TranscriptScreen(
     }
     naming?.let { (session, speaker) ->
         val quote = said.filter { it.session.id == session.id && it.line.speaker == speaker }.maxByOrNull { it.line.text.length }?.line?.text
-        RenameSheet(session.speakerName(speaker), quote, { naming = null }) {
+        val invited by produceState(emptyList<String>(), c.key) { value = attendees() }
+        val label = session.speakerName(speaker)
+        val choices = (listOfNotNull(session.suggested["$speaker"]?.let { id -> people.find { it.id == id }?.name }) + invited + people.map { it.name })
+            .distinctBy { it.lowercase() }.filter { it != label }.take(8)
+        RenameSheet(label, quote, choices, { naming = null }) {
             rename(session, speaker, it)
             naming = null
         }
@@ -825,6 +846,7 @@ fun SettingsScreen(
     speech: Model,
     places: String,
     calendars: String,
+    people: String,
     updates: String,
     back: () -> Unit,
     onHub: (Boolean) -> Unit,
@@ -849,6 +871,7 @@ fun SettingsScreen(
             ListRow("Pipeline", if (hub.received.isEmpty()) "Idle" else "${hub.received.size} waiting", lead = { Glyph(R.drawable.ic_activity) }, onClick = { open(Detail.Pipeline) }) { Chevron() }
             ListRow("Places", places, lead = { Glyph(R.drawable.ic_map_pin) }, onClick = { open(Detail.Places) }) { Chevron() }
             ListRow("Calendars", calendars, lead = { Glyph(R.drawable.ic_calendar) }, onClick = { open(Detail.Calendars) }) { Chevron() }
+            ListRow("People", people, lead = { Glyph(R.drawable.ic_users) }, onClick = { open(Detail.People) }) { Chevron() }
             ListRow("Vocabulary", "Names and words for transcripts", lead = { Glyph(R.drawable.ic_file_text) }, onClick = { open(Detail.Vocabulary) }) { Chevron() }
             ListRow("Updates", updates, lead = { Glyph(R.drawable.ic_download) }, onClick = { open(Detail.Updates) }) { Chevron() }
         }

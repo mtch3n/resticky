@@ -22,6 +22,7 @@ import dev.resticky.Hub
 import dev.resticky.Releases
 import dev.resticky.PENDING
 import dev.resticky.placeTag
+import dev.resticky.People
 import dev.resticky.Pipeline
 import dev.resticky.Store
 import dev.resticky.Vocabulary
@@ -47,6 +48,7 @@ fun log(message: String) {
 
 class HubApp : Application() {
     lateinit var store: Store
+    lateinit var people: People
     lateinit var engines: Engines
     lateinit var pipeline: Pipeline
     lateinit var hub: Hub
@@ -145,11 +147,12 @@ class HubApp : Application() {
     override fun onCreate() {
         super.onCreate()
         store = Store(Path(File(filesDir, "data").path))
+        people = People(Path(File(filesDir, "people.json").path))
         engines = Engines(this) { onScreen }
         vocabulary = Vocabulary(Path(File(filesDir, "vocabulary.json").path))
         pipeline = Pipeline(
-            store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId,
-            vocabulary = vocabulary, calendarTerms = { from, to -> calendars.titles(from, to) }, log = ::log,
+            store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId, people = people::all,
+            vocabulary = vocabulary, extraNames = { people.all().map { it.name } }, calendarTerms = { from, to -> calendars.titles(from, to) }, log = ::log,
         )
         locator = Locator(this)
         places = PlaceStore(this)
