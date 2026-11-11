@@ -36,6 +36,8 @@
 #define HISTORY 24
 #define HISTORY_S 3600
 #define CLOCK_VALID_AFTER 1735689600
+#define WIFI_OFF_TEXT "Off \xC2\xB7 phone linked"
+
 
 LV_FONT_DECLARE(icons_96);
 LV_FONT_DECLARE(icons_64);
@@ -130,7 +132,7 @@ static view_t v_launcher, v_recorder, v_todo, v_transcripts, v_clock, v_weather,
 static view_t *current_view;
 static pager_t todo_pager, list_pager, stats_pager;
 
-static lv_obj_t *status, *status_title, *status_home, *status_wifi, *status_batt, *status_batt_icon;
+static lv_obj_t *status, *status_title, *status_home, *status_wifi, *status_rec, *status_batt, *status_batt_icon;
 static lv_obj_t *rec_tile, *rec_tile_icon, *todo_badge, *list_badge, *clock_tile_time;
 static lv_obj_t *rec_dot, *rec_state, *rec_sub, *last_box, *last_title, *last_text;
 static lv_obj_t *list_rows[LIST_PAGE], *list_titles[LIST_PAGE], *list_subs[LIST_PAGE], *list_empty;
@@ -328,6 +330,11 @@ static void build_status(void)
     lv_obj_t *left = status_row(status, LV_ALIGN_TOP_LEFT), *right = status_row(status, LV_ALIGN_TOP_RIGHT);
     status_wifi = label(left, ICON_WIFI_OFF, &icons_28);
     status_title = label(left, "", &title_22);
+    status_rec = plain(right);
+    lv_obj_set_size(status_rec, 14, 14);
+    lv_obj_set_style_radius(status_rec, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(status_rec, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(status_rec, lv_color_black(), 0);
     status_batt = label(right, "--%", &text_18);
     status_batt_icon = label(right, BATTERY_LEVELS[0], &icons_28);
     status_home = plain(lv_layer_top());
@@ -1396,7 +1403,7 @@ static void render_stats(void)
                           (unsigned)(heap_caps_get_total_size(MALLOC_CAP_SPIRAM) >> 20));
     lv_label_set_text_fmt(device_values[4], "%lu chunks \xC2\xB7 %lu KB wait", (unsigned long)sp.chunks, (unsigned long)(sp.bytes / 1024));
     if (view.wifi.up) lv_label_set_text_fmt(device_values[5], "%s \xC2\xB7 %d dBm", view.wifi.connected, view.wifi.rssi);
-    else lv_label_set_text(device_values[5], "Not connected");
+    else lv_label_set_text(device_values[5], view.wifi.off ? WIFI_OFF_TEXT : "Not connected");
     lv_label_set_text(device_values[6], ble_ready() ? "Linked to a hub" : "Not linked");
     lv_label_set_text_fmt(device_values[7], "%d.%02d V \xC2\xB7 %d mA", last.voltage_mv / 1000, last.voltage_mv % 1000 / 10, last.current_ma);
     if (last.climate_ok) lv_label_set_text_fmt(device_values[8], "%d.%d \xC2\xB0" "C \xC2\xB7 %d%% humidity", last.room_c10 / 10, last.room_c10 % 10, last.humidity);
@@ -1603,6 +1610,7 @@ static void build_wifi(void)
         net_rows[i] = r;
     }
     lv_obj_set_pos(label(s, "Add a network in the phone app: Sticky \xE2\x80\xBA Wi-Fi.", &body_18), 24, TOP + 28 + WIFI_MAX_PROFILES * ROW_H + 16);
+    v_wifi.on_show = actions.need_wifi;
 }
 
 static void test_clicked(lv_event_t *e)
@@ -1968,6 +1976,7 @@ static void set_status_wifi(const wifi_status_t *w)
 static void set_rec_tile(void)
 {
     bool on = recording && !sleeping;
+    set_hidden(status_rec, !on);
     set_inverted(rec_tile, on);
     lv_obj_set_style_text_color(rec_tile_icon, on ? lv_color_white() : lv_color_black(), 0);
     lv_label_set_text(rec_tile_icon, on ? ICON_MIC : ICON_MIC_OFF);
@@ -2091,10 +2100,10 @@ void ui_set_net(const net_state_t *n)
     set_status_wifi(w);
     if (w->up) ui_boot_step(5);
     if (n->hub) ui_boot_step(6);
-    lv_label_set_text(wifi_value, w->up ? w->connected : w->count ? "Not connected" : "Not set");
-    lv_label_set_text(hub_value, n->hub ? "OK" : "Not found");
-    lv_label_set_text(hub_name, n->hub ? n->hub_host : "-");
-    lv_label_set_text(hub_status, n->hub ? "OK" : w->up ? "Not found" : "No Wi-Fi");
+    lv_label_set_text(wifi_value, w->up ? w->connected : w->off ? WIFI_OFF_TEXT : w->count ? "Not connected" : "Not set");
+    lv_label_set_text(hub_value, n->hub ? "OK" : n->phone ? "Phone linked" : "Not found");
+    lv_label_set_text(hub_name, n->hub ? n->hub_host : n->phone ? "Phone (Bluetooth)" : "-");
+    lv_label_set_text(hub_status, n->hub ? "OK" : n->phone ? "Phone linked" : w->up ? "Not found" : "No Wi-Fi");
     set_hidden(net_empty, w->count > 0);
     for (int i = 0; i < WIFI_MAX_PROFILES; i++) {
         set_hidden(net_rows[i], i >= w->count);

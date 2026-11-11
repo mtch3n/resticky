@@ -1,6 +1,6 @@
 # Status and resume notes
 
-Last update: 2026-11-10. Read this file first when you resume the project.
+Last update: 2026-11-11. Read this file first when you resume the project.
 
 ## Project in one sentence
 
@@ -68,6 +68,23 @@ low power and storage use that we can profile.
 - While a BLE hub is linked, chunks go on BLE and carry no VAD masks (the hubs reject a longer BLE chunk).
 - Refresh rule as the stock firmware: partial for every change, full after 20 partials or for the Off
   screen; no idle timer.
+- Firmware 0.15.0 (2026-11-11, built, not flashed, not measured). Power and integrity changes:
+  - Speech gate: VADNet runs before Opus. Only speech, 500 ms pre-roll and 1.5 s hang-over are encoded.
+    Silence is empty frames. See "Speech gate" in `plan-recording.md`. Health has `audio_keep_pm`,
+    `early_chunks` and `lost_chunks`.
+  - BLE controller modem sleep with the main crystal. The device asks for a 150 to 200 ms interval (latency 4)
+    and for 15 to 30 ms during photo, lists and OTA frames.
+  - BLE-only mode: new frames 23 `lists` and 24 `todo_set`. Wi-Fi stops after 60 s of a linked phone hub
+    with lists, and starts again after 60 s without the link, or for 5 minutes for an update check, an
+    install, a hub test or Settings › Wi-Fi.
+  - Sleep, restart and power off stop the audio and write the upload queue to flash with acknowledgements.
+    Sleep stops BLE and Wi-Fi and puts GPIO7 into the wake mask only when it is high. The OTA restart also
+    writes the queue to flash first.
+  - Mute is stored in NVS and face up does not start a muted recording. A black dot in the status row shows
+    that the mic records.
+  - Before the first build of 0.15.0 in a checkout, delete `firmware/sdkconfig.sticky`. The old file has
+    `# CONFIG_BT_CTRL_MODEM_SLEEP is not set`, and `sdkconfig.defaults` does not change a set value.
+
 
 ## Android app facts (layer 4, Wi-Fi part, 2026-11-10)
 

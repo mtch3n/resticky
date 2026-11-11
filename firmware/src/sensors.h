@@ -27,5 +27,6 @@ void sensors_init(void);
 void sensors_read(sensors_t *s);
 int sensors_chip_celsius(void);
 bool sensors_double_tap(void);
+void sensors_sleep_prepare(void);
 bool sensors_rtc_read(time_t *out);
 bool sensors_rtc_write(time_t t);

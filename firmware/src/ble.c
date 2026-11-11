@@ -29,6 +29,7 @@
 #define TYPE_TIME 13
 #define TYPE_INSTALL 16
 #define TYPE_PHOTO 17
+#define TYPE_LISTS 23
 #define CHUNK_HEADER 31
 #define ACK_LEN 8
 #define ACK_TIMEOUT_MS 15000
@@ -37,6 +38,15 @@
 #define ADV_ITVL_MIN 480
 #define ADV_ITVL_MAX 800
 #define MIN_INTERNAL_FREE (64 * 1024)
+#define SLOW_ITVL_MIN 120
+#define SLOW_ITVL_MAX 160
+#define SLOW_LATENCY 4
+#define FAST_ITVL_MIN 12
+#define FAST_ITVL_MAX 24
+#define SUPERVISION_TIMEOUT 600
+#define FAST_HOLD_MS 5000
+#define SETTLE_MS 5000
+#define REASK_MS 30000
 
 void ble_store_config_init(void);
 
@@ -53,9 +63,17 @@ static uint8_t mac[6];
 static QueueHandle_t acks;
 EXT_RAM_BSS_ATTR static uint8_t rx_frame[RX_MAX], rx_in[RX_IN];
 static size_t rx_len;
+static volatile uint32_t fast_until;
+static bool started;
+
+static bool fast_type(uint8_t type)
+{
+    return type == TYPE_PHOTO || type == TYPE_LISTS || (type >= BLE_TYPE_OTA_BEGIN && type <= BLE_TYPE_OTA_CANCEL);
+}
 
 static void on_frame(uint8_t type, const uint8_t *p, size_t n)
 {
+    if (fast_type(type)) fast_until = esp_log_timestamp() + FAST_HOLD_MS;
     if (type == TYPE_ACK && n == ACK_LEN) {
         uint32_t ack[2];
         memcpy(ack, p, sizeof ack);
@@ -77,6 +95,10 @@ static void on_frame(uint8_t type, const uint8_t *p, size_t n)
     }
     if (type >= BLE_TYPE_OTA_BEGIN && type <= BLE_TYPE_OTA_CANCEL && type != BLE_TYPE_OTA_STATUS) {
         net_ota_frame(type, p, n);
+        return;
+    }
+    if (type == TYPE_LISTS) {
+        net_lists_frame((const char *)p, n);
         return;
     }
     if (type == TYPE_PHOTO) {
@@ -112,6 +134,7 @@ static void rx_feed(const uint8_t *p, size_t n)
             rx_len = 0;
         }
     }
+    if (rx_len >= 5 && fast_type(rx_frame[4])) fast_until = esp_log_timestamp() + FAST_HOLD_MS;
 }
 
 static int access_cb(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg)
@@ -334,6 +357,7 @@ bool ble_init(void)
         ESP_LOGE(TAG, "gatt service not added: %d", rc);
         return false;
     }
+    started = true;
     ble_store_config_init();
     if (xTaskCreatePinnedToCore(host_task, "nimble_host", CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE, NULL,
                                 configMAX_PRIORITIES - 4, NULL, CONFIG_BT_NIMBLE_PINNED_TO_CORE) != pdPASS) {
@@ -389,7 +413,53 @@ bool ble_send_weather_set(const char *json)
     return ble_ready() && ble_send_json(BLE_TYPE_WEATHER_SET, json);
 }
 
+void ble_tick(bool busy)
+{
+    static int asked = -1;
+    static uint32_t asked_at, ready_at;
+    if (!ble_ready()) {
+        ready_at = 0;
+        asked = -1;
+        return;
+    }
+    uint32_t now = esp_log_timestamp();
+    if (!ready_at) ready_at = now;
+    bool fast = busy || (int32_t)(fast_until - now) > 0;
+    if (!fast && now - ready_at < SETTLE_MS) return;
+    struct ble_gap_conn_desc d;
+    if (ble_gap_conn_find(conn, &d)) return;
+    bool in_range = fast ? d.conn_itvl <= FAST_ITVL_MAX : d.conn_itvl >= SLOW_ITVL_MIN && d.conn_latency == SLOW_LATENCY;
+    if (in_range) {
+        asked = fast;
+        return;
+    }
+    if (asked == fast && now - asked_at < REASK_MS) return;
+    struct ble_gap_upd_params p = {
+        .itvl_min = fast ? FAST_ITVL_MIN : SLOW_ITVL_MIN,
+        .itvl_max = fast ? FAST_ITVL_MAX : SLOW_ITVL_MAX,
+        .latency = fast ? 0 : SLOW_LATENCY,
+        .supervision_timeout = SUPERVISION_TIMEOUT,
+    };
+    int rc = ble_gap_update_params(conn, &p);
+    asked = fast;
+    asked_at = now;
+    ESP_LOGI(TAG, "ask for the %s interval (%u to %u x 1.25 ms, latency %u): %d", fast ? "fast" : "slow", p.itvl_min, p.itvl_max,
+             p.latency, rc);
+}
+
+void ble_stop(void)
+{
+    if (!started) return;
+    started = false;
+    int rc = nimble_port_stop();
+    if (rc == 0) nimble_port_deinit();
+    conn = BLE_HS_CONN_HANDLE_NONE;
+    secure = subscribed = false;
+    ESP_LOGI(TAG, "stopped: %d", rc);
+}
+
 int ble_passkey(void)
+
 {
     return passkey;
 }

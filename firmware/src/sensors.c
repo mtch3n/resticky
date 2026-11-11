@@ -189,8 +189,23 @@ int sensors_chip_celsius(void)
     return (int)celsius;
 }
 
+void sensors_sleep_prepare(void)
+{
+    int before = gpio_get_level(PIN_MOTION_INT);
+    uint8_t tap = 0, wake = 0, d6d = 0;
+    if (imu_ready) {
+        rd(imu, 0x1C, &tap, 1);
+        rd(imu, 0x1B, &wake, 1);
+        rd(imu, 0x1D, &d6d, 1);
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
+    ESP_LOGI(TAG, "sleep: gpio %d level %d, after the imu latch clear %d (tap_src 0x%02x, wake_up_src 0x%02x, d6d_src 0x%02x)",
+             PIN_MOTION_INT, before, gpio_get_level(PIN_MOTION_INT), tap, wake, d6d);
+}
+
 bool sensors_double_tap(void)
 {
+
     uint8_t src = 0;
     if (!imu_ready) return false;
     int64_t now = esp_timer_get_time();

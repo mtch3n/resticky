@@ -27,4 +27,4 @@
 
 void board_power_latch(void);
 void board_power_off(void);
-void board_sleep(uint32_t wake_after_s);
+void board_sleep(uint32_t wake_after_s, uint32_t release_wait_ms);

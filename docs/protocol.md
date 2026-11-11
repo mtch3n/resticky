@@ -1,6 +1,6 @@
 # Hub protocol
 
-Status: 2026-11-10. This is the protocol between the Sticky and a hub on Wi-Fi (HTTP) and on Bluetooth LE
+Status: 2026-11-11. This is the protocol between the Sticky and a hub on Wi-Fi (HTTP) and on Bluetooth LE
 (see "Bluetooth LE"). The contract tests in `app/contract` check the HTTP part against each hub.
 
 ## Discovery
@@ -35,17 +35,19 @@ with a bad ID gets `400`.
 | `GET /api/firmware` | — | `200`, `{"version":"<x.y.z>","size":<bytes>}`: the newest firmware in the hub's firmware folder (laptop: `~/.local/share/resticky/firmware/<x.y.z>.bin`, `-firmware <dir>`; phone: app files `firmware/`). `404` if there is none. Both hubs. |
 | `GET /api/firmware/bin?version=<x.y.z>` | — | `200`, the firmware image. `404` if there is no such version. |
 
-### Voice activity (shadow mode)
+### Voice activity (speech gate)
 
-Firmware 0.9.0 and later run a voice activity detector (ESP-SR VADNet `vadnet1_medium`) on each 20 ms
-frame, but still record and upload all audio. A chunk on HTTP can have three more headers. A hub that does
-not know them ignores them.
+Firmware 0.9.0 to 0.14.9 ran a voice activity detector (ESP-SR VADNet `vadnet1_medium`) on each 20 ms frame,
+but recorded and uploaded all audio (shadow mode). Firmware 0.15.0 and later use the detector as a gate: the
+device encodes only speech, 500 ms of pre-roll before the speech and 1.5 s of hang-over after it. Each gated
+20 ms frame is an empty frame (length 0, see "Audio frames"), so the chunk timeline stays exact. A chunk on
+HTTP can have three more headers. A hub that does not know them ignores them.
 
 | Header | Value |
 |---|---|
 | `X-Vad-Speech` | Base64 (standard, with padding) of a bit mask: one bit for each 20 ms frame of the chunk, `1` = speech. Frame `i` is in byte `i / 8`, bit `i % 8` (the least significant bit first). The mask has `ceil(frames / 8)` bytes; `frames` = `X-Duration-Ms` / 20. |
-| `X-Vad-Keep` | The same format: `1` = the gated recorder would keep this frame (speech, 2 s pre-roll before the start of speech, 15 s hang-over after the last speech frame). |
-| `X-Vad-Keep-Prev` | Integer ≥ 0: the gated recorder would also keep this number of frames at the end of the previous chunk of the session (pre-roll that starts in the previous chunk). |
+| `X-Vad-Keep` | The same format: `1` = the device encoded this frame (speech, pre-roll or hang-over). `0` = an empty frame. Before 0.15.0: the frames that a simulated gate (2 s pre-roll, 15 s hang-over) would keep. |
+| `X-Vad-Keep-Prev` | Integer ≥ 0. Firmware 0.15.0 and later always send 0, because the pre-roll is always in the same chunk (the device delays the audio by the 500 ms pre-roll). Before 0.15.0: the number of frames at the end of the previous chunk that the simulated gate would also keep. |
 
 A chunk with no VAD (no model in the `model` partition, or a chunk from an older firmware) has none of
 these headers. On Bluetooth LE the chunk has no VAD data (see "Required hub change").
@@ -85,8 +87,14 @@ keep_prev u16); `parseChunk` must accept `size >= 31 + audio length` before the 
 ### Audio frames
 
 The body of a chunk is a list of Opus packets (16 kHz, mono, 20 ms each). Each packet has a 2-byte
-little-endian length, then the packet bytes. A length of 0 is a 20 ms frame with no packet (DTX). A
-30 s chunk has 1500 frames.
+little-endian length, then the packet bytes. A length of 0 is a 20 ms frame with no packet: the speech gate
+removed it (firmware 0.15.0 and later), or the encoder failed. A decoder treats an empty frame as a lost
+frame (`opus_decode` with no data gives 20 ms of packet-loss concealment, which fades to silence), and an
+Ogg writer writes a 1-byte packet with the TOC byte only (a code 0 packet with an empty frame). Both hub
+decoders (`opusFramesToOgg` in `app/shared` and `decodeOpus` in the Android app) do this already. A full
+chunk has 1500 frames (30 s). A chunk can be shorter when its audio buffer (72,000 bytes) is full. Then the
+device closes the chunk early and the next chunk continues the timeline with the next `seq` (firmware 0.15.0
+and later). `X-Duration-Ms` always gives the real length.
 
 ### Screen frame
 
@@ -239,7 +247,13 @@ hub keeps the history and the device stores none:
 | `cpu_filter_pm`, `cpu_opus_pm`, `cpu_vad_pm` | per mille | Part of the audio core time used by the filter, the Opus encoder and the VAD. |
 | `opus_max_us` | µs | Longest Opus encode of one frame. |
 | `overflows` | count | I2S overflows since start. |
+| `audio_keep_pm` | per mille | Optional, firmware 0.15.0 and later. Part of the frames in the last 60 s that the speech gate encoded. |
+| `early_chunks` | count | Optional, firmware 0.15.0 and later. Chunks closed early in the last 60 s because the audio buffer was full. |
+| `lost_chunks` | count | Optional, firmware 0.15.0 and later. Chunks lost since start (no memory for a chunk, or the upload queue was full). Must be 0. |
 | `temp_c` | °C | Chip temperature. The hub keeps 0.1 °C. |
+
+The hub stores only the 15 fields above `audio_keep_pm` in `health.bin`. To keep the three new fields, the hub
+must add them to the record.
 
 The hub keeps one sample for each check-in, but at most one sample in each minute (UTC minute of the hub
 clock; the first check-in in a minute wins). A check-in without `health` gives a sample with `"health":null`.
@@ -466,8 +480,15 @@ Name `resticky`, the service UUID in the advertising data, the name in the scan 
 
 ### Link settings
 
-The device asks for the LE 2M PHY and for data length 251 bytes. The preferred ATT MTU is 517. The hub
-selects the connection interval.
+The device asks for the LE 2M PHY and for data length 251 bytes. The preferred ATT MTU is 517.
+
+Connection interval (firmware 0.15.0 and later): 5 s after the link is ready, the device asks for a slow
+interval (150 to 200 ms, peripheral latency 4, supervision timeout 6 s) with a connection parameter update.
+While an update runs (frames 18 to 22), and for 5 s after each part of a `photo` (17), `lists` (23) or OTA
+frame, the device asks for a fast interval (15 to 30 ms, latency 0, timeout 6 s). Then it asks for the slow
+interval again. If the interval is not in the requested range, the device asks again after 30 s. The hub must
+accept these requests. The hub must not set its own interval (for example Android
+`requestConnectionPriority`) after an update, because this stops the slow interval until the next request.
 
 ### Frames
 
@@ -494,7 +515,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 1 | `chunk` | device → hub | header (31 bytes, little-endian) and the audio frames |
 | 2 | `ack` | hub → device | session (u32), seq (u32) |
 | 3 | `checkin` | device → hub | the JSON of `POST /api/checkin` (UTF-8) |
-| 4 to 7 | reserved | | `todo_set`, `state`, `hint`, `screen` (later layers) |
+| 4 to 7 | reserved | | `state`, `hint`, `screen` (later layers) |
 | 8 | `weather` | hub → device | the weather JSON (see "Weather") |
 | 9 | `agenda` | hub → device | the agenda JSON (see "Agenda") |
 | 10 | `wifi_add` | hub → device | `{"ssid","password"}` (see "Wi-Fi from the phone") |
@@ -509,6 +530,8 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 20 | `ota_end` | hub → device | empty |
 | 21 | `ota_status` | device → hub | `{"state":"…","percent":n,"offset":<bytes written>}` |
 | 22 | `ota_cancel` | hub → device | empty: abort the update |
+| 23 | `lists` | hub → device | `{"transcripts":[…],"todos":{"open":[…],"done":[…]}}`: the items of `GET /api/transcripts` and the object of `GET /api/todos`. At most 40 KB. Firmware 0.15.0. |
+| 24 | `todo_set` | device → hub | `{"id":"<to-do id>","done":true|false}`. The `id` is the same as in the to-do items. Firmware 0.15.0. |
 
 All JSON payloads are UTF-8 with no terminating zero byte.
 
@@ -541,8 +564,29 @@ The device ignores types that it does not know.
   again only when its JSON changed (a new forecast, a settings change, a calendar change, a new offset, a
   new clock face or weather style). On Wi-Fi the device gets the same data with `GET /api/weather`,
   `GET /api/agenda` and the check-in reply.
-- While a BLE hub is ready, chunks go only on BLE. Check-ins, transcripts, to-dos and screen frames still
-  use Wi-Fi when a Wi-Fi hub is reachable.
+- While a BLE hub is ready, chunks go only on BLE. Check-ins go only on BLE. Screen frames use Wi-Fi when a
+  Wi-Fi hub is reachable.
+- The hub sends `lists` when the link becomes ready and each time the transcripts or the to-dos change. The
+  device puts the items into the same state as `GET /api/transcripts` and `GET /api/todos`. After the first
+  `lists` frame of a link, the device stops the HTTP requests for transcripts and to-dos.
+- While a BLE hub is ready, the device sends each to-do change as `todo_set`, also before its clock is set.
+  The hub applies it as it applies `PUT /api/todos/...`, then sends a new `lists` frame. With
+  no BLE hub, the device uses `PUT` on Wi-Fi.
+
+### BLE-only mode
+
+Firmware 0.15.0 and later. Weather, agenda, display, time and lists come on BLE. Thus the device does not
+need Wi-Fi while a phone hub is linked.
+
+- The device stops Wi-Fi (`esp_wifi_stop`) when the BLE hub was ready for 60 s without a break and a `lists`
+  frame came on this link.
+- The device starts Wi-Fi again when the BLE link is not ready for more than 60 s. It also starts Wi-Fi for
+  5 minutes when the user starts a GitHub update check or an install, tests the hub, or opens Settings ›
+  Wi-Fi. After the 5 minutes, the 60 s rule applies again.
+- The Sticky shows "Off · phone linked" as the Wi-Fi state and "Phone linked" as the hub state.
+- With Wi-Fi off, the device does not send screen frames and does not use SNTP. The clock continues from the
+  last SNTP or RTC time.
+
 
 ## Firmware updates
 

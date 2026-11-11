@@ -25,7 +25,7 @@ buzzer).
 
 Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/green charge LED, reset key.
 
-## What the firmware uses (0.13.0)
+## What the firmware uses (0.15.0)
 
 | Feature | Used | Notes |
 |---|---|---|
@@ -36,13 +36,14 @@ Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/gre
 | IMU | Yes | Face-down and double tap, polled |
 | RTC | Yes | Time at boot, set after SNTP |
 | Buzzer | Yes (0.13.0) | Click and mark feedback: Feedback setting Off, Beep or Buzz (low pulses that imitate vibration, 0.14.6) |
-| Wi-Fi, BLE (2M PHY) | Yes | |
+| Wi-Fi, BLE (2M PHY) | Yes | 0.15.0: BLE controller modem sleep (mode 1) with the main crystal as the low-power clock. The board has no 32 kHz crystal on the ESP32-S3 (the 32 kHz crystal of the PCF8563 RTC is not connected to it), and the internal RC oscillator is not accurate enough for a connection. Wi-Fi stops while a phone hub is linked (BLE-only mode, see `protocol.md`). |
 | **SHT40 temperature and humidity** | **No** | Room climate for Clock/Weather/Health |
 | **microSD** | **No** | Large spool (plan layer 8) |
-| **GPIO7 interrupt (IMU, gauge)** | **No** | Interrupt-driven tap, wake on tap from deep sleep, low-battery alert |
-| **PDM_EN mic power** | **No** | Switch the mic off when muted or asleep |
+| GPIO7 interrupt (IMU, gauge) | Partly | Double tap is polled. Wake on double tap from deep sleep (IMU INT1 latched): 0.15.0 clears the latch before sleep and puts GPIO7 into the ext1 mask only when the line is high. The gauge interrupt is not configured. |
+| PDM_EN mic power | Yes | The mic is off when recording is off |
+
 | **RTC alarm (RTC_INTn)** | **No** | Scheduled wake (night pause); check where RTC_INTn goes |
-| **CPU power management (DFS)** | **No** | Needs lower Opus complexity first (see plan-audio.md) |
+| CPU power management (DFS) | Yes | 80 to 240 MHz, no light sleep. 0.15.0: the audio task holds `CPU_FREQ_MAX` only while it works on a frame |
 | **PIE SIMD (esp-dsp aes3)** | **No** | Needs the audio task stack in internal RAM or a fix for the PIE context |
 | **Hardware AES/SHA** | **No** | Encrypted uploads (HTTP is plain today) |
 | ULP RISC-V coprocessor | No | Not needed while ext0/ext1 wake is enough |

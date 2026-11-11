@@ -44,6 +44,10 @@
 #define OTA_MIN_BATTERY 20
 #define HUB_RECHECK_MS (5 * 60 * 1000)
 #define CHECKIN_LEN 768
+#define LISTS_MAX (40 * 1024)
+#define WIFI_OFF_AFTER_MS 60000
+#define WIFI_BACK_AFTER_MS 60000
+#define WIFI_NEED_MS (5 * 60 * 1000)
 
 
 static const char *TAG = "net";
@@ -76,6 +80,16 @@ static bool ble_linked;
 static struct { int battery_pct, voltage_mv, current_ma; bool recording, usb; } tele;
 static ota_info_t latest;
 static volatile bool install_now;
+static SemaphoreHandle_t fresh_lock, parked;
+static volatile bool park_wanted;
+EXT_RAM_BSS_ATTR static char lists_buf[LISTS_MAX];
+static size_t lists_len;
+static bool lists_pending, lists_seen;
+static bool wifi_off;
+static int64_t link_since, link_lost_at;
+static volatile int64_t wifi_need_until;
+
+static void *psram_malloc(size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM); }
 
 static void console_task(void *arg)
 {
@@ -305,13 +319,14 @@ static const char *health_json(void)
     snprintf(out, sizeof out,
              "{\"uptime_s\":%lld,\"heap_free\":%u,\"heap_min\":%u,\"heap_largest\":%u,\"psram_free\":%u,\"psram_min\":%u,"
              "\"stack_main\":%u,\"stack_net\":%u,\"stack_ble\":%u,\"cpu_filter_pm\":%d,\"cpu_opus_pm\":%d,\"cpu_vad_pm\":%d,"
-             "\"opus_max_us\":%d,\"overflows\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
+             "\"opus_max_us\":%d,\"overflows\":%lu,\"audio_keep_pm\":%d,\"early_chunks\":%lu,\"lost_chunks\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
              esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
              mainh ? (unsigned)uxTaskGetStackHighWaterMark(mainh) : 0, net ? (unsigned)uxTaskGetStackHighWaterMark(net) : 0,
              nimble ? (unsigned)uxTaskGetStackHighWaterMark(nimble) : 0, a.filter_pm, a.opus_pm, a.vad_pm, a.opus_max_us,
-             (unsigned long)a.overflows, sensors_chip_celsius(), boot_text, climate_part());
+             (unsigned long)a.overflows, a.keep_pm, (unsigned long)a.early_chunks, (unsigned long)a.lost_chunks, sensors_chip_celsius(),
+             boot_text, climate_part());
     return out;
 }
 
@@ -535,16 +550,9 @@ static bool checkin(void)
     return true;
 }
 
-static void fetch_transcripts(void)
+static void apply_transcripts(const cJSON *arr)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/api/transcripts?device=%s", device_id);
-    if (http("GET", path, NULL, NULL, 0, NULL, resp, sizeof resp) != 200) return;
-    cJSON *arr = cJSON_Parse(resp);
-    if (!cJSON_IsArray(arr)) {
-        cJSON_Delete(arr);
-        return;
-    }
+    if (!cJSON_IsArray(arr)) return;
     net_state_t *next = &scratch;
     memset(next, 0, sizeof *next);
     cJSON *it;
@@ -561,7 +569,6 @@ static void fetch_transcripts(void)
         d->marks = cJSON_GetNumberValue(cJSON_GetObjectItem(it, "marks"));
         d->ready = cJSON_IsTrue(cJSON_GetObjectItem(it, "ready"));
     }
-    cJSON_Delete(arr);
     xSemaphoreTake(lock, portMAX_DELAY);
     bool changed = next->count != state.count || memcmp(next->items, state.items, sizeof next->items);
     if (changed) {
@@ -572,7 +579,17 @@ static void fetch_transcripts(void)
     xSemaphoreGive(lock);
 }
 
-static void add_todos(net_state_t *next, cJSON *list, bool done)
+static void fetch_transcripts(void)
+{
+    char path[64];
+    snprintf(path, sizeof path, "/api/transcripts?device=%s", device_id);
+    if (http("GET", path, NULL, NULL, 0, NULL, resp, sizeof resp) != 200) return;
+    cJSON *arr = cJSON_Parse(resp);
+    apply_transcripts(arr);
+    cJSON_Delete(arr);
+}
+
+static void add_todos(net_state_t *next, const cJSON *list, bool done)
 {
     cJSON *it;
     cJSON_ArrayForEach(it, list)
@@ -587,24 +604,16 @@ static void add_todos(net_state_t *next, cJSON *list, bool done)
     }
 }
 
-static void fetch_todos(void)
+static void apply_todos(const cJSON *root)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/api/todos?device=%s", device_id);
-    if (http("GET", path, NULL, NULL, 0, NULL, resp, sizeof resp) != 200) return;
-    cJSON *root = cJSON_Parse(resp);
-    cJSON *open = cJSON_GetObjectItem(root, "open"), *done = cJSON_GetObjectItem(root, "done");
-    if (!cJSON_IsArray(open) || !cJSON_IsArray(done)) {
-        cJSON_Delete(root);
-        return;
-    }
+    const cJSON *open = cJSON_GetObjectItem(root, "open"), *done = cJSON_GetObjectItem(root, "done");
+    if (!cJSON_IsArray(open) || !cJSON_IsArray(done)) return;
     net_state_t *next = &scratch;
     memset(next, 0, sizeof *next);
     next->todos_loaded = true;
     next->open_todos = cJSON_GetArraySize(open);
     add_todos(next, open, false);
     add_todos(next, done, true);
-    cJSON_Delete(root);
     xSemaphoreTake(lock, portMAX_DELAY);
     if (!state.todos_loaded || next->open_todos != state.open_todos || next->todo_count != state.todo_count ||
         memcmp(next->todos, state.todos, sizeof next->todos)) {
@@ -615,6 +624,48 @@ static void fetch_todos(void)
         state.version++;
     }
     xSemaphoreGive(lock);
+}
+
+static void fetch_todos(void)
+{
+    char path[64];
+    snprintf(path, sizeof path, "/api/todos?device=%s", device_id);
+    if (http("GET", path, NULL, NULL, 0, NULL, resp, sizeof resp) != 200) return;
+    cJSON *root = cJSON_Parse(resp);
+    apply_todos(root);
+    cJSON_Delete(root);
+}
+
+void net_lists_frame(const char *json, size_t len)
+{
+    if (len > LISTS_MAX) {
+        ESP_LOGW(TAG, "lists frame of %u bytes ignored", (unsigned)len);
+        return;
+    }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    memcpy(lists_buf, json, len);
+    lists_len = len;
+    lists_pending = true;
+    xSemaphoreGive(lock);
+}
+
+static void apply_lists(void)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    bool had = lists_pending;
+    cJSON *j = had ? cJSON_ParseWithLength(lists_buf, lists_len) : NULL;
+    lists_pending = false;
+    xSemaphoreGive(lock);
+    if (!had) return;
+    if (!j) {
+        ESP_LOGW(TAG, "lists frame is not JSON");
+        return;
+    }
+    apply_transcripts(cJSON_GetObjectItem(j, "transcripts"));
+    apply_todos(cJSON_GetObjectItem(j, "todos"));
+    cJSON_Delete(j);
+    lists_seen = true;
+    ESP_LOGI(TAG, "lists from the phone: %d transcripts, %d to-dos", state.count, state.todo_count);
 }
 
 static bool clock_set(void)
@@ -639,6 +690,29 @@ static void send_todo_change(const todo_change_t *c)
     ESP_LOGI(TAG, "set to-do %s done=%d: %d", c->id, c->done, st);
 }
 
+static bool send_todo_ble(const todo_change_t *c)
+{
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "id", c->id);
+    cJSON_AddBoolToObject(j, "done", c->done);
+    char *body = cJSON_PrintUnformatted(j);
+    bool ok = body && ble_send_json(BLE_TYPE_TODO_SET, body);
+    ESP_LOGI(TAG, "set to-do %s done=%d over BLE: %s", c->id, c->done, ok ? "sent" : "failed");
+    cJSON_free(body);
+    cJSON_Delete(j);
+    return ok;
+}
+
+static void send_todos_ble(void)
+{
+    todo_change_t change;
+    while (xQueueReceive(todo_changes, &change, 0) == pdTRUE) {
+        if (send_todo_ble(&change)) continue;
+        xQueueSendToFront(todo_changes, &change, 0);
+        return;
+    }
+}
+
 static void send_screen(void)
 {
     xSemaphoreTake(lock, portMAX_DELAY);
@@ -653,12 +727,31 @@ static void send_screen(void)
 
 static void spool_fresh(void)
 {
+    xSemaphoreTake(fresh_lock, portMAX_DELAY);
     audio_chunk_t *c;
     while (xQueueReceive(chunks, &c, 0) == pdTRUE) {
         if (spool_put(c)) ota_note_audio();
         free(c->data);
         free(c);
     }
+    xSemaphoreGive(fresh_lock);
+}
+
+static void park_if_wanted(void)
+{
+    if (!park_wanted) return;
+    spool_fresh();
+    ESP_LOGI(TAG, "parked, outbox on flash");
+    xSemaphoreGive(parked);
+    for (;;) vTaskDelay(portMAX_DELAY);
+}
+
+static void restart_now(void)
+{
+    ESP_LOGI(TAG, "restart after the update");
+    audio_stop(3000);
+    spool_fresh();
+    esp_restart();
 }
 
 static void mark_changed(void)
@@ -680,6 +773,7 @@ static bool send_ble(void)
         last_ble_checkin = now;
     }
     send_weather_change(true);
+    send_todos_ble();
     uint32_t id;
     audio_chunk_t *next = spool_oldest(&id);
     if (!next) return false;
@@ -749,6 +843,7 @@ static volatile bool github_wanted, hub_check_wanted;
 
 void net_check_updates(void)
 {
+    net_need_wifi();
     github_wanted = hub_check_wanted = true;
     last_poll = 0;
     xSemaphoreTake(lock, portMAX_DELAY);
@@ -910,6 +1005,8 @@ static void receive_from_phone(void)
     int64_t last = esp_log_timestamp();
     int shown = -1;
     while (state.update_phase == UPDATE_RECEIVE) {
+        ble_tick(true);
+
         if (cancel_wanted || !ble_ready() || esp_log_timestamp() - last > OTA_IDLE_MS) {
             bool cancelled = cancel_wanted;
             ESP_LOGW(TAG, "phone update stopped: %s", cancelled ? "cancelled" : ble_ready() ? "no data" : "link lost");
@@ -989,11 +1086,11 @@ static void sync_wifi(bool testing)
 {
     todo_change_t change;
     bool changed = false;
-    while (clock_set() && xQueueReceive(todo_changes, &change, 0) == pdTRUE) {
+    while (!ble_linked && clock_set() && xQueueReceive(todo_changes, &change, 0) == pdTRUE) {
         send_todo_change(&change);
         changed = true;
     }
-    if (changed) fetch_todos();
+    if (changed && !lists_seen) fetch_todos();
     send_screen();
     int64_t now = esp_log_timestamp();
     if (now - last_find > HUB_RECHECK_MS) {
@@ -1009,8 +1106,10 @@ static void sync_wifi(bool testing)
             hub_check_wanted = false;
             check_firmware();
         }
-        fetch_transcripts();
-        fetch_todos();
+        if (!lists_seen) {
+            fetch_transcripts();
+            fetch_todos();
+        }
         if (!ble_linked) {
             fetch_hub_json("weather", HUB_FRAME_WEATHER);
             fetch_hub_json("agenda", HUB_FRAME_AGENDA);
@@ -1019,17 +1118,68 @@ static void sync_wifi(bool testing)
     send_weather_change(false);
 }
 
+static void set_phone(bool phone)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (state.phone != phone) {
+        state.phone = phone;
+        state.version++;
+    }
+    xSemaphoreGive(lock);
+}
+
+static void wifi_policy(void)
+{
+    int64_t now = esp_log_timestamp();
+    bool linked = ble_ready();
+    if (linked && !link_since) link_since = now;
+    if (!linked) {
+        link_since = 0;
+        lists_seen = false;
+        if (!link_lost_at) link_lost_at = now;
+    } else {
+        link_lost_at = 0;
+    }
+    set_phone(linked && lists_seen);
+    bool needed = now < wifi_need_until;
+    if (!wifi_off && !needed && linked && lists_seen && now - link_since >= WIFI_OFF_AFTER_MS) {
+        ESP_LOGI(TAG, "phone linked for %lld s: Wi-Fi off", (now - link_since) / 1000);
+        wifi_off = true;
+        wifi_stop();
+        xSemaphoreTake(lock, portMAX_DELAY);
+        state.hub = false;
+        state.version++;
+        xSemaphoreGive(lock);
+    } else if (wifi_off && (needed || (!linked && now - link_lost_at > WIFI_BACK_AFTER_MS))) {
+        ESP_LOGI(TAG, "Wi-Fi on: %s", needed ? "needed" : "phone link lost");
+        wifi_off = false;
+        last_find = 0;
+        wifi_resume();
+        mark_changed();
+    }
+}
+
+void net_need_wifi(void)
+{
+    wifi_need_until = esp_log_timestamp() + WIFI_NEED_MS;
+}
+
 static void net_task(void *arg)
 {
     for (;;) {
-        if (restart_at && esp_log_timestamp() > restart_at) esp_restart();
+        park_if_wanted();
+        if (restart_at && esp_log_timestamp() > restart_at) restart_now();
         if (ble_ready()) phone_frames();
+        ble_tick(updating());
         if (updating()) {
+            spool_fresh();
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
         ota_tick();
         spool_fresh();
+        apply_lists();
+        wifi_policy();
         bool ble = ble_ready() && esp_log_timestamp() >= ble_pause_until;
         if (!ble) ble_linked = false;
         bool busy = ble && send_ble();
@@ -1054,7 +1204,10 @@ static void on_time_sync(struct timeval *tv) { clock_synced(); }
 
 void net_init(void)
 {
+    cJSON_InitHooks(&(cJSON_Hooks){.malloc_fn = psram_malloc, .free_fn = free});
     lock = xSemaphoreCreateMutex();
+    fresh_lock = xSemaphoreCreateMutex();
+    parked = xSemaphoreCreateBinary();
     chunks = xQueueCreate(8, sizeof(audio_chunk_t *));
     ota_items = xQueueCreateStatic(OTA_SLOTS, sizeof(ota_item_t), ota_item_store, &ota_item_queue);
     spool_init();
@@ -1082,6 +1235,7 @@ void net_init(void)
 void net_enqueue(audio_chunk_t *chunk)
 {
     if (xQueueSend(chunks, &chunk, 0) != pdTRUE) {
+        audio_count_lost();
         ESP_LOGW(TAG, "upload queue full, chunk dropped");
         free(chunk->data);
         free(chunk);
@@ -1135,7 +1289,9 @@ void net_post_screen(const uint8_t *panel_fb, size_t len)
 
 void net_test_hub(void)
 {
+    net_need_wifi();
     test_now = true;
+
 }
 
 void net_forget_wifi(const char *ssid)
@@ -1148,5 +1304,15 @@ void net_forget_wifi(const char *ssid)
 
 void net_install_update(void)
 {
+    net_need_wifi();
     install_now = true;
+}
+
+bool net_park(uint32_t timeout_ms)
+{
+    park_wanted = true;
+    bool ok = xSemaphoreTake(parked, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    spool_fresh();
+    ESP_LOGI(TAG, "park: %s", ok ? "net task stopped" : "net task busy, outbox written by the caller");
+    return ok;
 }

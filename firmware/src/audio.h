@@ -35,11 +35,13 @@ typedef void (*audio_chunk_cb)(audio_chunk_t *chunk);
 
 void audio_init(audio_chunk_cb on_chunk);
 void audio_set_recording(bool recording);
+bool audio_stop(uint32_t timeout_ms);
+void audio_count_lost(void);
 void audio_set_bitrate(int bits_per_s);
 
 typedef struct {
-    int filter_pm, opus_pm, vad_pm, opus_max_us;
-    uint32_t overflows;
+    int filter_pm, opus_pm, vad_pm, opus_max_us, keep_pm;
+    uint32_t overflows, early_chunks, lost_chunks;
 } audio_load_t;
 
 void audio_get_load(audio_load_t *out);
