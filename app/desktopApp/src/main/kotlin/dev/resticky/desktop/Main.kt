@@ -81,6 +81,7 @@ private const val SHERPA_THREADS = 4
 private const val RATE = 16_000
 private const val VAD_WINDOW = 512
 private const val VAD_MODEL = "silero_vad.onnx"
+private const val VAD_OFF = "off"
 private const val SEGMENTATION_MODEL = "pyannote-segmentation-3-0.onnx"
 private const val EMBEDDING_MODEL = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
 
@@ -131,6 +132,7 @@ private class SpeechDetector(private val model: String) {
 
     @Synchronized
     fun regions(pcm: FloatArray): List<Piece> {
+        if (model == VAD_OFF) return listOf(Piece(0, pcm.size))
         vad.reset()
         val parts = mutableListOf<Piece>()
         fun drain() {

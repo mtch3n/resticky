@@ -1,7 +1,16 @@
-#!/bin/sh
-out=""
-while [ $# -gt 0 ]; do
-  [ "$1" = "-of" ] && out="$2"
-  shift
-done
-printf '%s' '{"transcription":[{"offsets":{"from":0,"to":900},"text":" we agreed to ship the billing report on Friday and Sam checks the numbers","tokens":[{"text":"[_BEG_]","offsets":{"from":0,"to":0}},{"text":" we","offsets":{"from":0,"to":50}},{"text":" agreed","offsets":{"from":60,"to":110}},{"text":" to","offsets":{"from":120,"to":170}},{"text":" ship","offsets":{"from":180,"to":230}},{"text":" the","offsets":{"from":240,"to":290}},{"text":" billing","offsets":{"from":300,"to":350}},{"text":" report","offsets":{"from":360,"to":410}},{"text":" on","offsets":{"from":420,"to":470}},{"text":" Friday","offsets":{"from":480,"to":530}},{"text":" and","offsets":{"from":540,"to":590}},{"text":" Sam","offsets":{"from":600,"to":650}},{"text":" checks","offsets":{"from":660,"to":710}},{"text":" the","offsets":{"from":720,"to":770}},{"text":" numbers","offsets":{"from":780,"to":830}}]},{"offsets":{"from":900,"to":1000},"text":" [BLANK_AUDIO]","tokens":[]}]}' > "$out.json"
+#!/usr/bin/env python3
+import json, os, sys
+
+WORDS = "we agreed to ship the billing report on Friday and Sam checks the numbers".split()
+args = sys.argv[1:]
+for i, a in enumerate(args):
+    if a != "-f":
+        continue
+    path = args[i + 1]
+    end = (os.path.getsize(path) - 44) // 32
+    start = max(0, end - 1000)
+    tokens = [{"text": "[_BEG_]", "offsets": {"from": start, "to": start}}]
+    tokens += [{"text": " " + w, "offsets": {"from": start + k * 60, "to": start + k * 60 + 50}} for k, w in enumerate(WORDS)]
+    seg = {"offsets": {"from": start, "to": end}, "text": " " + " ".join(WORDS), "tokens": tokens}
+    with open(path + ".json", "w") as f:
+        json.dump({"transcription": [seg]}, f)
