@@ -124,9 +124,9 @@ private fun seconds(s: Double) = if (s < 10) "%.1f s".format(s) else "%.0f s".fo
 fun LazyListScope.gap() = item { Gap(14.dp) }
 
 @Composable
-fun Page(title: String, onBack: (() -> Unit)? = null, content: LazyListScope.() -> Unit) {
+fun Page(title: String, onBack: (() -> Unit)? = null, action: (@Composable () -> Unit)? = null, content: LazyListScope.() -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        TopBar(title, onBack)
+        TopBar(title, onBack, action)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = MAIN, content = content)
     }
 }
@@ -163,17 +163,20 @@ private fun Tile(icon: Int, name: String, status: String, modifier: Modifier, on
 class HubTile(val icon: Int, val name: String, val status: String, val open: () -> Unit)
 
 @Composable
-fun HubScreen(state: HubState, ble: BleState, tiles: List<HubTile>, sticky: () -> Unit, choose: () -> Unit) = Page("Hub") {
+fun HubScreen(state: HubState, ble: BleState, tiles: List<HubTile>, settings: () -> Unit, choose: () -> Unit) = Page(
+    "Hub",
+    action = { Box(Modifier.clip(CircleShape).clickable(onClick = settings).padding(8.dp)) { Glyph(R.drawable.ic_settings, 24.dp) } },
+) {
     item {
         val c = state.sticky
-        Column(Modifier.fillMaxWidth().clip(CardShape).background(Ink.black).clickable(onClick = sticky).padding(horizontal = 18.dp, vertical = 16.dp)) {
+        Column(Modifier.fillMaxWidth().clip(CardShape).background(Ink.black).clickable(onClick = choose).padding(horizontal = 18.dp, vertical = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Glyph(R.drawable.ic_device_mobile, 26.dp, Ink.white)
                 Column(Modifier.weight(1f)) {
                     Text(stickyName(state, ble), style = Type.heading.copy(color = Ink.white), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(linkLabel(state, ble), style = Type.small.copy(color = Ink.mutedDark), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Box(Modifier.clip(CircleShape).clickable(onClick = choose).padding(6.dp)) { Glyph(R.drawable.ic_chevron_down, 22.dp, Ink.white) }
+                Glyph(R.drawable.ic_chevron_down, 22.dp, Ink.white)
             }
             if (c != null || state.todayMs > 0) {
                 Gap(14.dp)
@@ -421,11 +424,12 @@ fun PhotosScreen(
     play: (Session, Photo) -> Unit,
     showOnSticky: (File) -> Unit,
     attach: (Unlinked, Session) -> Unit,
+    back: () -> Unit,
 ) {
     var choosing by remember { mutableStateOf<Unlinked?>(null) }
     var viewing by remember { mutableStateOf<Pair<Session, Photo>?>(null) }
     val withPhotos = sessions.map { it.session }.filter { it.photos.isNotEmpty() }
-    Page("Photos") {
+    Page("Photos", back) {
         if (withPhotos.isEmpty() && photos.isEmpty()) item { CardList { ListRow("No photos yet", "Tap Snap during a meeting", first = true) } }
         withPhotos.forEachIndexed { k, s ->
             if (k > 0) gap()

@@ -84,6 +84,7 @@ sealed interface Detail {
     data class PlaceEdit(val place: dev.resticky.NamedPlace?) : Detail
     data object Clock : Detail
     data object HomeScreen : Detail
+    data object Photos : Detail
     data object Night : Detail
     data object Settings : Detail
     data object Updates : Detail
@@ -176,6 +177,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                     SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
                 }
                 Detail.HomeScreen -> HomeScreenPicker(home, back, model::setHome)
+                Detail.Photos -> PhotosScreen(unlinked, sessions, model::photoFile, { s, p -> stack.add(Detail.Transcript(s.device, s.id, p.offsetMs)) }, model::showOnSticky, model::attach, back)
                 Detail.Night -> NightScreen(night, back, model::setNight)
                 Detail.Clock -> {
                     ClockScreen(face, hourFormat, back, model::setClockFace, model::setHourFormat)
@@ -241,17 +243,17 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                     Tab.Hub -> {
                         LaunchedEffect(Unit) { model.loadCalendars() }
                         val tiles = listOf(
-                            HubTile(R.drawable.ic_device_mobile, "Sticky", "Wi-Fi, clock, sounds") { stack.add(Detail.Sticky) },
+                            HubTile(R.drawable.ic_device_mobile, "Sticky", "All Sticky settings") { stack.add(Detail.Sticky) },
                             HubTile(R.drawable.ic_cloud, "Weather", weatherLabel) { stack.add(Detail.Weather) },
                             HubTile(R.drawable.ic_map_pin, "Places", placesLabel) { stack.add(Detail.Places) },
                             HubTile(R.drawable.ic_calendar, "Calendars", calendarsLabel) { stack.add(Detail.Calendars) },
                             HubTile(R.drawable.ic_heart_rate_monitor, "Health", healthStatus(hub.sticky)) { stack.add(Detail.Health) },
+                            HubTile(R.drawable.ic_photo, "Photos", "Meeting photos") { stack.add(Detail.Photos) },
                             HubTile(R.drawable.ic_photo, "Photo to Sticky", "Pick an image") {
                                 pickForSticky.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             },
-                            HubTile(R.drawable.ic_settings, "App settings", "Models, transcribe, hubs") { stack.add(Detail.Settings) },
                         )
-                        HubScreen(hub, ble, tiles, { stack.add(Detail.Sticky) }) { choosing = true }
+                        HubScreen(hub, ble, tiles, { stack.add(Detail.Settings) }) { choosing = true }
                         if (choosing) StickySheet(hub, ble, { choosing = false }) {
                             choosing = false
                             stack.add(Detail.Sticky)
@@ -259,7 +261,6 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                         }
                     }
                     Tab.Transcripts -> TranscriptsScreen(sessions) { stack.add(Detail.Transcript(it.device, it.id)) }
-                    Tab.Photos -> PhotosScreen(unlinked, sessions, model::photoFile, { s, p -> stack.add(Detail.Transcript(s.device, s.id, p.offsetMs)) }, model::showOnSticky, model::attach)
                     Tab.Todo -> {
                         val todos by model.todos.collectAsState()
                         TodoScreen(todos) { device, t, done ->

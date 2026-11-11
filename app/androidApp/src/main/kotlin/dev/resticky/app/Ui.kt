@@ -260,7 +260,6 @@ enum class Tab(val label: String, val icon: Int) {
     Hub("Hub", R.drawable.ic_home),
     Transcripts("Transcripts", R.drawable.ic_file_text),
     Todo("To-do", R.drawable.ic_list_check),
-    Photos("Photos", R.drawable.ic_photo),
 }
 
 @Composable
