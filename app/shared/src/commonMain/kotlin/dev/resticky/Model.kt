@@ -94,6 +94,9 @@ class Session(
     val splits: MutableMap<String, Recap> = mutableMapOf(),
     @SerialName("chunk_start") val chunkStart: MutableMap<String, Long> = mutableMapOf(),
     @SerialName("speakers_failed") var speakersFailed: Boolean = false,
+    val voices: MutableMap<String, Voiceprint> = mutableMapOf(),
+    val people: MutableMap<String, String> = mutableMapOf(),
+    val suggested: MutableMap<String, String> = mutableMapOf(),
 ) {
     val pending: Boolean get() = chunks.values.any { it == PENDING }
 

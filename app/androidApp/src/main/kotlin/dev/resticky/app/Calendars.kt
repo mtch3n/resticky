@@ -67,4 +67,32 @@ class Calendars(private val context: Context) {
         }
         return buildAgenda(events, true, now, tz)
     }
+
+    fun attendees(from: Instant, to: Instant): List<String> {
+        val ids = choice.value.selected
+        if (!allowed || ids.isEmpty()) return emptyList()
+        val uri = CalendarContract.Instances.CONTENT_URI.buildUpon().also {
+            ContentUris.appendId(it, from.toEpochMilliseconds())
+            ContentUris.appendId(it, to.toEpochMilliseconds())
+        }.build()
+        val events = mutableSetOf<Long>()
+        val cols = arrayOf(CalendarContract.Instances.EVENT_ID, CalendarContract.Instances.ALL_DAY)
+        context.contentResolver.query(uri, cols, "${CalendarContract.Instances.CALENDAR_ID} IN (${ids.joinToString(",")})", null, null)?.use { c ->
+            while (c.moveToNext()) if (c.getInt(1) == 0) events += c.getLong(0)
+        }
+        if (events.isEmpty()) return emptyList()
+        val own = list().map { it.account.lowercase() }.toSet()
+        val names = mutableListOf<String>()
+        val people = arrayOf(CalendarContract.Attendees.ATTENDEE_NAME, CalendarContract.Attendees.ATTENDEE_EMAIL)
+        val where = "${CalendarContract.Attendees.EVENT_ID} IN (${events.joinToString(",")})"
+        context.contentResolver.query(CalendarContract.Attendees.CONTENT_URI, people, where, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val email = c.getString(1).orEmpty()
+                if (email.lowercase() in own) continue
+                val name = c.getString(0)?.trim().orEmpty().ifEmpty { email.substringBefore('@') }
+                if (name.isNotEmpty()) names += name
+            }
+        }
+        return names.distinct()
+    }
 }

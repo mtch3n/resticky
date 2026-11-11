@@ -81,6 +81,9 @@ sealed interface Detail {
     data object Wifi : Detail
     data object Health : Detail
     data object Places : Detail
+    data object People : Detail
+    data object Voice : Detail
+    data class Person(val id: String) : Detail
     data class PlaceEdit(val place: dev.resticky.NamedPlace?) : Detail
     data object Clock : Detail
     data object HomeScreen : Detail
@@ -131,6 +134,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val calendarList by model.calendars.collectAsState()
     val calendarsAllowed by model.calendarsAllowed.collectAsState()
     val placeList by model.places.collectAsState()
+    val people by model.people.collectAsState()
     val face by model.clockFace.collectAsState()
     val hourFormat by model.hourFormat.collectAsState()
     val weatherStyle by model.weatherStyle.collectAsState()
@@ -149,7 +153,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 is Detail.Transcript -> {
                     val view = conversations.find { it.device == d.device && it.key == d.key }
                     val prefs by model.player.collectAsState()
-                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }) { session, i, done ->
+                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, people, { view?.let { model.attendees(it.conversation) }.orEmpty() }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }) { session, i, done ->
                         model.setTodo(d.device, session, i, done)
                     }
                 }
@@ -175,7 +179,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 }
                 Detail.Settings -> {
                     val transcribe by model.transcribe.collectAsState()
-                    SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
+                    SettingsScreen(hub, transcribe, speech, placesLabel, calendarsLabel, peopleLabel(people), updatesLabel, back, model::setHub, model::selectTranscribe) { stack.add(it) }
                 }
                 Detail.HomeScreen -> HomeScreenPicker(home, back, model::setHome)
                 Detail.Photos -> PhotosScreen(unlinked, conversations, model::photoFile, { v, s, p -> stack.add(Detail.Transcript(v.device, v.key, Spot(s.id, p.offsetMs))) }, model::showOnSticky, model::attach, back)
@@ -206,6 +210,20 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                         { precise.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)) },
                         { background.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION) },
                     ) { stack.add(Detail.PlaceEdit(it)) }
+                }
+                Detail.People -> PeopleScreen(people, back, { stack.add(Detail.Voice) }, { stack.add(Detail.Person(it.id)) }, model::deletePerson)
+                is Detail.Person -> PersonScreen(people.find { it.id == d.id }, back, model::renamePerson, model::deletePerson)
+                Detail.Voice -> {
+                    val enroll by model.enroll.collectAsState()
+                    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) model.recordVoice() }
+                    VoiceScreen(
+                        people.find { it.isMe }, enroll, back,
+                        {
+                            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) model.recordVoice()
+                            else permission.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        model::stopVoice, { stack.add(Detail.Person(it.id)) }, model::deletePerson,
+                    )
                 }
                 is Detail.PlaceEdit -> {
                     val here by model.here.collectAsState()

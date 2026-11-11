@@ -19,6 +19,7 @@ import dev.resticky.speechMs
 import dev.resticky.speechWindows
 import dev.resticky.CLUSTER_THRESHOLD
 import dev.resticky.Diarizer
+import dev.resticky.People
 import dev.resticky.MIN_DURATION_OFF
 import dev.resticky.MIN_DURATION_ON
 import dev.resticky.Turn
@@ -312,7 +313,8 @@ fun main(args: Array<String>) {
     val segmentation = flags.string("segmentation", "$home/.local/share/resticky/models/$SEGMENTATION_MODEL")
     val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
     val vad = flags.string("vad", "$home/.local/share/resticky/models/$VAD_MODEL")
-    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, log = ::log)
+    val people = People(IoPath(File(data).resolveSibling("people.json").path))
+    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, people = people::all, log = ::log)
     val city = flags.string("city", "").ifBlank { null }
     val weatherInterval = flags.string("weather-interval", "$WEATHER_INTERVAL").toInt()
     require(weatherInterval in WEATHER_INTERVALS) { "-weather-interval must be one of ${WEATHER_INTERVALS.joinToString("|")}" }

@@ -22,6 +22,7 @@ import dev.resticky.Hub
 import dev.resticky.Releases
 import dev.resticky.PENDING
 import dev.resticky.placeTag
+import dev.resticky.People
 import dev.resticky.Pipeline
 import dev.resticky.Store
 import dev.resticky.TOKEN_PATTERN
@@ -46,6 +47,7 @@ fun log(message: String) {
 
 class HubApp : Application() {
     lateinit var store: Store
+    lateinit var people: People
     lateinit var engines: Engines
     lateinit var pipeline: Pipeline
     lateinit var hub: Hub
@@ -143,8 +145,9 @@ class HubApp : Application() {
     override fun onCreate() {
         super.onCreate()
         store = Store(Path(File(filesDir, "data").path))
+        people = People(Path(File(filesDir, "people.json").path))
         engines = Engines(this) { onScreen }
-        pipeline = Pipeline(store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId, log = ::log)
+        pipeline = Pipeline(store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId, people = people::all, log = ::log)
         locator = Locator(this)
         places = PlaceStore(this)
         photos = PhotoDesk(this, store)

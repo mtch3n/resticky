@@ -35,7 +35,7 @@ class SpeakersTest {
             listOf(Turn(5000, 9000, 7), Turn(0, 4000, 3), Turn(9000, 12_000, 5), Turn(12_000, 13_000, 9)),
             listOf(v(3, 1f, 0f, 0f), v(5, 0.99f, 0.05f, 0f), v(7, 0f, 1f, 0f)),
         )
-        val turns = mergeSpeakers(d)
+        val turns = mergeSpeakers(d).turns
         assertEquals(listOf(0, 1, 0, 2), turns.map { it.speaker })
         assertEquals(listOf(0L, 5000L, 9000L, 12_000L), turns.map { it.startMs })
     }
@@ -43,7 +43,7 @@ class SpeakersTest {
     @Test
     fun voicesBelowTheThresholdStaySeparate() {
         val d = Diarization(listOf(Turn(0, 1000, 0), Turn(1000, 2000, 1)), listOf(v(0, 1f, 0f), v(1, 0.5f, 0.87f)))
-        assertEquals(listOf(0, 1), mergeSpeakers(d).map { it.speaker })
+        assertEquals(listOf(0, 1), mergeSpeakers(d).turns.map { it.speaker })
     }
 
     @Test
@@ -52,7 +52,7 @@ class SpeakersTest {
             listOf(Turn(0, 60_000, 0), Turn(60_000, 120_000, 1), Turn(120_000, 125_000, 2), Turn(125_000, 126_000, 3)),
             listOf(v(0, 1f, 0f), v(1, 0f, 1f), v(2, 0.3f, 0.95f)),
         )
-        assertEquals(listOf(0, 1, 1, 1), mergeSpeakers(d).map { it.speaker })
+        assertEquals(listOf(0, 1, 1, 1), mergeSpeakers(d).turns.map { it.speaker })
     }
 
     @Test
@@ -79,7 +79,7 @@ class SpeakersTest {
         val turns = diarizeSession(frames, {
             val w = call++
             Diarization(listOf(Turn(0, 30, 0), Turn(30, 40, 1)), listOf(v(0, 1f, 0f), v(1, 0f, if (w == 0) 1f else -1f)))
-        }, 40)
+        }, 40).turns
         assertEquals(listOf(0L to 0, 30L to 1, 40L to 0, 70L to 2), turns.map { it.startMs to it.speaker })
     }
 
@@ -157,7 +157,7 @@ class SpeakersTest {
             listOf(Turn(0, 60_000, 0), Turn(60_000, 120_000, 1), Turn(120_000, 126_000, 2)),
             listOf(v(0, 1f, 0f, 0f), v(1, 0f, 1f, 0f), v(2, 0.3f, 0.2f, 0.93f)),
         )
-        assertEquals(listOf(0, 1, 2), mergeSpeakers(d).map { it.speaker })
+        assertEquals(listOf(0, 1, 2), mergeSpeakers(d).turns.map { it.speaker })
     }
 
     @Test
@@ -166,7 +166,7 @@ class SpeakersTest {
             listOf(Turn(0, 60_000, 0), Turn(60_000, 64_000, 2), Turn(64_000, 120_000, 1), Turn(120_000, 127_000, 3)),
             listOf(v(0, 1f, 0f), v(1, 0f, 1f)),
         )
-        assertEquals(listOf(0, 0, 1, 2), mergeSpeakers(d).map { it.speaker })
+        assertEquals(listOf(0, 0, 1, 2), mergeSpeakers(d).turns.map { it.speaker })
     }
 
     @Test
@@ -175,17 +175,17 @@ class SpeakersTest {
             listOf(Turn(0, 10_000, 0), Turn(8_000, 20_000, 1)),
             listOf(v(0, 1f, 0f), v(1, 0.99f, 0.05f)),
         )
-        assertEquals(listOf(0, 1), mergeSpeakers(close).map { it.speaker })
+        assertEquals(listOf(0, 1), mergeSpeakers(close).turns.map { it.speaker })
         val brief = Diarization(
             listOf(Turn(0, 10_000, 0), Turn(9_500, 20_000, 1)),
             listOf(v(0, 1f, 0f), v(1, 0.99f, 0.05f)),
         )
-        assertEquals(listOf(0, 0), mergeSpeakers(brief).map { it.speaker })
+        assertEquals(listOf(0, 0), mergeSpeakers(brief).turns.map { it.speaker })
         val minor = Diarization(
             listOf(Turn(0, 60_000, 0), Turn(30_000, 33_000, 1)),
             listOf(v(0, 1f, 0f)),
         )
-        assertEquals(listOf(0, 1), mergeSpeakers(minor).map { it.speaker })
+        assertEquals(listOf(0, 1), mergeSpeakers(minor).turns.map { it.speaker })
     }
 
     @Test

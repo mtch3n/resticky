@@ -5,7 +5,14 @@ import android.content.IntentSender
 import android.net.ConnectivityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.annotation.SuppressLint
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import dev.resticky.Checkin
+import dev.resticky.Person
+import dev.resticky.nameSpeaker
+import dev.resticky.wallAt
 import kotlinx.coroutines.withContext
 import java.io.File
 import dev.resticky.NamedPlace
@@ -211,7 +218,67 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     fun attach(photo: Unlinked, s: Session) = viewModelScope.launch { app.photos.attach(photo, s) }
 
     fun renameSpeaker(device: String, id: String, speaker: Int, name: String) = viewModelScope.launch {
-        app.store.update(device, id) { it.renameSpeaker(speaker, name) }
+        nameSpeaker(app.store, app.people, device, id, speaker, name)
+    }
+
+    val people: StateFlow<List<Person>> = app.people.list
+
+    fun renamePerson(id: String, name: String) = viewModelScope.launch { dev.resticky.renamePerson(app.store, app.people, id, name) }
+
+    fun deletePerson(id: String) = viewModelScope.launch { app.people.delete(id) }
+
+    suspend fun attendees(c: Conversation): List<String> = withContext(Dispatchers.IO) {
+        val end = c.parts.last().let { it.session.wallAt(it.toMs) }
+        runCatching { app.calendars.attendees(c.start, end) }.getOrElse { emptyList() }
+    }
+
+    val enroll = MutableStateFlow<Enroll>(Enroll.Idle)
+    @Volatile private var stopEnroll = false
+
+    @SuppressLint("MissingPermission")
+    fun recordVoice() {
+        if (enroll.value is Enroll.Recording || enroll.value == Enroll.Saving) return
+        stopEnroll = false
+        enroll.value = Enroll.Recording(0)
+        viewModelScope.launch(Dispatchers.IO) {
+            val rate = 16_000
+            val pcm = FloatArray((rate * ENROLL_MS / 1000).toInt())
+            var n = 0
+            val read = runCatching {
+                val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT)
+                val rec = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_FLOAT, maxOf(min, rate * 4))
+                try {
+                    rec.startRecording()
+                    while (n < pcm.size && !stopEnroll) {
+                        val got = rec.read(pcm, n, minOf(pcm.size - n, rate / 10), AudioRecord.READ_BLOCKING)
+                        if (got <= 0) break
+                        n += got
+                        enroll.value = Enroll.Recording(n * 1000L / rate)
+                    }
+                    rec.stop()
+                } finally {
+                    rec.release()
+                }
+            }
+            if (read.isFailure) {
+                enroll.value = Enroll.Failed("The microphone did not start")
+                return@launch
+            }
+            enroll.value = Enroll.Saving
+            val voice = runCatching { engines.voiceprint(pcm.copyOf(n)) }
+            enroll.value = when {
+                voice.isFailure -> Enroll.Failed(voice.exceptionOrNull()?.message ?: "Could not save")
+                voice.getOrNull() == null -> Enroll.Failed("Too little speech. Record again.")
+                else -> {
+                    app.people.setMe(voice.getOrNull()!!)
+                    Enroll.Idle
+                }
+            }
+        }
+    }
+
+    fun stopVoice() {
+        stopEnroll = true
     }
 
     fun setHub(on: Boolean) {

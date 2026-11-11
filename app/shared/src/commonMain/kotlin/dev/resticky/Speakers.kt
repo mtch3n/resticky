@@ -1,5 +1,13 @@
 package dev.resticky
 
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlin.io.encoding.Base64
 import kotlin.math.sqrt
 
 const val SPEAKER_MERGE = 0.6
@@ -17,6 +25,27 @@ class Voice(val speaker: Int, val embedding: FloatArray, val weightMs: Long)
 
 class Diarization(val turns: List<Turn>, val voices: List<Voice>)
 
+object FloatsBase64 : KSerializer<FloatArray> {
+    override val descriptor = PrimitiveSerialDescriptor("FloatsBase64", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: FloatArray) {
+        val bytes = ByteArray(value.size * 4)
+        value.forEachIndexed { i, f ->
+            val b = f.toRawBits()
+            for (k in 0 until 4) bytes[i * 4 + k] = (b shr (8 * k)).toByte()
+        }
+        encoder.encodeString(Base64.encode(bytes))
+    }
+
+    override fun deserialize(decoder: Decoder): FloatArray {
+        val bytes = Base64.decode(decoder.decodeString())
+        return FloatArray(bytes.size / 4) { i -> Float.fromBits((0 until 4).fold(0) { acc, k -> acc or ((bytes[i * 4 + k].toInt() and 0xff) shl (8 * k)) }) }
+    }
+}
+
+@Serializable
+class Voiceprint(@Serializable(FloatsBase64::class) val embedding: FloatArray, @SerialName("talk_ms") val talkMs: Long)
+
 fun interface Diarizer {
     suspend fun diarize(frames: ByteArray): Diarization
 }
@@ -24,12 +53,12 @@ fun interface Diarizer {
 fun speakerLetter(speaker: Int): String =
     "Speaker " + if (speaker < 26) "${'A' + speaker}" else "${speaker + 1}"
 
-private fun FloatArray.unit(): FloatArray {
+internal fun FloatArray.unit(): FloatArray {
     val n = sqrt(sumOf { it.toDouble() * it }).toFloat()
     return if (n == 0f) this else FloatArray(size) { this[it] / n }
 }
 
-private fun cosine(a: FloatArray, b: FloatArray): Double = a.indices.sumOf { a[it].toDouble() * b[it] }
+internal fun cosine(a: FloatArray, b: FloatArray): Double = a.indices.sumOf { a[it].toDouble() * b[it] }
 
 fun voiceOf(speaker: Int, parts: List<Pair<FloatArray, Long>>): Voice? {
     if (parts.isEmpty()) return null
@@ -60,7 +89,7 @@ private fun overlaps(turns: List<Turn>): MutableMap<Int, MutableMap<Int, Long>> 
     return out
 }
 
-fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn> {
+fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): Diarization {
     val voices = d.voices.associate { it.speaker to (it.embedding.unit() to it.weightMs) }.toMutableMap()
     val together = overlaps(d.turns)
     fun overlap(a: Int, b: Int): Long = together[a]?.get(b) ?: 0
@@ -91,7 +120,8 @@ fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn>
         }
         together[a]?.remove(b)
     }
-    val sorted = d.turns.sortedBy { it.startMs }.map { Turn(it.startMs, it.endMs, root(it.speaker)) }
+    val byStart = d.turns.sortedBy { it.startMs }
+    val sorted = byStart.map { Turn(it.startMs, it.endMs, root(it.speaker)) }
     val talk = sorted.groupBy { it.speaker }.mapValues { (_, l) -> l.sumOf { it.endMs - it.startMs } }
     val total = talk.values.sum()
     val major = talk.filter { (_, ms) -> ms >= SPEAKER_MIN_MS && ms >= total * SPEAKER_MIN_SHARE }.keys
@@ -110,7 +140,17 @@ fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): List<Turn>
         Turn(t.startMs, t.endMs, into ?: t.speaker)
     }
     val order = mutableMapOf<Int, Int>()
-    return absorbed.map { t -> Turn(t.startMs, t.endMs, order.getOrPut(t.speaker) { order.size }) }
+    val turns = absorbed.map { t -> Turn(t.startMs, t.endMs, order.getOrPut(t.speaker) { order.size }) }
+    val went = mutableMapOf<Int, MutableMap<Int, Long>>()
+    byStart.forEachIndexed { i, t ->
+        val m = went.getOrPut(t.speaker) { mutableMapOf() }
+        m[turns[i].speaker] = (m[turns[i].speaker] ?: 0) + (t.endMs - t.startMs)
+    }
+    val finalVoices = d.voices.mapNotNull { v -> went[v.speaker]?.maxByOrNull { it.value }?.let { it.key to v } }
+        .groupBy({ it.first }, { it.second.embedding to it.second.weightMs })
+        .mapNotNull { (speaker, parts) -> voiceOf(speaker, parts) }
+        .sortedBy { it.speaker }
+    return Diarization(turns, finalVoices)
 }
 
 fun speakerAt(startMs: Long, endMs: Long, turns: List<Turn>, last: Int): Int {
@@ -152,7 +192,7 @@ fun frameWindows(frames: ByteArray, windowMs: Long): List<Pair<Long, ByteArray>>
     return out
 }
 
-suspend fun diarizeSession(frames: ByteArray, diarizer: Diarizer, windowMs: Long): List<Turn> {
+suspend fun diarizeSession(frames: ByteArray, diarizer: Diarizer, windowMs: Long): Diarization {
     val turns = mutableListOf<Turn>()
     val voices = mutableListOf<Voice>()
     frameWindows(frames, windowMs).forEachIndexed { w, (offset, part) ->
@@ -176,4 +216,27 @@ fun diarization(pcm: FloatArray, rate: Int, turns: List<Turn>, embed: (FloatArra
         })
     }
     return Diarization(turns, voices)
+}
+
+const val VOICE_WINDOW_MS = 3_000L
+const val VOICED_SHARE = 0.1
+private const val LEVEL_MS = 30L
+
+fun voicedWindows(pcm: FloatArray, rate: Int): List<FloatArray> {
+    val step = (rate * LEVEL_MS / 1000).toInt()
+    val frames = (0 until pcm.size / step).map { f ->
+        val from = f * step
+        from to sqrt((from until from + step).sumOf { pcm[it].toDouble() * pcm[it] } / step)
+    }
+    if (frames.isEmpty()) return emptyList()
+    val loud = frames.map { it.second }.sorted()[(frames.size * 95 / 100).coerceAtMost(frames.size - 1)]
+    val gate = maxOf(loud * VOICED_SHARE, 1e-3)
+    val voiced = frames.filter { it.second >= gate }.flatMap { (from, _) -> (from until from + step).map { pcm[it] } }.toFloatArray()
+    val size = (rate * VOICE_WINDOW_MS / 1000).toInt()
+    return (0 until voiced.size / size).map { voiced.copyOfRange(it * size, (it + 1) * size) }
+}
+
+fun enrollVoice(pcm: FloatArray, rate: Int, embed: (FloatArray) -> FloatArray): Voiceprint? {
+    val v = voiceOf(0, voicedWindows(pcm, rate).map { embed(it) to VOICE_WINDOW_MS }) ?: return null
+    return Voiceprint(v.embedding, v.weightMs)
 }
