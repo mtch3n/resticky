@@ -174,6 +174,15 @@ class Hub(
         TodoState("$index" in m.done, m.todoChanges.getValue("$index"))
     }
 
+    suspend fun lists(device: String): String = store.list(device).let { listsJson(transcriptItems(it), todoList(it)) }
+
+    suspend fun setTodo(device: String, set: TodoSet): TodoState? {
+        val (session, index) = todoTarget(set.id) ?: return null
+        return setTodo(device, session, index, TodoState(set.done, Clock.System.now()))?.also {
+            log("INFO todo set device=$device session=$session index=$index done=${it.done}")
+        }
+    }
+
     fun module(app: Application) = app.routing {
         get("/api/hello") {
             call.json(hubJson.encodeToString(mapOf("service" to "resticky-hub", "version" to HUB_VERSION)))

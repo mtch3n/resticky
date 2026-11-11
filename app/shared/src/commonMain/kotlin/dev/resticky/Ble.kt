@@ -21,6 +21,10 @@ const val FRAME_OTA_DATA = 19
 const val FRAME_OTA_END = 20
 const val FRAME_OTA_STATUS = 21
 const val FRAME_OTA_CANCEL = 22
+const val FRAME_LISTS = 23
+const val FRAME_TODO_SET = 24
+const val LISTS_MAX = 40 * 1024
+private const val LISTS_FIELD = 300
 const val OTA_WINDOW = 16 * 1024
 const val MAX_FRAME = (1 shl 20) + 64
 const val OTA_BLOCK = 4096
@@ -110,3 +114,37 @@ fun otaMessage(state: String): String = when (state) {
 fun otaWindowOpen(sentEnd: Long, acked: Long, next: Int, window: Int = OTA_WINDOW): Boolean = sentEnd + next - acked <= window
 
 fun otaData(offset: Int, block: ByteArray): ByteArray = ByteArray(4) { (offset shr (8 * it)).toByte() } + block
+
+@Serializable
+data class Lists(val transcripts: List<TranscriptItem>, val todos: TodoList)
+
+@Serializable
+data class TodoSet(val id: String, val done: Boolean)
+
+private fun String.cut(max: Int): String {
+    val cps = codePointList()
+    return if (cps.size <= max) this else cps.take(max).joinToString("") { it.codePointString() } + "..."
+}
+
+fun listsJson(transcripts: List<TranscriptItem>, todos: TodoList, max: Int = LISTS_MAX): String {
+    fun encode(l: Lists) = hubJson.encodeToString(l)
+    var lists = Lists(transcripts, todos)
+    if (encode(lists).encodeToByteArray().size <= max) return encode(lists)
+    lists = lists.copy(transcripts = transcripts.map { it.copy(summary = it.summary.cut(LISTS_FIELD), text = it.text.cut(LISTS_FIELD)) })
+    while (encode(lists).encodeToByteArray().size > max) {
+        val t = lists.transcripts
+        val d = lists.todos
+        lists = when {
+            t.isNotEmpty() -> lists.copy(transcripts = t.dropLast(1))
+            d.done.isNotEmpty() -> lists.copy(todos = d.copy(done = d.done.dropLast(1)))
+            else -> lists.copy(todos = d.copy(open = d.open.dropLast(1)))
+        }
+    }
+    return encode(lists)
+}
+
+fun todoTarget(id: String): Pair<String, Int>? {
+    val session = id.substringBeforeLast('-', "")
+    val index = id.substringAfterLast('-').toIntOrNull() ?: return null
+    return if (ID_PATTERN.matches(session) && index >= 0) session to index else null
+}

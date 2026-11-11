@@ -15,6 +15,7 @@ import dev.resticky.Session
 import dev.resticky.TodoList
 import dev.resticky.TodoState
 import dev.resticky.todoList
+import dev.resticky.drainRates
 import android.net.wifi.WifiManager
 import dev.resticky.WeatherReport
 import dev.resticky.WeatherSettings
@@ -124,9 +125,11 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     private suspend fun readHealth(hours: Int): HealthView {
-        val device = app.hub.devices().values.maxByOrNull { it.seen ?: Instant.DISTANT_PAST }?.device ?: app.hub.healthDevices().firstOrNull()
+        val sticky = app.hub.devices().values.maxByOrNull { it.seen ?: Instant.DISTANT_PAST }
+        val device = sticky?.device ?: app.hub.healthDevices().firstOrNull()
         val to = Clock.System.now().epochSeconds
-        return HealthView(hours, to - hours * 3600L, to, healthCharts(device?.let { app.hub.health(it, hours) }.orEmpty()))
+        val samples = device?.let { app.hub.health(it, hours) }.orEmpty()
+        return HealthView(hours, to - hours * 3600L, to, healthCharts(samples), drainRates(samples), sticky?.health?.boot.orEmpty())
     }
 
     private fun <T> poll(initial: T, millis: Long, read: suspend () -> T): StateFlow<T> = flow {

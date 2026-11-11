@@ -3,6 +3,7 @@ package dev.resticky.app
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.resticky.Drain
 import dev.resticky.HealthSample
 import dev.resticky.downsample
 import java.util.Locale
@@ -38,7 +40,7 @@ class Chart(val title: String, val unit: String, val decimals: Int, val series: 
     val max: Float? get() = series.mapNotNull { it.max }.maxOrNull()
 }
 
-class HealthView(val hours: Int, val from: Long, val to: Long, val charts: List<Chart>) {
+class HealthView(val hours: Int, val from: Long, val to: Long, val charts: List<Chart>, val drain: List<Drain>, val boot: String) {
     val empty: Boolean get() = charts.all { c -> c.series.all { it.points.isEmpty() } }
 }
 
@@ -149,6 +151,26 @@ private fun ChartCard(c: Chart, from: Long, to: Long, rangeLabel: String) = Card
     }
 }
 
+private fun hoursLabel(h: Float): String = String.format(Locale.US, if (h < 10f) "%.1f h" else "%.0f h", h)
+
+@Composable
+private fun DrainCard(drain: List<Drain>) = Card(padding = PaddingValues(0.dp)) {
+    Text("Battery drain", style = Type.heading, modifier = Modifier.padding(start = 18.dp, top = 18.dp, end = 18.dp, bottom = 4.dp))
+    drain.asReversed().forEachIndexed { i, d ->
+        val full = d.fullHours?.let { " · 100 % in ${hoursLabel(it)}" }.orEmpty()
+        ListRow(d.firmware.ifEmpty { "Unknown version" }, "${hoursLabel(d.hours)} of data$full", first = i == 0) {
+            Text(d.pctPerHour?.let { String.format(Locale.US, "%.2f %%/h", it) } ?: "–", style = Type.heading)
+        }
+    }
+}
+
+@Composable
+private fun BootCard(boot: String) = Card {
+    Text("Last boot", style = Type.heading)
+    Gap(6.dp)
+    Text(boot, style = Type.small.copy(color = Ink.black))
+}
+
 @Composable
 fun HealthScreen(view: HealthView?, hours: Int, back: () -> Unit, select: (Int) -> Unit) = Page("Health", back) {
     item {
@@ -163,9 +185,19 @@ fun HealthScreen(view: HealthView?, hours: Int, back: () -> Unit, select: (Int) 
             gap()
             item { CardList { ListRow("No health data yet", "The Sticky sends it with each check-in, firmware 0.11 and later", first = true, subtitleLines = 2) } }
         }
-        else -> view.charts.forEach { c ->
-            gap()
-            item(key = c.title) { ChartCard(c, view.from, view.to, label) }
+        else -> {
+            if (view.drain.isNotEmpty()) {
+                gap()
+                item(key = "drain") { DrainCard(view.drain) }
+            }
+            if (view.boot.isNotEmpty()) {
+                gap()
+                item(key = "boot") { BootCard(view.boot) }
+            }
+            view.charts.forEach { c ->
+                gap()
+                item(key = c.title) { ChartCard(c, view.from, view.to, label) }
+            }
         }
     }
 }

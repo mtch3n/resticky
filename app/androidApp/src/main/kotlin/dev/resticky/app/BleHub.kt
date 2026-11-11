@@ -25,6 +25,9 @@ import dev.resticky.FRAME_CHECKIN
 import dev.resticky.FRAME_AGENDA
 import dev.resticky.FRAME_CHUNK
 import dev.resticky.FRAME_DISPLAY
+import dev.resticky.FRAME_LISTS
+import dev.resticky.FRAME_TODO_SET
+import dev.resticky.TodoSet
 import dev.resticky.FRAME_PHOTO
 import dev.resticky.FRAME_OTA_STATUS
 import dev.resticky.OtaStatus
@@ -47,6 +50,7 @@ import dev.resticky.hubJson
 import dev.resticky.parseChunk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -57,6 +61,8 @@ private const val RETRY_MS = 3_000L
 private const val WRITE_RETRY_MS = 200L
 private const val MAX_WRITE_RETRIES = 10
 private const val DRAIN_MS = 15_000L
+private const val PHOTO_DRAIN_MS = 60_000L
+private const val LISTS_MS = 2_000L
 private val SERVICE = UUID.fromString(BLE_SERVICE)
 private val RX = UUID.fromString(BLE_RX)
 private val TX = UUID.fromString(BLE_TX)
@@ -92,6 +98,8 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
     private var retries = 0
     private val sent = mutableMapOf<Int, String>()
     private var watchers = emptyList<Job>()
+    @Volatile private var linked: String? = null
+    @Volatile private var photo = false
 
     private val bondReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
@@ -173,6 +181,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             log("INFO ble ready mtu=${state.value.mtu}")
             state.update { it.copy(status = LinkStatus.Ready) }
             push()
+            scope.launch { pushLists() }
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
@@ -219,7 +228,11 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         when (frame.type) {
             FRAME_CHECKIN -> runCatching { hubJson.decodeFromString<Checkin>(frame.payload.decodeToString()) }
                 .onSuccess {
-                    scope.launch { hub.checkin(it, "ble") }
+                    linked = it.device
+                    scope.launch {
+                        hub.checkin(it, "ble")
+                        pushLists()
+                    }
                     push()
                 }
                 .onFailure { log("WARN ble bad checkin ${it.message}") }
@@ -232,6 +245,15 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             FRAME_WEATHER_SET -> runCatching { hubJson.decodeFromString<WeatherChange>(frame.payload.decodeToString()) }
                 .onSuccess { scope.launch { if (!hub.weather.change(it)) log("WARN ble bad weather_set") else log("INFO ble weather_set mode=${it.mode} units=${it.units}") } }
                 .onFailure { log("WARN ble bad weather_set ${it.message}") }
+            FRAME_TODO_SET -> runCatching { hubJson.decodeFromString<TodoSet>(frame.payload.decodeToString()) }
+                .onSuccess { set ->
+                    val device = linked ?: return log("WARN ble todo_set before checkin")
+                    scope.launch {
+                        if (hub.setTodo(device, set) == null) log("WARN ble todo_set no such to-do id=${set.id}")
+                        pushLists()
+                    }
+                }
+                .onFailure { log("WARN ble bad todo_set ${it.message}") }
             FRAME_CHUNK -> {
                 val chunk = parseChunk(frame.payload) ?: return log("WARN ble bad chunk frame bytes=${frame.payload.size}")
                 scope.launch {
@@ -274,6 +296,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         retries = 0
         writing = false
         sent.clear()
+        linked = null
     }
 
     private fun sendIfChanged(type: Int, json: String) {
@@ -286,15 +309,27 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         set(value) {
             field = value
             gatt?.requestConnectionPriority(if (value) BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
-            if (!value) push()
+            if (!value) {
+                push()
+                scope.launch { pushLists() }
+            }
         }
 
+    private val paused: Boolean get() = state.value.status != LinkStatus.Ready || updating || photo
+
     fun push() {
-        if (state.value.status != LinkStatus.Ready || updating) return
+        if (paused) return
         sendIfChanged(FRAME_TIME, hubJson.encodeToString(TimeInfo(utcOffsetMin())))
         sendIfChanged(FRAME_WEATHER, hubJson.encodeToString(hub.weather.report.value))
         sendIfChanged(FRAME_AGENDA, hubJson.encodeToString(hub.agendaNow()))
         sendIfChanged(FRAME_DISPLAY, hubJson.encodeToString(hub.display()))
+    }
+
+    private suspend fun pushLists() {
+        val device = linked ?: return
+        if (paused) return
+        val json = runCatching { hub.lists(device) }.getOrElse { return log("WARN ble lists ${it.message}") }
+        if (!paused) sendIfChanged(FRAME_LISTS, json)
     }
 
     fun send(bytes: ByteArray): Boolean {
@@ -305,18 +340,29 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
 
     suspend fun sendDrained(bytes: ByteArray, timeoutMs: Long = DRAIN_MS): Boolean {
         if (!send(bytes)) return false
+        return drained(timeoutMs)
+    }
+
+    private suspend fun drained(timeoutMs: Long): Boolean {
         val end = System.currentTimeMillis() + timeoutMs
         while (synchronized(outbox) { outbox.isNotEmpty() || writing }) {
             if (!ready || System.currentTimeMillis() > end) return false
-            kotlinx.coroutines.delay(5)
+            delay(5)
         }
         return ready
     }
 
     fun sendPhoto(frame: ByteArray): Boolean {
         if (state.value.status != LinkStatus.Ready || updating) return false
+        photo = true
         write(frame(FRAME_PHOTO, frame))
         log("INFO ble photo sent bytes=${frame.size}")
+        scope.launch {
+            drained(PHOTO_DRAIN_MS)
+            photo = false
+            push()
+            pushLists()
+        }
         return true
     }
 
@@ -366,6 +412,12 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             scope.launch { hub.sound.collect { push() } },
             scope.launch { hub.night.collect { push() } },
             scope.launch { hub.home.collect { push() } },
+            scope.launch {
+                while (true) {
+                    pushLists()
+                    delay(LISTS_MS)
+                }
+            },
         )
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_PAIRING_REQUEST)

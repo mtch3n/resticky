@@ -5,6 +5,8 @@ import kotlinx.io.Buffer
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
+import kotlinx.io.writeIntLe
+import kotlinx.io.writeLongLe
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -29,7 +31,7 @@ class HealthTest {
 
     private fun sample(t: Long, battery: Int = 50) = HealthSample(t, batteryPct = battery)
 
-    private fun fileSize() = SystemFileSystem.metadataOrNull(Path(root, device, "health.bin"))?.size ?: 0L
+    private fun fileSize() = SystemFileSystem.metadataOrNull(Path(root, device, "health2.bin"))?.size ?: 0L
 
     @Test
     fun keepsOneSampleEachMinute() = runTest {
@@ -44,11 +46,59 @@ class HealthTest {
     @Test
     fun roundTripsAllFields() = runTest {
         val h = Health(3600, 95000, 85000, 60000, 6_000_000, 5_500_000, 2100, 1800, 1500, 120, 340, 210, 9100, 2, 41.5f)
-        val s = HealthSample(start, 77, 4012, -31, true, 3, 1, -61, h)
+        val s = HealthSample(start, 77, 4012, -31, true, 3, 1, -61, h, "0.14.9")
         HealthLog(root).add(device, s)
         assertEquals(s, HealthLog(root).read(device, 0).single())
         HealthLog(root).add(device, sample(start + 60))
         assertNull(HealthLog(root).read(device, start + 1).single().health)
+    }
+
+    @Test
+    fun oldRecordsStillLoad() = runTest {
+        val old = Buffer().apply {
+            writeLongLe(start)
+            List(23) { if (it == 0) 64 else 0 }.forEach { writeIntLe(it) }
+        }
+        SystemFileSystem.createDirectories(Path(root, device))
+        SystemFileSystem.sink(Path(root, device, "health.bin")).use { it.write(old, old.size) }
+        assertEquals(HEALTH_RECORD_V1.toLong(), 8L + 23 * 4)
+        assertEquals(listOf(device), HealthLog(root).devices())
+        assertEquals(listOf(HealthSample(start, 64)), HealthLog(root).read(device, 0))
+        val log = HealthLog(root)
+        log.add(device, HealthSample(start + 60, 63, firmware = "0.15.0"))
+        assertEquals(listOf("", "0.15.0"), log.read(device, 0).map { it.firmware })
+        assertFalse(SystemFileSystem.exists(Path(root, device, "health.bin")))
+        assertEquals(2L * HEALTH_RECORD, fileSize())
+    }
+
+    private fun run(from: Long, minutes: Int, startPct: Int, pctPerHour: Int, fw: String) =
+        List(minutes + 1) { HealthSample(from + it * 60L, startPct - pctPerHour * it / 60, currentMa = -20, firmware = fw) }
+
+    @Test
+    fun drainUsesOnlyLongDischargeStretches() {
+        val a = run(start, 120, 100, 3, "0.14.9")
+        val short = run(start + 3 * 3600, 50, 90, 6, "0.14.9")
+        val charging = List(60) { HealthSample(start + 5 * 3600 + it * 60L, 50 + it / 3, currentMa = 400, firmware = "0.14.9") }
+        val b = run(start + 7 * 3600, 180, 80, 2, "0.15.0")
+        val d = drainRates(a + short + charging + b)
+        assertEquals(listOf("0.14.9", "0.15.0"), d.map { it.firmware })
+        assertEquals(3f, d[0].pctPerHour!!, 0.01f)
+        assertEquals(2f, d[0].hours, 0.01f)
+        assertEquals(100f / 3, d[0].fullHours!!, 0.1f)
+        assertEquals(2f, d[1].pctPerHour!!, 0.01f)
+        assertEquals(3f, d[1].hours, 0.01f)
+    }
+
+    @Test
+    fun drainSplitsAtGapsAndRises() {
+        val gap = run(start, 40, 100, 3, "x") + run(start + 40 * 60 + 31 * 60, 40, 98, 3, "x")
+        val d = drainRates(gap).single()
+        assertNull(d.pctPerHour)
+        assertEquals(0f, d.hours)
+        assertNull(d.fullHours)
+        val rise = run(start, 40, 80, 3, "x") + run(start + 41 * 60, 40, 90, 3, "x")
+        assertNull(drainRates(rise).single().pctPerHour)
+        assertEquals(emptyList(), drainRates(emptyList()))
     }
 
     @Test
@@ -76,7 +126,7 @@ class HealthTest {
     @Test
     fun partialRecordIsCutOnLoad() = runTest {
         HealthLog(root).add(device, sample(start))
-        SystemFileSystem.sink(Path(root, device, "health.bin"), append = true).use { it.write(Buffer().apply { write(ByteArray(7)) }, 7) }
+        SystemFileSystem.sink(Path(root, device, "health2.bin"), append = true).use { it.write(Buffer().apply { write(ByteArray(7)) }, 7) }
         val log = HealthLog(root)
         log.add(device, sample(start + 60))
         assertEquals(listOf(start, start + 60), log.read(device, 0).map { it.t })

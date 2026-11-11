@@ -119,4 +119,42 @@ class OtaTest {
         assertEquals("The Sticky is busy with another update", otaMessage("busy"))
         assertEquals(listOf(18, 20, 21), listOf(FRAME_OTA_BEGIN, FRAME_OTA_END, FRAME_OTA_STATUS))
     }
+
+    private fun item(i: Int, summary: String = "s$i") = TranscriptItem("10:0$i", "t$i", summary, emptyList(), true, "x".repeat(150), "", 0, 0)
+
+    @Test
+    fun listsCarryTranscriptsAndTodos() {
+        val todos = TodoList(listOf(TodoItem("1a2b-0", "Call Bob", "Standup · 09:00")), emptyList())
+        val json = listsJson(listOf(item(1)), todos)
+        val back = hubJson.decodeFromString<Lists>(json)
+        assertEquals(listOf(item(1)), back.transcripts)
+        assertEquals(todos, back.todos)
+        assertTrue(json.startsWith("""{"transcripts":["""))
+        assertEquals(listOf(23, 24), listOf(FRAME_LISTS, FRAME_TODO_SET))
+    }
+
+    @Test
+    fun listsDropOldestTranscriptsToFit() {
+        val items = List(18) { item(it, "é".repeat(4000)) }
+        val todos = TodoList(listOf(TodoItem("1a2b-0", "Call Bob", "Standup")), listOf(TodoItem("1a2b-1", "Mail", "Standup")))
+        val json = listsJson(items, todos)
+        assertTrue(json.encodeToByteArray().size <= LISTS_MAX)
+        val back = hubJson.decodeFromString<Lists>(json)
+        assertEquals(items.map { it.title }, back.transcripts.map { it.title })
+        assertTrue(back.transcripts.all { it.summary.length <= 303 })
+        assertEquals(todos, back.todos)
+        val small = hubJson.decodeFromString<Lists>(listsJson(items, todos, 2000))
+        assertTrue(small.transcripts.isNotEmpty() && small.transcripts.size < 18)
+        assertEquals(items.take(small.transcripts.size).map { it.title }, small.transcripts.map { it.title })
+        assertTrue(listsJson(items, todos, 200).encodeToByteArray().size <= 200)
+    }
+
+    @Test
+    fun todoSetIdMapsToSessionAndIndex() {
+        val set = hubJson.decodeFromString<TodoSet>("""{"id":"1a2b3c4d-2","done":true}""")
+        assertEquals("1a2b3c4d" to 2, todoTarget(set.id))
+        assertEquals(null, todoTarget("1a2b3c4d"))
+        assertEquals(null, todoTarget("XYZ-1"))
+        assertEquals(null, todoTarget("1a2b--1"))
+    }
 }

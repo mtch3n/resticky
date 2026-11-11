@@ -248,21 +248,27 @@ Sample (from `GET /api/health`; all fields are always there):
 
 ```json
 {"t":1794358412,"battery_pct":77,"voltage_mv":4012,"current_ma":-31,"recording":true,"outbox_chunks":3,
- "dropped_chunks":0,"wifi_rssi":-61,"health":{…}}
+ "dropped_chunks":0,"wifi_rssi":-61,"health":{…},"firmware":"0.14.9"}
 ```
 
-`t` is the Unix time (seconds) when the hub got the check-in.
+`t` is the Unix time (seconds) when the hub got the check-in. `firmware` is the `firmware` field of the
+check-in (empty for samples from the older `health.bin` records).
 
-Storage: `<device>/health.bin` in the data folder, fixed 100-byte records, little-endian, appended at each
+Storage: `<device>/health2.bin` in the data folder, fixed 132-byte records, little-endian, appended at each
 kept sample: `t` (i64), then 23 i32 values: `battery_pct`, `voltage_mv`, `current_ma`, `recording` (0 or 1),
 `outbox_chunks`, `dropped_chunks`, `wifi_rssi`, a health flag (0 = no `health`), then the 15 health fields
-in the order of the table, with `temp_c` × 10. When the file has 11,520 records (7 days + 1 day), the hub
+in the order of the table, with `temp_c` × 10, then `firmware` (32 bytes UTF-8, padded with zero bytes).
+The hub also reads `<device>/health.bin` (the older 100-byte records with no `firmware`). At the first new
+sample it writes all samples into `health2.bin` and deletes `health.bin`. When the file has 11,520 records (7 days + 1 day), the hub
 writes it again (temporary file, then rename) with only the samples of the last 7 days, at most 10,080.
 Thus the file is at most about 1.15 MB, and `GET /api/health` never gives samples older than 7 days. A
 partial record at the end (a crash during a write) is removed when the hub opens the file.
 
 The phone app shows the history in Settings › Sticky › Health (6 h, 24 h or 7 d, at most 300 points in each
-chart).
+chart). It also shows the `boot` text of the last check-in, and "Battery drain" for each firmware version in
+the range: the discharge rate in % per hour, the hours of data, and the hours from 100 % to 0 %. The rate
+uses only discharge stretches of 1 hour or more. A stretch stops at a gap of more than 30 minutes, at a
+sample with `current_ma` > 0 (charging), at a rise of `battery_pct`, and at a change of `firmware`.
 
 ## Places
 
@@ -494,7 +500,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 1 | `chunk` | device → hub | header (31 bytes, little-endian) and the audio frames |
 | 2 | `ack` | hub → device | session (u32), seq (u32) |
 | 3 | `checkin` | device → hub | the JSON of `POST /api/checkin` (UTF-8) |
-| 4 to 7 | reserved | | `todo_set`, `state`, `hint`, `screen` (later layers) |
+| 4 to 7 | reserved | | |
 | 8 | `weather` | hub → device | the weather JSON (see "Weather") |
 | 9 | `agenda` | hub → device | the agenda JSON (see "Agenda") |
 | 10 | `wifi_add` | hub → device | `{"ssid","password"}` (see "Wi-Fi from the phone") |
@@ -509,6 +515,8 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 | 20 | `ota_end` | hub → device | empty |
 | 21 | `ota_status` | device → hub | `{"state":"…","percent":n,"offset":<bytes written>}` |
 | 22 | `ota_cancel` | hub → device | empty: abort the update |
+| 23 | `lists` | hub → device | `{"transcripts":[transcript item],"todos":{"open":[todo],"done":[todo]}}`: the same items as `GET /api/transcripts` and `GET /api/todos` for the linked device. At most 40960 bytes (see "BLE-only mode"). |
+| 24 | `todo_set` | device → hub | `{"id":"<to-do id>","done":true\|false}`: `id` is the `id` of a to-do item. The hub applies it as `PUT /api/todos/{device}/{session}/{index}` with its current time as `at`, then sends a new `lists` frame. |
 
 All JSON payloads are UTF-8 with no terminating zero byte.
 
@@ -543,6 +551,21 @@ The device ignores types that it does not know.
   `GET /api/agenda` and the check-in reply.
 - While a BLE hub is ready, chunks go only on BLE. Check-ins, transcripts, to-dos and screen frames still
   use Wi-Fi when a Wi-Fi hub is reachable.
+
+### BLE-only mode
+
+The device can turn Wi-Fi off while the phone hub is linked. Then the lists come on BLE:
+
+- The hub sends `lists` when the link becomes ready, after each `checkin` and after each `todo_set`. It
+  also reads the lists of the linked device every 2 s and sends `lists` again only when the JSON changed.
+  The linked device is the `device` of the last `checkin` on the link; before the first `checkin` the hub
+  sends no `lists` and ignores `todo_set`.
+- If the JSON is more than 40960 bytes, the hub cuts `summary` and `text` of each transcript item to 300
+  Unicode code points (and adds `...`), then removes the oldest transcript items until the JSON fits. Thus
+  the device must accept RX frames of at most 40965 bytes.
+- The hub does not send `lists` (or other pushes) while a firmware push (frames 18 to 22) runs, or while a
+  `photo` frame is in the RX queue. It sends the lists again when the push or the photo is complete.
+- A `todo_set` for a to-do that does not exist changes nothing; the hub still sends `lists`.
 
 ## Firmware updates
 
@@ -590,7 +613,7 @@ no check-ins or sync, a full-screen update view with Cancel.
   and Send) stops the download and deletes the `.part` file, or sends `ota_cancel`. Update now after a cancel or
   an error starts again from the download.
 - While a push runs, the phone asks for the high BLE connection priority (balanced again at the end), stops its
-  other BLE pushes (weather, agenda, time, display, photos) and stays with the one Sticky it started with. A BLE
+  other BLE pushes (weather, agenda, time, display, lists, photos) and stays with the one Sticky it started with. A BLE
   write that still fails after 10 retries closes the link (a dropped piece would break the frame stream), and the
   push fails and sends `ota_cancel`. Every wait has a deadline (begin 10 s, no progress 20 s, end 60 s, check-in
   5 minutes). The log under the tag `resticky` has each step and the measured KB/s.
