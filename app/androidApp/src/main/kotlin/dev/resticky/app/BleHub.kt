@@ -25,7 +25,9 @@ import dev.resticky.FRAME_CHECKIN
 import dev.resticky.FRAME_AGENDA
 import dev.resticky.FRAME_CHUNK
 import dev.resticky.FRAME_DISPLAY
+import dev.resticky.FRAME_HUB_TOKEN
 import dev.resticky.FRAME_LISTS
+import dev.resticky.HubToken
 import dev.resticky.FRAME_TODO_SET
 import dev.resticky.TodoSet
 import dev.resticky.FRAME_PHOTO
@@ -180,6 +182,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             }
             log("INFO ble ready mtu=${state.value.mtu}")
             state.update { it.copy(status = LinkStatus.Ready) }
+            hub.token?.let { write(frame(FRAME_HUB_TOKEN, hubJson.encodeToString(HubToken(it)).encodeToByteArray())) }
             push()
             scope.launch { pushLists() }
         }

@@ -18,6 +18,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpRequest.BodyPublishers
 import java.net.http.HttpResponse.BodyHandlers
 import java.time.OffsetDateTime
+import java.util.HexFormat
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import javax.imageio.ImageIO
@@ -32,6 +35,7 @@ import kotlin.test.fail
 class HubContractTest {
     private val base = System.getProperty("hub.url").ifEmpty { fail("set -PhubUrl") }
     private val data = hubData(System.getProperty("hub.data").ifEmpty { fail("set -PhubData") })
+    private val token = System.getProperty("hub.token").ifEmpty { fail("set -PhubToken") }
     private val client = HttpClient.newHttpClient()
     private val device = "%012x".format(Random.nextLong(1L shl 47))
 
@@ -39,8 +43,15 @@ class HubContractTest {
         val json: JsonElement get() = Json.parseToJsonElement(body.decodeToString())
     }
 
-    private fun send(method: String, path: String, body: ByteArray = ByteArray(0), headers: Map<String, String> = emptyMap()): Reply {
+    private fun send(
+        method: String,
+        path: String,
+        body: ByteArray = ByteArray(0),
+        headers: Map<String, String> = emptyMap(),
+        auth: String? = "Bearer $token",
+    ): Reply {
         val req = HttpRequest.newBuilder(URI.create(base + path)).method(method, BodyPublishers.ofByteArray(body))
+        auth?.let { req.header("Authorization", it) }
         headers.forEach { (k, v) -> req.header(k, v) }
         val res = client.send(req.build(), BodyHandlers.ofByteArray())
         return Reply(res.statusCode(), res.body())
@@ -93,6 +104,32 @@ class HubContractTest {
         assertEquals(200, r.status)
         assertEquals("resticky-hub", r.json.jsonObject.getValue("service").jsonPrimitive.content)
         assertTrue(r.json.jsonObject.getValue("version").jsonPrimitive.content.isNotEmpty())
+    }
+
+    @Test
+    fun helloProvesThePassword() {
+        val nonce = "00112233445566778899aabbccddeeff"
+        val r = send("GET", "/api/hello?nonce=$nonce", auth = null)
+        assertEquals(200, r.status)
+        val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(HexFormat.of().parseHex(token), "HmacSHA256")) }
+        assertEquals(HexFormat.of().formatHex(mac.doFinal(nonce.toByteArray())), r.json.jsonObject.getValue("proof").jsonPrimitive.content)
+        assertTrue(!get("/api/hello").json.jsonObject.containsKey("proof"))
+    }
+
+    @Test
+    fun requestWithoutPasswordIsRefused() {
+        val r = send("GET", "/api/devices", auth = null)
+        assertEquals(401, r.status)
+        assertEquals("need hub password", r.json.jsonObject.getValue("error").jsonPrimitive.content)
+        assertEquals(401, send("POST", "/api/checkin", """{"device":"$device"}""".encodeToByteArray(), auth = null).status)
+    }
+
+    @Test
+    fun requestWithWrongPasswordIsRefused() {
+        val wrong = token.reversed()
+        assertEquals(401, send("GET", "/api/devices", auth = "Bearer $wrong").status)
+        assertEquals(401, send("GET", "/api/transcripts?device=$device", auth = token).status)
+        assertEquals(401, send("POST", "/api/hello", auth = null).status)
     }
 
     @Test

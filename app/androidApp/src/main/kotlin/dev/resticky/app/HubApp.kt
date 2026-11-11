@@ -24,6 +24,8 @@ import dev.resticky.PENDING
 import dev.resticky.placeTag
 import dev.resticky.Pipeline
 import dev.resticky.Store
+import dev.resticky.TOKEN_PATTERN
+import dev.resticky.hex
 import dev.resticky.WEATHER_SKETCH
 import dev.resticky.WEATHER_STYLES
 import dev.resticky.Weather
@@ -34,6 +36,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.io.files.Path
 import java.io.File
+import java.security.SecureRandom
 
 const val PORT = 8787
 
@@ -59,6 +62,10 @@ class HubApp : Application() {
     lateinit var stickyUpdate: StickyUpdate
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val prefs by lazy { getSharedPreferences("hub", MODE_PRIVATE) }
+    val hubToken: String by lazy {
+        prefs.getString("hub_token", null)?.takeIf { TOKEN_PATTERN.matches(it) }
+            ?: ByteArray(32).also { SecureRandom().nextBytes(it) }.hex().also { prefs.edit().putString("hub_token", it).apply() }
+    }
 
     var hubOn: Boolean
         get() = prefs.getBoolean("on", false)
@@ -147,7 +154,7 @@ class HubApp : Application() {
         releases = Releases(Path(File(filesDir, "releases.json").path), ::log, "resticky-android/${packageManager.getPackageInfo(packageName, 0).versionName}")
         updater = Updater(this, releases)
         stickyUpdate = StickyUpdate(this)
-        hub = Hub(store, pipeline, weather, firmware, ::log, ::tagPlace)
+        hub = Hub(store, pipeline, weather, firmware, ::log, ::tagPlace, hubToken)
         hub.clockFace.value = prefs.getString("clock_face", null)?.takeIf { it in CLOCK_FACES } ?: CLOCK_DIAL
         hub.weatherStyle.value = prefs.getString("weather_style", null)?.takeIf { it in WEATHER_STYLES } ?: WEATHER_SKETCH
         hub.hourFormat.value = prefs.getString("hour_format", null)?.takeIf { it in HOUR_FORMATS } ?: HOUR_24

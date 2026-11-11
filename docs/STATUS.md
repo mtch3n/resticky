@@ -16,7 +16,7 @@ low power and storage use that we can profile.
 | BLE test hub | `firmware/tools/ble_hub.py` | `uv run firmware/tools/ble_hub.py --out <folder>`. Registers a BlueZ agent (KeyboardOnly), pairs (type the passkey from the e-paper on stdin), stores chunks as `<device>/<session>/<seq>.opus`, sends acks, prints KB/s for each chunk. Forget the bond: `bluetoothctl remove AA:BB:CC:DD:EE:FF`. |
 | Laptop hub 0.7.0 (check-in logs the outbox, keeps the health history; transcript items have `place`) | `app/desktopApp` (Kotlin Multiplatform, JVM) | systemd user service `resticky-hub`, runs `~/.local/opt/resticky-hub/bin/resticky-hub` (installed with `./gradlew :desktopApp:installDist`, then copied). Port 8787, mDNS `_resticky._tcp`. Weather: fixed city only, set with `-city <name>` in the service `ExecStart` (no city: no forecast); settings and the last forecast in `~/.local/share/resticky/weather.json` (`-weather <file>`). |
 | Data | `~/.local/share/resticky/data` | Sessions, chunks, transcripts. Backup before the hub change: `data.backup-go-20261110`. |
-| Contract tests | `app/contract` | `app/contract/run.sh <hub binary>`; 16 tests. |
+| Contract tests | `app/contract` | `app/contract/run.sh <hub binary>`; 21 tests. `run.sh` starts the hub with a fixed test `-token`. |
 | Test phone | Phone hotspot XL, 192.168.1.20 | Wireless adb (Android Wireless debugging, found by mDNS): `adb -s $(adb devices | awk '/_adb-tls-connect/{print $1; exit}') shell …`. No cable. |
 
 ## Firmware facts learned the hard way
@@ -82,6 +82,11 @@ low power and storage use that we can profile.
     writes the queue to flash first.
   - Mute is stored in NVS and face up does not start a muted recording. A black dot in the status row shows
     that the mic records.
+  - Hub password: the phone app makes a 64-hex password and sends it in the new BLE frame 26 `hub_token`.
+    The Sticky keeps it in NVS, sends `Authorization: Bearer <token>` to the hub and checks the hub with an
+    HMAC proof from `GET /api/hello?nonce=…` before it uses the hub. A hub with a password answers `401` to a
+    request without it. Laptop hub: `-token <hex>` (no `-token`: open, with a `WARN`). See "Hub password" in
+    `protocol.md`.
   - Before the first build of 0.15.0 in a checkout, delete `firmware/sdkconfig.sticky`. The old file has
     `# CONFIG_BT_CTRL_MODEM_SLEEP is not set`, and `sdkconfig.defaults` does not change a set value.
 

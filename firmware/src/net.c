@@ -27,6 +27,9 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "mbedtls/constant_time.h"
+#include "mbedtls/md.h"
+#include "esp_random.h"
 #include "mdns.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -48,6 +51,8 @@
 #define WIFI_OFF_AFTER_MS 60000
 #define WIFI_BACK_AFTER_MS 60000
 #define WIFI_NEED_MS (5 * 60 * 1000)
+#define TOKEN_HEX 64
+#define NONCE_LEN 16
 
 
 static const char *TAG = "net";
@@ -57,7 +62,8 @@ typedef struct {
     char id[NET_TODO_ID_LEN];
     bool done;
 } todo_change_t;
-static SemaphoreHandle_t lock;
+static SemaphoreHandle_t lock, token_lock;
+static char hub_token[TOKEN_HEX + 1];
 EXT_RAM_BSS_ATTR static net_state_t state;
 static char device_id[13];
 static char hub_url[96];
@@ -125,6 +131,95 @@ static int hub_prio(const mdns_result_t *r)
     return 0;
 }
 
+static bool valid_token(const char *t)
+{
+    size_t n = strlen(t);
+    for (size_t i = 0; i < n; i++)
+        if (!strchr("0123456789abcdefABCDEF", t[i])) return false;
+    return n == TOKEN_HEX;
+}
+
+static void unhex(const char *hex, uint8_t *out, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        char b[3] = {hex[2 * i], hex[2 * i + 1], 0};
+        out[i] = strtoul(b, NULL, 16);
+    }
+}
+
+static void bearer(char *out, size_t n)
+{
+    xSemaphoreTake(token_lock, portMAX_DELAY);
+    if (hub_token[0]) snprintf(out, n, "Bearer %s", hub_token);
+    else out[0] = 0;
+    xSemaphoreGive(token_lock);
+}
+
+void net_set_hub_token(const char *hex)
+{
+    if (!valid_token(hex)) {
+        ESP_LOGW(TAG, "hub password ignored: not 64 hex characters");
+        return;
+    }
+    xSemaphoreTake(token_lock, portMAX_DELAY);
+    bool changed = strcmp(hub_token, hex) != 0;
+    strlcpy(hub_token, hex, sizeof hub_token);
+    xSemaphoreGive(token_lock);
+    if (!changed) return;
+    nvs_handle_t h;
+    if (nvs_open("hub", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, "token", hex);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "hub password stored");
+    xSemaphoreTake(lock, portMAX_DELAY);
+    state.hub = false;
+    state.version++;
+    xSemaphoreGive(lock);
+}
+
+static void load_token(void)
+{
+    nvs_handle_t h;
+    size_t len = sizeof hub_token;
+    if (nvs_open("hub", NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_get_str(h, "token", hub_token, &len) != ESP_OK || !valid_token(hub_token)) hub_token[0] = 0;
+    nvs_close(h);
+}
+
+static bool hub_proven(const char *base)
+{
+    char token[TOKEN_HEX + 1];
+    xSemaphoreTake(token_lock, portMAX_DELAY);
+    strlcpy(token, hub_token, sizeof token);
+    xSemaphoreGive(token_lock);
+    if (!token[0]) return true;
+    uint8_t nonce[NONCE_LEN], key[TOKEN_HEX / 2], want[32], got[32];
+    char nonce_hex[2 * NONCE_LEN + 1], url[160], body[256];
+    esp_fill_random(nonce, sizeof nonce);
+    for (int i = 0; i < NONCE_LEN; i++) snprintf(nonce_hex + 2 * i, 3, "%02x", nonce[i]);
+    snprintf(url, sizeof url, "%s/api/hello?nonce=%s", base, nonce_hex);
+    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 5000};
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    int got_len = -1;
+    if (esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0 && esp_http_client_get_status_code(c) == 200)
+        got_len = esp_http_client_read_response(c, body, sizeof body - 1);
+    esp_http_client_cleanup(c);
+    body[got_len > 0 ? got_len : 0] = 0;
+    cJSON *j = cJSON_Parse(body);
+    const char *proof = cJSON_GetStringValue(cJSON_GetObjectItem(j, "proof"));
+    bool ok = proof && strlen(proof) == 2 * sizeof got && valid_token(proof);
+    if (ok) unhex(proof, got, sizeof got);
+    cJSON_Delete(j);
+    unhex(token, key, sizeof key);
+    ok = ok && mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), key, sizeof key, (const uint8_t *)nonce_hex,
+                               strlen(nonce_hex), want) == 0 &&
+         mbedtls_ct_memcmp(want, got, sizeof want) == 0;
+    if (!ok) ESP_LOGW(TAG, "hub %s ignored: wrong hub password proof", base);
+    return ok;
+}
+
 static bool find_hub(void)
 {
     mdns_result_t *r = NULL;
@@ -134,7 +229,9 @@ static bool find_hub(void)
     for (mdns_result_t *i = r; i; i = i->next) {
         for (mdns_ip_addr_t *a = i->addr; a; a = a->next) {
             if (a->addr.type != ESP_IPADDR_TYPE_V4) continue;
-            if (!best || hub_prio(i) > hub_prio(best)) {
+            char base[sizeof hub_url];
+            snprintf(base, sizeof base, "http://" IPSTR ":%d", IP2STR(&a->addr.u_addr.ip4), i->port);
+            if ((!best || hub_prio(i) > hub_prio(best)) && hub_proven(base)) {
                 best = i;
                 best_addr = a;
             }
@@ -165,6 +262,9 @@ static int http(const char *method, const char *path, const char *ctype, const c
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     esp_http_client_set_method(c, !strcmp(method, "POST") ? HTTP_METHOD_POST : !strcmp(method, "PUT") ? HTTP_METHOD_PUT : HTTP_METHOD_GET);
     if (ctype) esp_http_client_set_header(c, "Content-Type", ctype);
+    char auth[TOKEN_HEX + 8];
+    bearer(auth, sizeof auth);
+    if (auth[0]) esp_http_client_set_header(c, "Authorization", auth);
     for (int i = 0; headers && headers[i]; i += 2) esp_http_client_set_header(c, headers[i], headers[i + 1]);
     int status = -1;
     if (esp_http_client_open(c, len) == ESP_OK) {
@@ -1099,7 +1199,9 @@ static void install_update(void)
     cancel_wanted = false;
     set_phase(UPDATE_DOWNLOAD, 0, UPDATE_IDLE);
     vTaskDelay(pdMS_TO_TICKS(1500));
-    if (ota_install(hub_url, &info, download_progress, &cancel_wanted)) {
+    char auth[TOKEN_HEX + 8];
+    bearer(auth, sizeof auth);
+    if (ota_install(hub_url, auth, &info, download_progress, &cancel_wanted)) {
         set_phase(UPDATE_DONE, 100, UPDATE_IDLE);
         restart_at = esp_log_timestamp() + 4000;
         return;
@@ -1232,6 +1334,8 @@ void net_init(void)
 {
     cJSON_InitHooks(&(cJSON_Hooks){.malloc_fn = psram_malloc, .free_fn = free});
     lock = xSemaphoreCreateMutex();
+    token_lock = xSemaphoreCreateMutex();
+    load_token();
     fresh_lock = xSemaphoreCreateMutex();
     parked = xSemaphoreCreateBinary();
     chunks = xQueueCreate(8, sizeof(audio_chunk_t *));
