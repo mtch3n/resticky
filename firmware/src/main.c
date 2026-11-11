@@ -45,6 +45,7 @@ static void apply_settings(const settings_t *s)
     audio_set_bitrate(settings.bitrate_kbps * 1000);
     buzzer_enable(settings.beep);
     net_set_beep(settings.beep);
+    net_set_home(settings.home);
     ESP_LOGI(TAG, "settings: %d kbps, flip stop %d", settings.bitrate_kbps, settings.flip_stop);
 }
 
@@ -135,9 +136,10 @@ void app_main(void)
     touch_init();
     buttons_init();
     buzzer_init(PIN_BUZZER);
-    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update});
+    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates});
     settings_load(&settings);
     buzzer_enable(settings.beep);
+    net_set_home(settings.home);
     ui_boot_step(2);
     net_init();
     audio_init(net_enqueue);
@@ -179,6 +181,11 @@ void app_main(void)
         net_set_climate(s.climate_ok, s.room_c10, s.humidity);
         EXT_RAM_BSS_ATTR static net_state_t ns;
         net_get_state(&ns);
+        if (ns.home_from_hub && ns.home != settings.home) {
+            settings.home = ns.home;
+            settings_save(&settings);
+            ui_set_settings(&settings);
+        }
         if (ns.beep_from_hub && ns.beep != settings.beep) {
             settings.beep = ns.beep;
             settings_save(&settings);

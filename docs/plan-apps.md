@@ -164,3 +164,11 @@ Each layer works from end to end before the next one starts.
   `protocol.md`. The Sticky's Settings › Weather sends a settings change to the hub (`weather_set` or
   `PUT /api/weather`). The weather settings belong to the hub only, so the check-in does not carry them.
 
+
+## Parked ideas
+
+- Buzzer as vibration (user, 2026-11-11: "see if we can use the sound to simulate the vibration"): short
+  low-frequency pulses on the passive buzzer (GPIO48) as haptic-style feedback for taps, marks and alerts.
+- "Update to vX" on the Sticky's Device page (user, 2026-11-11: "park issue on the update to xx on the sticky
+  device"): look at the whole flow again; also, when no update is offered, the hidden button leaves a gap
+  between "Check for updates" and Restart.

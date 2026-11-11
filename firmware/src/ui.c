@@ -76,6 +76,7 @@ LV_FONT_DECLARE(hand_200);
 #define ICON_CHECK "\xEE\xA9\x9E"
 #define ICON_HAND "\xEE\xBA\x94"
 #define ICON_CLOUD "\xEE\xA9\xB6"
+#define ICON_HOME "\xEE\xAB\x81"
 static const char *const BATTERY_LEVELS[] = {"\xEE\xA8\xB4", "\xEE\xA8\xAF", "\xEE\xA8\xB0", "\xEE\xA8\xB1", "\xEE\xA8\xB2"};
 static const char *const WIFI_LEVELS[] = {"\xEE\xAE\xA3", "\xEE\xAE\xA4", "\xEE\xAE\xA5", "\xEE\xAD\x92"};
 static const char *const ACTION_NAMES[ACT_COUNT] = {"Nothing", "Sleep / wake", "Mute / record", "Previous page", "Next page", "Home", "Mark moment"};
@@ -124,7 +125,7 @@ RTC_DATA_ATTR static int history_len;
 RTC_DATA_ATTR static time_t history_at;
 
 static view_t v_launcher, v_recorder, v_todo, v_transcripts, v_clock, v_weather, v_wsettings, v_stats, v_settings, v_rec, v_wifi, v_hub,
-    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd;
+    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick;
 static view_t *current_view;
 static pager_t todo_pager, list_pager, stats_pager;
 
@@ -139,7 +140,7 @@ static bool todo_done[TODO_PAGE];
 static lv_obj_t *weather_tile_icon, *weather_tile_temp, *weather_value;
 static lv_obj_t *stats_pages[2], *stats_big, *stats_sub, *chart_line, *device_values[9];
 static lv_point_precise_t chart_points[HISTORY];
-static lv_obj_t *rec_value, *wifi_value, *hub_value, *buttons_value, *sd_value;
+static lv_obj_t *rec_value, *wifi_value, *hub_value, *buttons_value, *sd_value, *home_value;
 static seg_t quality;
 static switch_t mic_switch, flip_switch, beep_switch;
 static lv_obj_t *net_rows[WIFI_MAX_PROFILES], *net_names[WIFI_MAX_PROFILES], *net_states[WIFI_MAX_PROFILES], *net_empty;
@@ -147,6 +148,9 @@ static char net_ssids[WIFI_MAX_PROFILES][WIFI_SSID_LEN];
 static lv_obj_t *hub_name, *hub_status, *update_button;
 static lv_obj_t *slot_values[SLOT_COUNT], *choose_title, *choose_checks[ACT_COUNT];
 static int choose_slot;
+static const char *const HOME_NAMES[HOME_COUNT] = {"Apps", "Clock", "Weather", "Recorder", "To-do"};
+static lv_obj_t *home_checks[HOME_COUNT];
+
 static lv_obj_t *pair_code;
 
 static uint32_t tick_ms(void) { return esp_timer_get_time() / 1000; }
@@ -294,7 +298,13 @@ static lv_obj_t *screen(view_t *v, const char *title, view_t *parent)
 
 static void go_cb(lv_event_t *e) { show_view(lv_event_get_user_data(e)); }
 
-static void home_cb(lv_event_t *e) { show_view(&v_launcher); }
+static view_t *home_view(void)
+{
+    view_t *const HOMES[HOME_COUNT] = {&v_launcher, &v_clock, &v_weather, &v_recorder, &v_todo};
+    return HOMES[current.home < HOME_COUNT ? current.home : HOME_APPS];
+}
+
+static void home_cb(lv_event_t *e) { show_view(current_view == home_view() ? &v_launcher : home_view()); }
 
 static lv_obj_t *status_row(lv_obj_t *parent, lv_align_t align)
 {
@@ -423,7 +433,7 @@ void ui_key(action_t action)
 {
     if (photo_on) return end_photo();
     if (splash_on || !current_view) return;
-    if (action == ACT_HOME) show_view(&v_launcher);
+    if (action == ACT_HOME) show_view(home_view());
     else if (action == ACT_PREV && current_view->pager) pager_step(current_view->pager, -1);
     else if (action == ACT_NEXT && current_view->pager) pager_step(current_view->pager, 1);
 }
@@ -1359,6 +1369,8 @@ static void show_settings(void)
     switch_set(&mic_switch, recording);
     for (int i = 0; i < SLOT_COUNT; i++) lv_label_set_text(slot_values[i], ACTION_NAMES[current.buttons[i]]);
     for (int i = 0; i < ACT_COUNT; i++) set_hidden(choose_checks[i], current.buttons[choose_slot] != i);
+    for (int i = 0; i < HOME_COUNT; i++) set_hidden(home_checks[i], current.home != i);
+    lv_label_set_text(home_value, HOME_NAMES[current.home < HOME_COUNT ? current.home : 0]);
 }
 
 static void quality_clicked(lv_event_t *e)
@@ -1377,6 +1389,29 @@ static void flip_clicked(lv_event_t *e)
 
 static void show_sd(void);
 
+static void show_settings(void);
+
+static void homepick_clicked(lv_event_t *e)
+{
+    current.home = (int)(intptr_t)lv_event_get_user_data(e);
+    show_settings();
+    actions.settings_changed(&current);
+    show_view(&v_settings);
+}
+
+static void build_homepick(void)
+{
+    lv_obj_t *s = screen(&v_homepick, "Home screen", &v_settings);
+    section(s, "SHOW AFTER START AND ON HOME", TOP);
+    for (int i = 0; i < HOME_COUNT; i++) {
+        lv_obj_t *r = row(s, TOP + 28 + i * ROW_H, HOME_NAMES[i]);
+        lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(r, homepick_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        home_checks[i] = label(r, ICON_CHECK, &icons_34);
+        lv_obj_align(home_checks[i], LV_ALIGN_RIGHT_MID, -24, 0);
+    }
+}
+
 static void build_settings(void)
 {
     lv_obj_t *s = screen(&v_settings, "Settings", &v_launcher);
@@ -1386,8 +1421,9 @@ static void build_settings(void)
     hub_value = nav_row(s, TOP - 8 + 2 * ROW_H, ICON_DEVICE, "Hub", &v_hub);
     weather_value = nav_row(s, TOP - 8 + 3 * ROW_H, ICON_CLOUD, "Weather", &v_wsettings);
     buttons_value = nav_row(s, TOP - 8 + 4 * ROW_H, ICON_HAND, "Buttons", &v_buttons);
-    sd_value = nav_row(s, TOP - 8 + 5 * ROW_H, ICON_DEVICE, "SD card", &v_sd);
-    lv_label_set_text_fmt(nav_row(s, TOP - 8 + 6 * ROW_H, ICON_DEVICE, "Device", &v_device), "v%s", esp_app_get_description()->version);
+    home_value = nav_row(s, TOP - 8 + 5 * ROW_H, ICON_HOME, "Home screen", &v_homepick);
+    sd_value = nav_row(s, TOP - 8 + 6 * ROW_H, ICON_DEVICE, "SD card", &v_sd);
+    lv_label_set_text_fmt(nav_row(s, TOP - 8 + 7 * ROW_H, ICON_DEVICE, "Device", &v_device), "v%s", esp_app_get_description()->version);
 }
 
 static void build_rec_settings(void)
@@ -1643,6 +1679,16 @@ static void beep_clicked(lv_event_t *e)
     actions.settings_changed(&current);
 }
 
+static lv_obj_t *check_button;
+static uint32_t checking_until;
+
+static void check_clicked(lv_event_t *e)
+{
+    lv_label_set_text(lv_obj_get_child(check_button, 0), "Checking...");
+    checking_until = tick_ms() + 20000;
+    actions.check_updates();
+}
+
 static void build_device(void)
 {
     lv_obj_t *s = screen(&v_device, "Device", &v_settings);
@@ -1651,6 +1697,7 @@ static void build_device(void)
     lv_obj_add_flag(br, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(br, beep_clicked, LV_EVENT_CLICKED, NULL);
     switch_create(&beep_switch, br);
+    check_button = button(s, "Check for updates", UI_H - 328, false, check_clicked);
     update_button = button(s, "", UI_H - 248, true, update_clicked);
     lv_obj_add_flag(update_button, LV_OBJ_FLAG_HIDDEN);
     button(s, "Restart", UI_H - 168, false, restart_clicked);
@@ -1663,6 +1710,7 @@ static void show_update(const net_state_t *n)
     if (n->updating) lv_label_set_text_fmt(text, "Updating %d%%", n->update_progress);
     else if (n->update_version[0]) lv_label_set_text_fmt(text, "Update to v%s", n->update_version);
     set_hidden(update_button, !n->updating && !n->update_version[0]);
+    if (n->update_version[0] || n->updating) checking_until = 0;
 }
 
 static void build_pair(void)
@@ -1735,7 +1783,7 @@ static void end_splash(void)
 {
     splash_on = false;
     force_full = true;
-    show_view(&v_launcher);
+    show_view(home_view());
     lv_obj_invalidate(lv_screen_active());
 }
 
@@ -1768,6 +1816,7 @@ void ui_init(const ui_actions_t *a)
     build_weather_settings();
     build_stats();
     build_settings();
+    build_homepick();
     build_rec_settings();
     build_wifi();
     build_hub();
@@ -1922,6 +1971,10 @@ void ui_tick(void)
 {
     if (console_pending && !splash_on) run_console();
     if (photo_pending && !splash_on) draw_photo();
+    if (checking_until && tick_ms() > checking_until) {
+        checking_until = 0;
+        lv_label_set_text(lv_obj_get_child(check_button, 0), "Up to date");
+    }
     if (sd_confirm_until && tick_ms() > sd_confirm_until) {
         sd_confirm_until = 0;
         lv_label_set_text(lv_obj_get_child(sd_format, 0), "Format card");

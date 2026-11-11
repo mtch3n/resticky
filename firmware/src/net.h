@@ -79,7 +79,8 @@ typedef struct {
     net_weather_t weather;
     net_agenda_t agenda;
     uint8_t clock_face, weather_style;
-    bool hour12, beep, beep_from_hub;
+    bool hour12, beep, beep_from_hub, home_from_hub;
+    uint8_t home;
     unsigned version;
 } net_state_t;
 
@@ -97,4 +98,8 @@ void net_weather_set(bool from_phone, bool fahrenheit);
 void net_checkin_soon(void);
 bool net_mark(void);
 void net_set_beep(bool on);
+void net_set_home(int home);
+void net_ota_progress(int percent);
+void net_restart_soon(void);
+void net_check_updates(void);
 void net_set_climate(bool ok, int room_c10, int humidity);

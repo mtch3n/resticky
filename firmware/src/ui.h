@@ -17,6 +17,7 @@ typedef struct {
     ui_action_cb test_hub;
     void (*forget_wifi)(const char *ssid);
     ui_action_cb install_update;
+    ui_action_cb check_updates;
 } ui_actions_t;
 
 void ui_init(const ui_actions_t *actions);

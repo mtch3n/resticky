@@ -126,3 +126,47 @@ bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb p
     ESP_LOGI(TAG, "update to %s written to %s, restarting", info->version, slot->label);
     return true;
 }
+
+static esp_ota_handle_t stream;
+static const esp_partition_t *stream_slot;
+static size_t stream_size, stream_done;
+
+bool ota_stream_begin(const char *version, size_t size)
+{
+    if (stream) esp_ota_abort(stream);
+    stream = 0;
+    stream_done = 0;
+    stream_size = size;
+    stream_slot = esp_ota_get_next_update_partition(NULL);
+    if (!stream_slot || !ota_is_newer(version) || size == 0 || size > stream_slot->size ||
+        esp_ota_begin(stream_slot, OTA_WITH_SEQUENTIAL_WRITES, &stream) != ESP_OK) {
+        ESP_LOGE(TAG, "stream update to %s not started", version);
+        stream = 0;
+        return false;
+    }
+    ESP_LOGI(TAG, "stream update to %s, %u bytes, into %s", version, (unsigned)size, stream_slot->label);
+    return true;
+}
+
+bool ota_stream_write(size_t offset, const uint8_t *data, size_t len)
+{
+    if (!stream || offset != stream_done || stream_done + len > stream_size || esp_ota_write(stream, data, len) != ESP_OK) {
+        ESP_LOGE(TAG, "stream write failed at %u (have %u)", (unsigned)offset, (unsigned)stream_done);
+        if (stream) esp_ota_abort(stream);
+        stream = 0;
+        return false;
+    }
+    stream_done += len;
+    return true;
+}
+
+bool ota_stream_end(void)
+{
+    bool ok = stream && stream_done == stream_size && esp_ota_end(stream) == ESP_OK && esp_ota_set_boot_partition(stream_slot) == ESP_OK;
+    if (!ok && stream && stream_done != stream_size) esp_ota_abort(stream);
+    stream = 0;
+    ESP_LOGI(TAG, "stream update %s", ok ? "verified, restarting" : "failed");
+    return ok;
+}
+
+int ota_stream_percent(void) { return stream_size ? (int)(stream_done * 100 / stream_size) : 0; }

@@ -209,6 +209,16 @@ void net_set_climate(bool ok, int room_c10, int humidity)
 static bool device_beep = true;
 static int64_t beep_local_at = -60000;
 
+static int device_home;
+static int64_t home_local_at = -60000;
+static const char *const HOMES[HOME_COUNT] = {"apps", "clock", "weather", "recorder", "todo"};
+
+void net_set_home(int home)
+{
+    if (home != device_home) home_local_at = esp_log_timestamp();
+    device_home = home;
+}
+
 void net_set_beep(bool on)
 {
     if (on != device_beep) beep_local_at = esp_log_timestamp();
@@ -287,7 +297,7 @@ static void checkin_body(char *body, size_t n)
     cJSON_free(list);
     cJSON_free(ssid_json);
     size_t used = strlen(body);
-    if (used > 1 && used < n) snprintf(body + used - 1, n - used + 1, ",\"beep\":%s,\"health\":%s}", device_beep ? "true" : "false", health_json());
+    if (used > 1 && used < n) snprintf(body + used - 1, n - used + 1, ",\"beep\":%s,\"home\":\"%s\",\"health\":%s}", device_beep ? "true" : "false", HOMES[device_home], health_json());
     xSemaphoreTake(lock, portMAX_DELAY);
     for (int i = 0; i < mark_count; i++) {
         used = strlen(body);
@@ -368,6 +378,12 @@ static void apply_display(const cJSON *j)
     if (cJSON_IsBool(bp) && esp_log_timestamp() - beep_local_at > 60000 && cJSON_IsTrue(bp) != state.beep) {
         state.beep = cJSON_IsTrue(bp);
         state.beep_from_hub = true;
+        state.version++;
+    }
+    int home = pick(cJSON_GetObjectItem(j, "home"), HOMES, HOME_COUNT, -1);
+    if (home >= 0 && esp_log_timestamp() - home_local_at > 60000 && home != state.home) {
+        state.home = home;
+        state.home_from_hub = true;
         state.version++;
     }
     const char *hf = cJSON_GetStringValue(cJSON_GetObjectItem(j, "hour_format"));
@@ -676,14 +692,23 @@ static void check_firmware(void)
 }
 
 #define GITHUB_LATEST "https://api.github.com/repos/mtch3n/resticky/releases/latest"
-#define GITHUB_EVERY_MS (6 * 3600 * 1000)
+static volatile bool github_wanted, hub_check_wanted;
+
+void net_check_updates(void)
+{
+    github_wanted = hub_check_wanted = true;
+    last_poll = 0;
+    xSemaphoreTake(lock, portMAX_DELAY);
+    latest = (ota_info_t){0};
+    state.update_version[0] = 0;
+    state.version++;
+    xSemaphoreGive(lock);
+}
 
 static void check_github(void)
 {
-    static int64_t last_check = -GITHUB_EVERY_MS;
-    int64_t now = esp_log_timestamp();
-    if (now - last_check < GITHUB_EVERY_MS || latest.version[0]) return;
-    last_check = now;
+    if (!github_wanted) return;
+    github_wanted = false;
     esp_http_client_config_t cfg = {.url = GITHUB_LATEST, .timeout_ms = 15000, .buffer_size = 2048,
                                     .crt_bundle_attach = esp_crt_bundle_attach, .user_agent = "resticky-sticky"};
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
@@ -722,6 +747,19 @@ static void check_github(void)
     }
     cJSON_Delete(j);
 }
+
+static volatile int64_t restart_at;
+
+void net_ota_progress(int percent)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    state.updating = percent >= 0 && percent < 100;
+    state.update_progress = percent < 0 ? 0 : percent;
+    state.version++;
+    xSemaphoreGive(lock);
+}
+
+void net_restart_soon(void) { restart_at = esp_log_timestamp() + 1500; }
 
 static void show_progress(int percent)
 {
@@ -769,7 +807,10 @@ static void sync_wifi(bool testing)
         bool ok = checkin();
         if (ok) ota_note_hub();
         if (!ok || testing) mark_changed();
-        if (ok) check_firmware();
+        if (ok && hub_check_wanted) {
+            hub_check_wanted = false;
+            check_firmware();
+        }
         fetch_transcripts();
         fetch_todos();
         fetch_hub_json("weather", HUB_FRAME_WEATHER);
@@ -781,6 +822,7 @@ static void sync_wifi(bool testing)
 static void net_task(void *arg)
 {
     for (;;) {
+        if (restart_at && esp_log_timestamp() > restart_at) esp_restart();
         ota_tick();
         spool_fresh();
         bool ble = ble_ready() && esp_log_timestamp() >= ble_pause_until;
