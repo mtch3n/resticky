@@ -24,6 +24,7 @@ Java_dev_resticky_app_Whisper_decodeOpus(JNIEnv *env, jclass, jbyteArray frames)
         if (i + len > in.size()) break;
         int got = opus_decode_float(dec, len ? in.data() + i : nullptr, static_cast<opus_int32>(len), buf, len ? MAX_FRAME : FRAME, 0);
         if (got > 0) out.insert(out.end(), buf, buf + got);
+        else out.insert(out.end(), FRAME, 0.0f);
         i += len;
     }
     opus_decoder_destroy(dec);
