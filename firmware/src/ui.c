@@ -53,6 +53,7 @@ LV_FONT_DECLARE(body_18);
 LV_FONT_DECLARE(body_20);
 LV_FONT_DECLARE(hand_28);
 LV_FONT_DECLARE(hand_40);
+LV_FONT_DECLARE(hand_56);
 LV_FONT_DECLARE(hand_64);
 LV_FONT_DECLARE(hand_88);
 LV_FONT_DECLARE(hand_128);
@@ -125,7 +126,7 @@ RTC_DATA_ATTR static int history_len;
 RTC_DATA_ATTR static time_t history_at;
 
 static view_t v_launcher, v_recorder, v_todo, v_transcripts, v_clock, v_weather, v_wsettings, v_stats, v_settings, v_rec, v_wifi, v_hub,
-    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick;
+    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick, v_update;
 static view_t *current_view;
 static pager_t todo_pager, list_pager, stats_pager;
 
@@ -142,7 +143,8 @@ static lv_obj_t *stats_pages[2], *stats_big, *stats_sub, *chart_line, *device_va
 static lv_point_precise_t chart_points[HISTORY];
 static lv_obj_t *rec_value, *wifi_value, *hub_value, *buttons_value, *sd_value, *home_value;
 static seg_t quality;
-static switch_t mic_switch, flip_switch, beep_switch;
+static switch_t mic_switch, flip_switch;
+static seg_t sound_seg;
 static lv_obj_t *net_rows[WIFI_MAX_PROFILES], *net_names[WIFI_MAX_PROFILES], *net_states[WIFI_MAX_PROFILES], *net_empty;
 static char net_ssids[WIFI_MAX_PROFILES][WIFI_SSID_LEN];
 static lv_obj_t *hub_name, *hub_status, *update_button;
@@ -252,7 +254,7 @@ static void show_view(view_t *v)
 {
     current_view = v;
     if (v->on_show) v->on_show();
-    set_hidden(status, v == &v_off);
+    set_hidden(status, v == &v_off || v == &v_update);
     set_hidden(status_title, !v->title);
     set_hidden(status_home, !v->title || v == &v_pair);
     if (v->title) lv_label_set_text(status_title, v->title);
@@ -432,7 +434,7 @@ void ui_show_mark(bool ok)
 void ui_key(action_t action)
 {
     if (photo_on) return end_photo();
-    if (splash_on || !current_view) return;
+    if (splash_on || !current_view || current_view == &v_update) return;
     if (action == ACT_HOME) show_view(home_view());
     else if (action == ACT_PREV && current_view->pager) pager_step(current_view->pager, -1);
     else if (action == ACT_NEXT && current_view->pager) pager_step(current_view->pager, 1);
@@ -1365,7 +1367,7 @@ static void show_settings(void)
     for (int i = 0; i < 3; i++)
         if (QUALITIES[i] == current.bitrate_kbps) seg_set(&quality, i);
     switch_set(&flip_switch, current.flip_stop);
-    switch_set(&beep_switch, current.beep);
+    seg_set(&sound_seg, current.sound);
     switch_set(&mic_switch, recording);
     for (int i = 0; i < SLOT_COUNT; i++) lv_label_set_text(slot_values[i], ACTION_NAMES[current.buttons[i]]);
     for (int i = 0; i < ACT_COUNT; i++) set_hidden(choose_checks[i], current.buttons[choose_slot] != i);
@@ -1668,24 +1670,78 @@ static void build_sd(void)
     sd_format = button(s, "Format card", UI_H - 88, false, format_clicked);
 }
 
-static void update_clicked(lv_event_t *e) { actions.install_update(); }
 static void restart_clicked(lv_event_t *e) { actions.restart(); }
 static void power_off_clicked(lv_event_t *e) { actions.power_off(); }
 
-static void beep_clicked(lv_event_t *e)
+static void sound_clicked(lv_event_t *e)
 {
-    current.beep = !current.beep;
+    current.sound = (int)(intptr_t)lv_event_get_user_data(e);
     show_settings();
     actions.settings_changed(&current);
 }
 
-static lv_obj_t *check_button;
+static bool update_offered, update_running;
+static lv_obj_t *up_art, *up_frame, *up_title, *up_phase, *up_fill, *up_percent, *up_hint, *up_cancel;
+static view_t *up_return;
+
+static void cancel_clicked(lv_event_t *e) { actions.cancel_update(); }
+
+static void build_update(void)
+{
+    lv_obj_t *s = screen(&v_update, NULL, NULL);
+    up_art = image(s, &art_update_arrow, 120, 120);
+    up_title = centered(s, &hand_56, 392);
+    up_phase = centered(s, &hand_28, 470);
+    up_frame = image(s, &art_update_frame, 88, 528);
+    up_fill = plain(s);
+    lv_obj_set_pos(up_fill, 94, 534);
+    lv_obj_set_size(up_fill, 0, 22);
+    image(up_fill, &art_update_fill, 0, 0);
+    up_percent = centered(s, &hand_28, 570);
+    up_hint = centered(s, &hand_28, 614);
+    up_cancel = button(s, "Cancel", UI_H - 88, false, cancel_clicked);
+}
+
+static void show_update_screen(const net_state_t *n)
+{
+    static const char *const PHASES[] = {
+        [UPDATE_DOWNLOAD] = "downloading", [UPDATE_RECEIVE] = "receiving from the phone",
+        [UPDATE_INSTALL] = "installing", [UPDATE_DONE] = "restarting",
+    };
+    static const char *const HINTS[] = {
+        [UPDATE_DOWNLOAD] = "recording waits until the end", [UPDATE_RECEIVE] = "recording waits until the end",
+        [UPDATE_INSTALL] = "do not turn off", [UPDATE_DONE] = "",
+    };
+    if (n->update_phase == UPDATE_OFF) {
+        if (current_view == &v_update) show_view(up_return ? up_return : home_view());
+        return;
+    }
+    bool done = n->update_phase == UPDATE_DONE;
+    lv_image_set_src(up_art, done ? &art_update_check : &art_update_arrow);
+    if (done) lv_label_set_text_fmt(up_title, "v%s installed", n->update_version);
+    else lv_label_set_text_fmt(up_title, "updating to v%s", n->update_version);
+    lv_label_set_text(up_phase, PHASES[n->update_phase]);
+    lv_obj_set_width(up_fill, 292 * LV_CLAMP(0, n->update_progress, 100) / 100);
+    lv_label_set_text_fmt(up_percent, "%d%%", n->update_progress);
+    lv_label_set_text(up_hint, HINTS[n->update_phase]);
+    set_hidden(up_frame, done);
+    set_hidden(up_fill, done);
+    set_hidden(up_percent, done);
+    set_hidden(up_cancel, n->update_phase != UPDATE_DOWNLOAD && n->update_phase != UPDATE_RECEIVE);
+    if (current_view != &v_update) {
+        up_return = current_view;
+        show_view(&v_update);
+    }
+}
+
 static uint32_t checking_until;
 
 static void check_clicked(lv_event_t *e)
 {
-    lv_label_set_text(lv_obj_get_child(check_button, 0), "Checking...");
-    checking_until = tick_ms() + 20000;
+    if (update_running) return;
+    if (update_offered) return actions.install_update();
+    lv_label_set_text(lv_obj_get_child(update_button, 0), "Checking...");
+    checking_until = tick_ms() + 30000;
     actions.check_updates();
 }
 
@@ -1693,24 +1749,34 @@ static void build_device(void)
 {
     lv_obj_t *s = screen(&v_device, "Device", &v_settings);
     lv_label_set_text(row_value(row(s, TOP - 8, "Firmware"), -24), esp_app_get_description()->version);
-    lv_obj_t *br = row(s, TOP + 56, "Sounds");
-    lv_obj_add_flag(br, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(br, beep_clicked, LV_EVENT_CLICKED, NULL);
-    switch_create(&beep_switch, br);
-    check_button = button(s, "Check for updates", UI_H - 328, false, check_clicked);
-    update_button = button(s, "", UI_H - 248, true, update_clicked);
-    lv_obj_add_flag(update_button, LV_OBJ_FLAG_HIDDEN);
+    section(s, "FEEDBACK", TOP + 68);
+    static const char *const sounds[SOUND_COUNT] = {"Off", "Beep", "Buzz"};
+    seg_create(&sound_seg, s, TOP + 96, sounds, SOUND_COUNT, sound_clicked);
+    update_button = button(v_settings.scr, "Check for updates", UI_H - 88, false, check_clicked);
     button(s, "Restart", UI_H - 168, false, restart_clicked);
     button(s, "Shut down", UI_H - 88, false, power_off_clicked);
 }
 
 static void show_update(const net_state_t *n)
 {
+    static const char *const RESULTS[] = {
+        [UPDATE_NONE] = "Up to date",
+        [UPDATE_FAILED] = "No connection. Tap to retry.",
+        [UPDATE_LOW_BATTERY] = "Charge to 20% first",
+        [UPDATE_INSTALL_FAILED] = "Update failed. Tap to retry.",
+    };
     lv_obj_t *text = lv_obj_get_child(update_button, 0);
-    if (n->updating) lv_label_set_text_fmt(text, "Updating %d%%", n->update_progress);
-    else if (n->update_version[0]) lv_label_set_text_fmt(text, "Update to v%s", n->update_version);
-    set_hidden(update_button, !n->updating && !n->update_version[0]);
-    if (n->update_version[0] || n->updating) checking_until = 0;
+    bool updating = n->update_phase != UPDATE_OFF;
+    update_running = updating;
+    update_offered = n->update_version[0] && !updating;
+    if (n->update_check != UPDATE_CHECKING) checking_until = 0;
+    show_update_screen(n);
+    if (updating) lv_label_set_text_fmt(text, "Updating %d%%", n->update_progress);
+    else if (n->update_check >= UPDATE_NONE) lv_label_set_text(text, RESULTS[n->update_check]);
+    else if (update_offered) lv_label_set_text_fmt(text, "Update to v%s", n->update_version);
+    else if (n->update_check == UPDATE_CHECKING) lv_label_set_text(text, "Checking...");
+    else lv_label_set_text(text, "Check for updates");
+    set_inverted(update_button, update_offered || updating);
 }
 
 static void build_pair(void)
@@ -1822,6 +1888,7 @@ void ui_init(const ui_actions_t *a)
     build_hub();
     build_buttons();
     build_device();
+    build_update();
     build_map();
     build_sd();
     build_pair();
@@ -1973,7 +2040,7 @@ void ui_tick(void)
     if (photo_pending && !splash_on) draw_photo();
     if (checking_until && tick_ms() > checking_until) {
         checking_until = 0;
-        lv_label_set_text(lv_obj_get_child(check_button, 0), "Up to date");
+        lv_label_set_text(lv_obj_get_child(update_button, 0), "No connection. Tap to retry.");
     }
     if (sd_confirm_until && tick_ms() > sd_confirm_until) {
         sd_confirm_until = 0;

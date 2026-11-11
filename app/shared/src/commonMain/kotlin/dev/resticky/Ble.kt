@@ -20,6 +20,9 @@ const val FRAME_OTA_BEGIN = 18
 const val FRAME_OTA_DATA = 19
 const val FRAME_OTA_END = 20
 const val FRAME_OTA_STATUS = 21
+const val FRAME_OTA_CANCEL = 22
+const val OTA_WINDOW = 16 * 1024
+const val MAX_FRAME = (1 shl 20) + 64
 const val OTA_BLOCK = 4096
 const val MAX_DATA_PAYLOAD = 2048
 private const val CHUNK_HEADER = 31
@@ -56,7 +59,11 @@ class FrameReader {
         val out = mutableListOf<Frame>()
         while (buf.size >= 4) {
             val n = buf.u32(0)
-            if (n < 1 || buf.size < 4 + n) break
+            if (n < 1 || n > MAX_FRAME) {
+                buf = ByteArray(0)
+                break
+            }
+            if (buf.size < 4 + n) break
             out += Frame(buf[4].toInt() and 0xff, buf.copyOfRange(5, 4 + n.toInt()))
             buf = buf.copyOfRange(4 + n.toInt(), buf.size)
         }
@@ -91,9 +98,15 @@ fun ackFrame(session: Long, seq: Long): ByteArray =
 data class OtaBegin(val version: String, val size: Int)
 
 @Serializable
-data class OtaStatus(val state: String, val percent: Int = 0)
+data class OtaStatus(val state: String, val percent: Int = 0, val offset: Long = 0)
+
+fun otaMessage(state: String): String = when (state) {
+    "busy" -> "The Sticky is busy with another update"
+    "battery" -> "Charge the Sticky to 20 % or connect USB first"
+    "cancelled" -> "Cancelled on the Sticky"
+    else -> "The Sticky reported an error"
+}
+
+fun otaWindowOpen(sentEnd: Long, acked: Long, next: Int, window: Int = OTA_WINDOW): Boolean = sentEnd + next - acked <= window
 
 fun otaData(offset: Int, block: ByteArray): ByteArray = ByteArray(4) { (offset shr (8 * it)).toByte() } + block
-
-fun otaFrames(image: ByteArray, block: Int = OTA_BLOCK): List<ByteArray> =
-    (image.indices step block).map { frame(FRAME_OTA_DATA, otaData(it, image.copyOfRange(it, minOf(it + block, image.size)))) }

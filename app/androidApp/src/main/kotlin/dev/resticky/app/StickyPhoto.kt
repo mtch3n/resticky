@@ -47,7 +47,11 @@ fun stickyFrame(open: () -> InputStream?): ByteArray? {
 
 suspend fun HubApp.showOnSticky(open: () -> InputStream?): String = withContext(Dispatchers.Default) {
     val frame = runCatching { stickyFrame(open) }.getOrNull() ?: return@withContext "The photo could not be read"
-    if (ble.sendPhoto(frame)) "Sent to the Sticky" else "The Sticky is not connected over Bluetooth"
+    when {
+        ble.updating -> "The Sticky is updating its firmware"
+        ble.sendPhoto(frame) -> "Sent to the Sticky"
+        else -> "The Sticky is not connected over Bluetooth"
+    }
 }
 
 class ShareActivity : Activity() {

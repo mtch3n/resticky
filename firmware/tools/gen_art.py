@@ -50,6 +50,13 @@ ASSETS["ruled"] = (480, 700, """
 for (let k = 0; k < 13; k++) add(rc.line(20, 58 + k * 52, 460, 58 + k * 52, pen(1, 500 + k, 0.6)));
 add(rc.line(70, 0, 70, 700, pen(1.6, 520, 0.8)));
 """)
+for name, marks in {"update_arrow": ["M240 262 L240 352", "M206 322 L240 356 L274 322"], "update_check": ["M196 316 L228 350 L290 270"]}.items():
+    ASSETS[name] = (240, 240, "const u = g('translate(-120 -200) rotate(-5 240 320)');"
+                    "u.appendChild(rc.path('M160 230 L320 230 L320 370 L284 406 L160 406 Z', pen(3, 40)));"
+                    "u.appendChild(rc.path('M320 370 L284 370 L284 406', pen(2.6, 41)));"
+                    + "".join(f"u.appendChild(rc.path('{d}', pen(4, {80 + i})));" for i, d in enumerate(marks)))
+ASSETS["update_fill"] = (292, 22, "add(rc.rectangle(0, 0, 292, 22, {stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2.4, hachureAngle: -50, seed: 70}));")
+ASSETS["update_frame"] = (304, 34, "add(rc.rectangle(2, 2, 300, 30, pen(2.6, 71)));")
 ASSETS["card_half"] = (226, 176, "add(rc.rectangle(2, 2, 222, 172, pen(2.6, 600, 1.2)));")
 ASSETS["card_full"] = (456, 176, "add(rc.rectangle(2, 2, 452, 172, pen(2.6, 604, 1.2)));")
 

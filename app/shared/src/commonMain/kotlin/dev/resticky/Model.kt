@@ -18,6 +18,8 @@ const val CLOCK_DIAL = "dial"
 val CLOCK_FACES = listOf(CLOCK_DIAL, "digits", "words", "note", "flip")
 const val WEATHER_SKETCH = "sketch"
 val WEATHER_STYLES = listOf(WEATHER_SKETCH, "big", "journal", "week")
+const val SOUND_BEEP = "beep"
+val SOUNDS = listOf("off", SOUND_BEEP, "buzz")
 const val HOME_APPS = "apps"
 val HOME_SCREENS = listOf(HOME_APPS, "clock", "weather", "recorder", "todo")
 const val HOUR_24 = "24"
@@ -202,7 +204,7 @@ data class Checkin(
     val seen: Time? = null,
     val link: String = "",
     val marks: List<Mark> = emptyList(),
-    val beep: Boolean? = null,
+    val sound: String? = null,
     val home: String? = null,
 )
 
@@ -238,7 +240,7 @@ data class CheckinReply(
     @SerialName("clock_face") val clockFace: String,
     @SerialName("weather_style") val weatherStyle: String,
     @SerialName("hour_format") val hourFormat: String,
-    val beep: Boolean,
+    val sound: String,
     val home: String,
 )
 
@@ -250,7 +252,7 @@ data class DisplayInfo(
     @SerialName("clock_face") val clockFace: String,
     @SerialName("weather_style") val weatherStyle: String,
     @SerialName("hour_format") val hourFormat: String,
-    val beep: Boolean,
+    val sound: String,
     val home: String,
 )
 

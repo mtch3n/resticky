@@ -413,14 +413,14 @@ def fwrow(title, sub, trail="", bar=None):
     extra = BAR(bar) if bar is not None else ""
     return f'<div class=li><span class=t style="flex:1"><b>{title}</b><span class=s>{sub}</span>{extra}</span>{trail}</div>'
 page("firmware-states", "Sticky settings", sec("Firmware · each state") + '<div class=list>' + "".join([
-    fwrow("Firmware 0.14.3", "Up to date · checked today 10:42", '<span class="pill sp" style="background:#fff">Check for updates</span>'),
-    fwrow("Firmware 0.14.3", "Latest 0.14.4 · checked today 10:42", '<span class="pill sp on">Update now</span>'),
-    fwrow("Downloading 0.14.4", "42 % · from GitHub", bar=42),
-    fwrow("Sending to the Sticky", "63 % · over Bluetooth · keep the phone near", bar=63),
-    fwrow("The Sticky restarts", "Waiting for it to connect again"),
-    fwrow("Updated to 0.14.4", "The Sticky checks itself for 3 minutes"),
-    fwrow("Rolled back to 0.14.3", "The new firmware failed its check", '<span class="pill sp" style="background:#fff">Try again</span>'),
-    fwrow("Update failed", "The Sticky reported an error while writing", '<span class="pill sp" style="background:#fff">Try again</span>'),
+    fwrow("Firmware 0.14.4", "Latest 0.14.6 · checked today 10:42", '<span class="pill sp on">Update now</span>'),
+    fwrow("1 Download 0.14.6", "42 % · from GitHub", '<span class="pill sp" style="background:#fff">Cancel</span>', bar=42),
+    fwrow("2 Send to the Sticky", "63 % · 18 KB/s · keep the phone near", '<span class="pill sp" style="background:#fff">Cancel</span>', bar=63),
+    fwrow("3 Install 0.14.6", "The Sticky restarts · waiting for it to connect again"),
+    fwrow("4 Done · 0.14.6", "The Sticky checks itself for 3 minutes", '<span class="pill sp" style="background:#fff">Check for updates</span>'),
+    fwrow("Update cancelled", "Update now starts again from the download", '<span class="pill sp" style="background:#fff">Try again</span>'),
+    fwrow("Update failed", "Charge the Sticky to 20 % or connect USB first", '<span class="pill sp" style="background:#fff">Try again</span>'),
+    fwrow("Rolled back to 0.14.4", "The new firmware failed its check", '<span class="pill sp" style="background:#fff">Try again</span>'),
 ]) + "</div>", back=True)
 
 

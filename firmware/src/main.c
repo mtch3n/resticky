@@ -24,6 +24,7 @@
 
 static const char *TAG = "main";
 static bool recording = true;
+static bool update_pause, resume_after_update;
 static settings_t settings;
 
 static void set_recording(bool rec)
@@ -43,8 +44,8 @@ static void apply_settings(const settings_t *s)
     settings = *s;
     settings_save(&settings);
     audio_set_bitrate(settings.bitrate_kbps * 1000);
-    buzzer_enable(settings.beep);
-    net_set_beep(settings.beep);
+    buzzer_set_sound(settings.sound);
+    net_set_sound(settings.sound);
     net_set_home(settings.home);
     ESP_LOGI(TAG, "settings: %d kbps, flip stop %d", settings.bitrate_kbps, settings.flip_stop);
 }
@@ -92,6 +93,7 @@ static void on_button(button_t button, button_event_t event)
 
 static void do_action(action_t action)
 {
+    if (update_pause) return;
     if (action == ACT_MARK) {
         bool ok = net_mark();
         if (ok) buzzer_mark();
@@ -136,10 +138,11 @@ void app_main(void)
     touch_init();
     buttons_init();
     buzzer_init(PIN_BUZZER);
-    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates});
+    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates, net_cancel_update});
     settings_load(&settings);
-    buzzer_enable(settings.beep);
+    buzzer_set_sound(settings.sound);
     net_set_home(settings.home);
+    net_set_sound(settings.sound);
     ui_boot_step(2);
     net_init();
     audio_init(net_enqueue);
@@ -174,22 +177,32 @@ void app_main(void)
         bool face_down = s.imu_ok && s.az_mg < FACE_DOWN_MG;
         down_s = face_down ? down_s + 1 : 0;
         up_s = face_down ? 0 : up_s + 1;
-        if (settings.flip_stop && recording && down_s == FLIP_HOLD_S) set_recording(false);
+        if (update_pause) {}
+        else if (settings.flip_stop && recording && down_s == FLIP_HOLD_S) set_recording(false);
         else if (settings.flip_stop && !recording && up_s == FLIP_HOLD_S) set_recording(true);
         ui_set_sensors(&s);
         net_set_telemetry(s.soc_pct, s.voltage_mv, s.current_ma, recording, s.usb);
         net_set_climate(s.climate_ok, s.room_c10, s.humidity);
         EXT_RAM_BSS_ATTR static net_state_t ns;
         net_get_state(&ns);
+        if ((ns.update_phase != UPDATE_OFF) != update_pause) {
+            update_pause = !update_pause;
+            ESP_LOGI(TAG, "update mode %s", update_pause ? "on" : "off");
+            if (update_pause) {
+                resume_after_update = recording;
+                if (recording) set_recording(false);
+            }
+            else if (resume_after_update) set_recording(true);
+        }
         if (ns.home_from_hub && ns.home != settings.home) {
             settings.home = ns.home;
             settings_save(&settings);
             ui_set_settings(&settings);
         }
-        if (ns.beep_from_hub && ns.beep != settings.beep) {
-            settings.beep = ns.beep;
+        if (ns.sound_from_hub && ns.sound != settings.sound) {
+            settings.sound = ns.sound;
             settings_save(&settings);
-            buzzer_enable(settings.beep);
+            buzzer_set_sound(settings.sound);
             ui_set_settings(&settings);
         }
         if (ns.version != net_version || memcmp(&ns.wifi, &net_wifi, sizeof net_wifi) || ns.hub != net_hub) {

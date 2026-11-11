@@ -97,12 +97,14 @@ class Hub(
     val clockFace = MutableStateFlow(CLOCK_DIAL)
     val weatherStyle = MutableStateFlow(WEATHER_SKETCH)
     val hourFormat = MutableStateFlow(HOUR_24)
-    val beepSetting = DeviceSetting(true)
+    val soundSetting = DeviceSetting(SOUND_BEEP)
     val homeSetting = DeviceSetting(HOME_APPS)
-    val beep: StateFlow<Boolean> get() = beepSetting.value
+    val sound: StateFlow<String> get() = soundSetting.value
     val home: StateFlow<String> get() = homeSetting.value
 
-    fun setBeep(on: Boolean) = beepSetting.set(on)
+    fun setSound(sound: String) {
+        if (sound in SOUNDS) soundSetting.set(sound)
+    }
 
     fun setHome(screen: String) {
         if (screen in HOME_SCREENS) homeSetting.set(screen)
@@ -123,7 +125,7 @@ class Hub(
         val now = Clock.System.now()
         devicesLock.withLock {
             devices[c.device] = c.copy(seen = now, link = link, marks = emptyList())
-            c.beep?.let { if (beepSetting.report(it)) log("INFO beep from device device=${c.device} beep=$it") }
+            c.sound?.takeIf { it in SOUNDS }?.let { if (soundSetting.report(it)) log("INFO sound from device device=${c.device} sound=$it") }
             c.home?.takeIf { it in HOME_SCREENS }?.let { if (homeSetting.report(it)) log("INFO home from device device=${c.device} home=$it") }
         }
         runCatching { healthLog.add(c.device, HealthSample.of(c, now.epochSeconds)) }.onFailure { log("WARN health store device=${c.device} ${it.message}") }
@@ -149,7 +151,7 @@ class Hub(
 
     suspend fun healthDevices(): List<String> = healthLog.devices()
 
-    fun display(): DisplayInfo = DisplayInfo(clockFace.value, weatherStyle.value, hourFormat.value, beep.value, home.value)
+    fun display(): DisplayInfo = DisplayInfo(clockFace.value, weatherStyle.value, hourFormat.value, sound.value, home.value)
 
     fun agendaNow(): Agenda = agenda.value ?: buildAgenda(emptyList(), false, Clock.System.now(), TimeZone.currentSystemDefault())
 
@@ -173,7 +175,7 @@ class Hub(
             val c = runCatching { hubJson.decodeFromString<Checkin>(call.receiveText()) }.getOrNull()
             if (c == null || !ID_PATTERN.matches(c.device)) return@post call.fail(HttpStatusCode.BadRequest, "body must be JSON with a hex device field")
             checkin(c, "wifi")
-            call.json(hubJson.encodeToString(CheckinReply(HUB_VERSION, utcOffsetMin(), clockFace.value, weatherStyle.value, hourFormat.value, beep.value, home.value)))
+            call.json(hubJson.encodeToString(CheckinReply(HUB_VERSION, utcOffsetMin(), clockFace.value, weatherStyle.value, hourFormat.value, sound.value, home.value)))
         }
         post("/api/chunks") {
             val h = call.request.headers

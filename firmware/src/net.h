@@ -63,6 +63,9 @@ typedef struct {
     } ev[NET_AGENDA_MAX];
 } net_agenda_t;
 
+typedef enum { UPDATE_OFF, UPDATE_DOWNLOAD, UPDATE_RECEIVE, UPDATE_INSTALL, UPDATE_DONE } update_phase_t;
+typedef enum { UPDATE_IDLE, UPDATE_CHECKING, UPDATE_NONE, UPDATE_FAILED, UPDATE_LOW_BATTERY, UPDATE_INSTALL_FAILED } update_check_t;
+
 typedef struct {
     wifi_status_t wifi;
     bool hub;
@@ -75,12 +78,13 @@ typedef struct {
     net_todo_t todos[NET_MAX_TODOS];
     char update_version[OTA_VERSION_LEN];
     int update_progress;
-    bool updating;
+    uint8_t update_check;
+    uint8_t update_phase;
     net_weather_t weather;
     net_agenda_t agenda;
     uint8_t clock_face, weather_style;
-    bool hour12, beep, beep_from_hub, home_from_hub;
-    uint8_t home;
+    bool hour12, sound_from_hub, home_from_hub;
+    uint8_t home, sound;
     unsigned version;
 } net_state_t;
 
@@ -97,9 +101,9 @@ void net_hub_frame(uint8_t type, const char *json, size_t len);
 void net_weather_set(bool from_phone, bool fahrenheit);
 void net_checkin_soon(void);
 bool net_mark(void);
-void net_set_beep(bool on);
+void net_set_sound(int sound);
 void net_set_home(int home);
-void net_ota_progress(int percent);
-void net_restart_soon(void);
+void net_ota_frame(uint8_t type, const uint8_t *p, size_t n);
 void net_check_updates(void);
+void net_cancel_update(void);
 void net_set_climate(bool ok, int room_c10, int humidity);

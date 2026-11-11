@@ -167,8 +167,6 @@ Each layer works from end to end before the next one starts.
 
 ## Parked ideas
 
-- Buzzer as vibration (user, 2026-11-11: "see if we can use the sound to simulate the vibration"): short
-  low-frequency pulses on the passive buzzer (GPIO48) as haptic-style feedback for taps, marks and alerts.
-- "Update to vX" on the Sticky's Device page (user, 2026-11-11: "park issue on the update to xx on the sticky
-  device"): look at the whole flow again; also, when no update is offered, the hidden button leaves a gap
-  between "Check for updates" and Restart.
+- None. Done in 0.14.6: the buzzer as vibration (Feedback › Buzz: 170 Hz pulses, one for a press, two for a
+  mark) and one update button on the Device page that changes in place (Check for updates, Checking...,
+  Update to vX, Updating N%, Up to date, No connection, Charge to 20% first, Update failed).

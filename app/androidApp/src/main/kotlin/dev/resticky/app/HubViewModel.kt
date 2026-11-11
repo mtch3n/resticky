@@ -172,6 +172,8 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSticky() = app.stickyUpdate.update()
 
+    fun cancelSticky() = app.stickyUpdate.cancel()
+
     fun installApp() = viewModelScope.launch { app.releases.latest.value?.let { app.updater.install(it) } }
 
     fun showOnSticky(file: java.io.File) = viewModelScope.launch {
@@ -267,12 +269,12 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setHourFormat(format: String) = app.setHourFormat(format)
 
-    val beep: StateFlow<Boolean> = app.hub.beep
+    val sound: StateFlow<String> = app.hub.sound
     val home: StateFlow<String> = app.hub.home
 
     fun setHome(screen: String) = app.setHome(screen)
 
-    fun setBeep(on: Boolean) = app.setBeep(on)
+    fun setSound(sound: String) = app.setSound(sound)
 
     fun setWeatherStyle(style: String) = app.setWeatherStyle(style)
 

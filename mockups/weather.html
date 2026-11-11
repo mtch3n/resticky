@@ -1,7 +1,48 @@
-<!doctype html><meta charset=utf-8><style>@font-face{font-family:H;src:url(assets/fonts/Caveat.ttf)}@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
-*{margin:0;padding:0;box-sizing:border-box}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:M}
-.status{position:absolute;top:0;left:0;width:480px;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
-.h{font-family:H;font-weight:700;position:absolute}</style><body><div class=status><span style="display:flex;align-items:center;gap:10px"><svg
+<!doctype html><meta charset=utf-8><style>
+@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:480px;height:800px;overflow:hidden;background:#fff;color:#000;font-family:M;font-weight:500;display:flex;flex-direction:column}
+.status{height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
+.status span{display:flex;align-items:center;gap:6px}
+.title{font-family:M;font-weight:700;font-size:30px;padding:2px 24px 0}
+.clock{font-size:96px;font-weight:700;letter-spacing:-3px;line-height:1;padding:8px 24px 0}
+.date{font-size:22px;font-weight:600;padding:6px 26px 0}
+.apps{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px 0;padding:28px 12px}
+.app{display:flex;flex-direction:column;align-items:center;gap:10px;font-size:19px;font-weight:600}
+.ic{width:104px;height:104px;border:3px solid #000;border-radius:28px;display:flex;align-items:center;justify-content:center}
+.ic.on{background:#000}
+.sub{font-size:15px;font-weight:600;margin-top:-6px}
+.card{margin:0 20px;border:3px solid #000;border-radius:24px;padding:20px 22px;display:flex;flex-direction:column;gap:12px}
+.pill{display:inline-flex;align-items:center;gap:8px;background:#000;color:#fff;border-radius:999px;padding:6px 16px;font-size:18px;font-weight:700}
+.nums{display:flex;justify-content:space-between}
+.nums div{font-size:16px;font-weight:600} .nums b{display:block;font-size:34px;font-weight:700}
+.btn{height:64px;border:3px solid #000;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:20px;font-weight:700}
+.btn.on{background:#000;color:#fff}
+.row{min-height:64px;display:flex;align-items:center;gap:16px;padding:0 24px;font-size:21px;font-weight:500}
+.status + .row{margin-top:12px}
+.row .v{margin-left:auto;font-weight:500;font-size:18px;display:flex;align-items:center;gap:4px}
+.quote{font-size:21px;line-height:1.4;font-weight:500}
+.tabs{margin-top:auto;height:72px;border-top:3px solid #000;display:flex}
+.tabs div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:15px;font-weight:700}
+.tabs .on{background:#000;color:#fff}
+
+.hdr{display:flex;align-items:center;gap:4px;padding:2px 16px 10px;font-size:30px;font-weight:700;border-bottom:2px solid #000}
+.sec{font-size:16px;font-weight:800;padding:24px 24px 6px;text-transform:uppercase;letter-spacing:1.5px}
+.seg{display:flex;margin:0 24px;border:3px solid #000;border-radius:999px;overflow:hidden;height:60px}
+.seg div{flex:1;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700}
+.seg .on{background:#000;color:#fff}
+.sw{margin-left:auto;width:104px;height:48px;border:3px solid #000;border-radius:999px;position:relative;display:flex;align-items:center;justify-content:flex-end;padding:0 14px;font-size:17px;font-weight:800;letter-spacing:1px}
+.sw:after{content:'';position:absolute;top:5px;left:5px;width:32px;height:32px;border-radius:50%;background:#000}
+.sw.on{background:#000;color:#fff;justify-content:flex-start}.sw.on:after{left:auto;right:5px;background:#fff}
+.step{display:flex;align-items:center;gap:14px;margin-left:auto}
+.step b{font-size:24px;min-width:80px;text-align:center}
+.rb{width:52px;height:52px;border:3px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700}
+.bar{margin:0 24px;height:28px;border:3px solid #000;border-radius:999px;overflow:hidden}
+.bar div{height:100%;background:#000}
+.btns{display:flex;flex-direction:column;gap:14px;padding:18px 24px}
+.chk{width:40px;height:40px;border:3px solid #000;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none}
+.chk.on{background:#000}
+</style><body><div class=status><span style="gap:10px"><svg
   xmlns="http://www.w3.org/2000/svg"
   width="22"
   height="22"
@@ -18,7 +59,7 @@
   <path d="M9.172 15.172a4 4 0 0 1 5.656 0" />
   <path d="M6.343 12.343a8 8 0 0 1 11.314 0" />
   <path d="M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0" />
-</svg><b style="font-size:22px">Weather</b></span><span style="display:flex;align-items:center;gap:6px">78% <svg
+</svg><b style="font-size:22px;font-weight:700">Weather</b></span><span style="gap:16px"><span style="display:flex;align-items:center;gap:6px">78% <svg
   xmlns="http://www.w3.org/2000/svg"
   width="28"
   height="28"
@@ -35,16 +76,246 @@
   <path d="M7 10l0 4" />
   <path d="M10 10l0 4" />
   <path d="M13 10l0 4" />
-</svg></span></div><div class=h style="top:60px;left:250px;font-size:128px;line-height:1">18°</div><div class=h style="top:206px;left:254px;font-size:32px">cloudy · feels 16°</div><div class=h style="top:244px;left:254px;font-size:28px">21° / 12° · rain 20%</div><div class=h style="top:548px;left:30px;font-size:34px">tue</div><div class=h style="top:548px;left:204px;font-size:30px;width:50px;text-align:right">11°</div><div class=h style="top:548px;left:410px;font-size:30px">17°</div><div class=h style="top:598px;left:30px;font-size:34px">wed</div><div class=h style="top:598px;left:204px;font-size:30px;width:50px;text-align:right">12°</div><div class=h style="top:598px;left:410px;font-size:30px">19°</div><div class=h style="top:648px;left:30px;font-size:34px">thu</div><div class=h style="top:648px;left:204px;font-size:30px;width:50px;text-align:right">13°</div><div class=h style="top:648px;left:410px;font-size:30px">22°</div><div class=h style="top:698px;left:30px;font-size:34px">fri</div><div class=h style="top:698px;left:204px;font-size:30px;width:50px;text-align:right">12°</div><div class=h style="top:698px;left:410px;font-size:30px">18°</div><div class=h style="top:748px;left:30px;font-size:34px">sat</div><div class=h style="top:748px;left:204px;font-size:30px;width:50px;text-align:right">-2°</div><div class=h style="top:748px;left:410px;font-size:30px">3°</div><svg id=s width=480 height=800 style='position:absolute;left:0;top:0'></svg><script src='assets/js/rough.js'></script><script src='assets/js/art.js'></script><script>
-cond('cloud', 130, 170, 1.15, 100);
-const temps = [18, 19, 20, 21, 21, 21, 20, 19, 17, 16, 15, 14, 14], x = k => 44 + k * 33, y = t => 452 - (t - 14) * 14;
-add(rc.curve(temps.map((t, k) => [x(k), y(t)]), pen(3.2, 200, 0.8)));
-[0, 3, 6, 9, 12].forEach((k, i) => { add(rc.circle(x(k), y(temps[k]), 12, {...pen(2, 210 + i), fill: '#000', fillStyle: 'solid'}));
-  const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x(k)); e.setAttribute('y', y(temps[k]) - 16); e.setAttribute('text-anchor', 'middle');
-  e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', 700); e.setAttribute('font-size', 28); e.textContent = temps[k] + '°'; svg.appendChild(e);
-  const l = document.createElementNS(NS, 'text'); l.setAttribute('x', x(k)); l.setAttribute('y', 512); l.setAttribute('text-anchor', 'middle');
-  l.setAttribute('font-family', 'H'); l.setAttribute('font-size', 24); l.textContent = ['now', '14:00', '17:00', '20:00', '23:00'][i]; svg.appendChild(l); });
-["rain", "cloud", "sun", "storm", "snow"].forEach((c, i) => cond(c, 140, 570 + i * 50, 0.26, 300 + i * 40));
-[[11, 17], [12, 19], [13, 22], [12, 18], [-2, 3]].forEach(([lo, hi], i) => { const a = 262 + (lo + 4) * 5, b = 262 + (hi + 4) * 5, yy = 572 + i * 50;
-  add(rc.line(262, yy, 400, yy, pen(1.6, 400 + i))); add(rc.rectangle(a, yy - 6, b - a, 12, {...pen(2, 420 + i), fill: '#000', fillStyle: 'solid'})); });
-</script></body>
+</svg></span></span></div>
+<div style="display:flex;align-items:center;gap:20px;padding:10px 24px 0">
+<div style="font-size:104px;font-weight:700;line-height:1;letter-spacing:-4px">18°</div>
+<div style="display:flex;flex-direction:column;gap:2px"><!--
+tags: [weather, cloudy, cloud-storage, online, server, sync, internet, overcast, forecast, icloud, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea76"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="56"
+  height="56"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878" />
+</svg>
+<div style="font-size:22px;font-weight:700">Cloudy</div>
+<div style="font-size:17px;font-weight:600">High 21° · low 12°</div><div style="font-size:17px;font-weight:600;display:flex;align-items:center;gap:4px"><!--
+category: System
+tags: [umbrella, rain, weather, protection, insurance, parasol, shelter, rainy]
+version: "1.7"
+unicode: "ebf1"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="20"
+  height="20"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.4"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M4 12a8 8 0 0 1 16 0l-16 0" />
+  <path d="M12 12v6a2 2 0 0 0 4 0" />
+</svg>
+ 20%</div></div></div>
+<div class=sec style="padding-bottom:0">Today</div><div style="position:relative;flex:none;height:164px;padding-top:36px"><div style="position:absolute;left:30px;top:0"><!--
+tags: [weather, cloudy, cloud-storage, online, server, sync, internet, overcast, forecast, icloud, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea76"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="32"
+  height="32"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878" />
+</svg>
+</div><div style="position:absolute;left:127px;top:0"><!--
+tags: [light-mode, light, theme, day, brightness, weather, sunny, bright, sun]
+category: Weather
+version: "1.0"
+unicode: "eb30"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="32"
+  height="32"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+  <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+</svg>
+</div><div style="position:absolute;left:224px;top:0"><!--
+tags: [weather, cloudy, cloud-storage, online, server, sync, internet, overcast, forecast, icloud, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea76"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="32"
+  height="32"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878" />
+</svg>
+</div><div style="position:absolute;left:321px;top:0"><!--
+tags: [rain, rainy, showers, drizzle, weather, forecast, precipitation, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea72"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="32"
+  height="32"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7" />
+  <path d="M11 13v2m0 3v2m4 -5v2m0 3v2" />
+</svg>
+</div><div style="position:absolute;left:418px;top:0"><!--
+tags: [rain, rainy, showers, drizzle, weather, forecast, precipitation, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea72"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="32"
+  height="32"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7" />
+  <path d="M11 13v2m0 3v2m4 -5v2m0 3v2" />
+</svg>
+</div><svg width=432 height=128 style="margin-left:24px;font-family:M;overflow:visible"><polyline points="22,61 54,52 87,43 119,34 151,34 184,34 216,43 248,52 281,69 313,78 345,87 378,96 410,96" fill="none" stroke="#000" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><circle cx=22 cy=61 r=6 fill="#000"/><text x=22 y=47 font-size=20 font-weight=700 text-anchor=middle>18°</text><text x=22 y=124 font-size=16 font-weight=600 text-anchor=middle>now</text><circle cx=119 cy=34 r=6 fill="#000"/><text x=119 y=20 font-size=20 font-weight=700 text-anchor=middle>21°</text><text x=119 y=124 font-size=16 font-weight=600 text-anchor=middle>14:00</text><circle cx=216 cy=43 r=6 fill="#000"/><text x=216 y=29 font-size=20 font-weight=700 text-anchor=middle>20°</text><text x=216 y=124 font-size=16 font-weight=600 text-anchor=middle>17:00</text><circle cx=313 cy=78 r=6 fill="#000"/><text x=313 y=64 font-size=20 font-weight=700 text-anchor=middle>16°</text><text x=313 y=124 font-size=16 font-weight=600 text-anchor=middle>20:00</text><circle cx=410 cy=96 r=6 fill="#000"/><text x=410 y=82 font-size=20 font-weight=700 text-anchor=middle>14°</text><text x=410 y=124 font-size=16 font-weight=600 text-anchor=middle>23:00</text></svg></div>
+<div class=sec>Next days</div><div class=row style="min-height:54px;gap:14px"><b style="width:46px">Tue</b><!--
+tags: [rain, rainy, showers, drizzle, weather, forecast, precipitation, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea72"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="30"
+  height="30"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7" />
+  <path d="M11 13v2m0 3v2m4 -5v2m0 3v2" />
+</svg>
+<span style="margin-left:auto;font-size:18px;width:36px;text-align:right">11°</span><span style="position:relative;width:170px;height:12px;flex:none"><span style="position:absolute;left:0;right:0;top:5px;height:2px;background:#000"></span><span style="position:absolute;left:13px;width:78px;top:0;height:12px;border-radius:6px;background:#000"></span></span><b style="font-size:18px;width:36px">17°</b></div><div class=row style="min-height:54px;gap:14px"><b style="width:46px">Wed</b><!--
+tags: [weather, cloudy, cloud-storage, online, server, sync, internet, overcast, forecast, icloud, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea76"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="30"
+  height="30"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6.657 18c-2.572 0 -4.657 -2.007 -4.657 -4.483c0 -2.475 2.085 -4.482 4.657 -4.482c.393 -1.762 1.794 -3.2 3.675 -3.773c1.88 -.572 3.956 -.193 5.444 1c1.488 1.19 2.162 3.007 1.77 4.769h.99c1.913 0 3.464 1.56 3.464 3.486c0 1.927 -1.551 3.487 -3.465 3.487h-11.878" />
+</svg>
+<span style="margin-left:auto;font-size:18px;width:36px;text-align:right">12°</span><span style="position:relative;width:170px;height:12px;flex:none"><span style="position:absolute;left:0;right:0;top:5px;height:2px;background:#000"></span><span style="position:absolute;left:26px;width:92px;top:0;height:12px;border-radius:6px;background:#000"></span></span><b style="font-size:18px;width:36px">19°</b></div><div class=row style="min-height:54px;gap:14px"><b style="width:46px">Thu</b><!--
+tags: [light-mode, light, theme, day, brightness, weather, sunny, bright, sun]
+category: Weather
+version: "1.0"
+unicode: "eb30"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="30"
+  height="30"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+  <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+</svg>
+<span style="margin-left:auto;font-size:18px;width:36px;text-align:right">13°</span><span style="position:relative;width:170px;height:12px;flex:none"><span style="position:absolute;left:0;right:0;top:5px;height:2px;background:#000"></span><span style="position:absolute;left:39px;width:118px;top:0;height:12px;border-radius:6px;background:#000"></span></span><b style="font-size:18px;width:36px">22°</b></div><div class=row style="min-height:54px;gap:14px"><b style="width:46px">Fri</b><!--
+tags: [storm, thunderstorm, lightning, thunder, weather, forecast, rain, cloud]
+category: Weather
+version: "1.0"
+unicode: "ea74"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="30"
+  height="30"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M7 18a4.6 4.4 0 0 1 0 -9a5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-1" />
+  <path d="M13 14l-2 4l3 0l-2 4" />
+</svg>
+<span style="margin-left:auto;font-size:18px;width:36px;text-align:right">12°</span><span style="position:relative;width:170px;height:12px;flex:none"><span style="position:absolute;left:0;right:0;top:5px;height:2px;background:#000"></span><span style="position:absolute;left:26px;width:78px;top:0;height:12px;border-radius:6px;background:#000"></span></span><b style="font-size:18px;width:36px">18°</b></div><div class=row style="min-height:54px;gap:14px"><b style="width:46px">Sat</b><!--
+tags: [light-mode, light, theme, day, brightness, weather, sunny, bright, sun]
+category: Weather
+version: "1.0"
+unicode: "eb30"
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="30"
+  height="30"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#000"
+  stroke-width="2.2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+  <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+</svg>
+<span style="margin-left:auto;font-size:18px;width:36px;text-align:right">12°</span><span style="position:relative;width:170px;height:12px;flex:none"><span style="position:absolute;left:0;right:0;top:5px;height:2px;background:#000"></span><span style="position:absolute;left:26px;width:118px;top:0;height:12px;border-radius:6px;background:#000"></span></span><b style="font-size:18px;width:36px">21°</b></div></body>

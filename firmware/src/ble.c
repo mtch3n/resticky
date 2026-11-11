@@ -29,10 +29,6 @@
 #define TYPE_TIME 13
 #define TYPE_INSTALL 16
 #define TYPE_PHOTO 17
-#define TYPE_OTA_BEGIN 18
-#define TYPE_OTA_DATA 19
-#define TYPE_OTA_END 20
-#define TYPE_OTA_STATUS 21
 #define CHUNK_HEADER 31
 #define ACK_LEN 8
 #define ACK_TIMEOUT_MS 15000
@@ -58,49 +54,6 @@ static QueueHandle_t acks;
 EXT_RAM_BSS_ATTR static uint8_t rx_frame[RX_MAX], rx_in[RX_IN];
 static size_t rx_len;
 
-static void ota_status(const char *state)
-{
-    char j[64];
-    snprintf(j, sizeof j, "{\"state\":\"%s\",\"percent\":%d}", state, ota_stream_percent());
-    ble_send_json(TYPE_OTA_STATUS, j);
-}
-
-static void ota_frame(uint8_t type, const uint8_t *p, size_t n)
-{
-    static int shown = -1;
-    if (type == TYPE_OTA_BEGIN) {
-        cJSON *j = cJSON_ParseWithLength((const char *)p, n);
-        const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(j, "version"));
-        double size = cJSON_GetNumberValue(cJSON_GetObjectItem(j, "size"));
-        bool ok = v && ota_stream_begin(v, (size_t)size);
-        cJSON_Delete(j);
-        shown = -1;
-        net_ota_progress(ok ? 0 : -1);
-        ota_status(ok ? "ready" : "error");
-        return;
-    }
-    if (type == TYPE_OTA_DATA) {
-        uint32_t off;
-        if (n < 4) return;
-        memcpy(&off, p, 4);
-        if (!ota_stream_write(off, p + 4, n - 4)) {
-            net_ota_progress(-1);
-            return ota_status("error");
-        }
-        int pct = ota_stream_percent();
-        if (pct / 5 != shown) {
-            shown = pct / 5;
-            net_ota_progress(pct);
-            ota_status("writing");
-        }
-        return;
-    }
-    bool ok = ota_stream_end();
-    ota_status(ok ? "ok" : "error");
-    net_ota_progress(ok ? 100 : -1);
-    if (ok) net_restart_soon();
-}
-
 static void on_frame(uint8_t type, const uint8_t *p, size_t n)
 {
     if (type == TYPE_ACK && n == ACK_LEN) {
@@ -122,8 +75,8 @@ static void on_frame(uint8_t type, const uint8_t *p, size_t n)
         net_checkin_soon();
         return;
     }
-    if (type == TYPE_OTA_BEGIN || type == TYPE_OTA_DATA || type == TYPE_OTA_END) {
-        ota_frame(type, p, n);
+    if (type >= BLE_TYPE_OTA_BEGIN && type <= BLE_TYPE_OTA_CANCEL && type != BLE_TYPE_OTA_STATUS) {
+        net_ota_frame(type, p, n);
         return;
     }
     if (type == TYPE_PHOTO) {

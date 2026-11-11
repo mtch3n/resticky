@@ -72,6 +72,9 @@ low power and storage use that we can profile.
 ## Android app facts (layer 4, Wi-Fi part, 2026-11-10)
 
 - Build: `cd app && ./gradlew :androidApp:assembleDebug`. Install: `adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk`.
+  Release: `./gradlew :androidApp:assembleRelease` (R8 code and resource shrinking, keep rules in `androidApp/proguard-rules.pro`,
+  signed with the debug key, so a debug and a release build can replace each other; 73 MB against 118 MB). CI publishes the
+  release build as `resticky-android.apk` (the phone updater uses it) and the debug build as `resticky-android-debug.apk`.
   The build needs Gradle 9.6.1 (AGP 9.5.1) and compileSdk 36 (Compose BOM 2026.06.01; newer BOMs need API 37).
 - The hub service is exported only to holders of `android.permission.DUMP` (adb shell), for tests with a locked phone:
   `adb shell am start-foreground-service -n dev.resticky.app/.HubService --ez mdns false`. With mDNS on, the
@@ -115,7 +118,7 @@ low power and storage use that we can profile.
 - Pages (2026-11-10, board `mockups/app/board-app.png`): tabs Hub, Transcripts, Snap (raised camera button in the
   middle, camera design A), To-do, Photos. Hub: the Sticky card (tap: Sticky settings; ⌄: "Choose a Sticky") and
   tiles Sticky, Weather, Places, Calendars, Health, App settings. Sticky settings: pairing, Clock (face, 12/24 h),
-  Weather (style, location, units, refresh), Sounds on the Sticky (`beep`), Wi-Fi networks, Health, firmware,
+  Weather (style, location, units, refresh), Feedback on the Sticky (`sound`: off, beep, buzz), Wi-Fi networks, Health, firmware,
   Forget. App settings: hub switch, Models, Pipeline, Places, Calendars, Updates, Transcribe, Hubs. The CDM sheet
   shows all associations, but the app links only to the first one.
 - Transcript page: summary, to-dos, Marks chips, timed lines with speaker chips (tap: name the speaker), photos in
@@ -130,6 +133,18 @@ low power and storage use that we can profile.
   in the app). DeepFilterNet 3 (libDF, Rust) was not measured: the permission system blocked the cargo build.
 - Updates (2026-11-11): only by hand (Check for updates); firmware goes to the Sticky over BLE (frames 18–21).
   See "Firmware updates" in `protocol.md`.
+- Firmware push test (2026-11-11, phone 0.14.5 build, Sticky 0.14.4, release 0.14.5): check and download work
+  (2.78 MB in about 1 s, streamed to `files/firmware`). The BLE push reached `ready`, then 60 % at about 4 KB/s, and
+  then the Sticky stopped answering a write for 30 s (Android `gatt_rsp_timeout`, status 133) and the link dropped.
+  Earlier runs also got ATT status 17 (insufficient resources) from the Sticky; the phone now retries a failed write
+  (10 times, 200 ms apart) instead of dropping it, which corrupted the frame stream before. The Sticky still reports
+  0.14.4. Likely firmware cause: the OTA flash writes run inside the NimBLE GATT callback (and `net_ota_progress`
+  waits on the net lock), so the host stalls while Wi-Fi and the audio spool also use the flash.
+- Firmware 0.14.6 (not flashed on 2026-11-11) moves the OTA writes to the net task and adds update mode, the 16 KiB
+  window and `ota_cancel`; the phone push now follows "Firmware push" in `protocol.md`. Not tested end to end yet.
+- Test hook (adb shell only, the service needs `android.permission.DUMP`):
+  `adb shell am start-foreground-service -n dev.resticky.app/.HubService --es firmware check|update|cancel`. The steps log
+  under the tag `resticky` (`sticky update state=…`, `download …`, `ble ota_status …`).
 - Phone tests that need the device: `./gradlew :androidApp:assembleDebugAndroidTest`, install both APKs with
   `adb install -r` (never `connectedAndroidTest`: it uninstalls the app and its data), then
   `adb shell am instrument -w dev.resticky.app.test/androidx.test.runner.AndroidJUnitRunner`. `EngineTest` plays

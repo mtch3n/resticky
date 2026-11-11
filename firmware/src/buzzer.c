@@ -1,4 +1,5 @@
 #include "buzzer.h"
+#include "settings.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
@@ -8,9 +9,9 @@
 #define BUZZER_CHANNEL LEDC_CHANNEL_1
 
 static int pin = -1;
-static bool enabled = true;
+static int sound = SOUND_BEEP;
 
-void buzzer_enable(bool on) { enabled = on; }
+void buzzer_set_sound(int s) { sound = s; }
 
 static void attach(int gpio)
 {
@@ -21,15 +22,19 @@ static void attach(int gpio)
     ledc_channel_config(&c);
 }
 
-static void tone(int hz, int ms)
+static void tone_duty(int hz, int ms, int duty)
 {
     ledc_set_freq(LEDC_LOW_SPEED_MODE, BUZZER_TIMER, hz);
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL, 512);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL);
     vTaskDelay(pdMS_TO_TICKS(ms));
     ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL, 0);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL);
 }
+
+static void tone(int hz, int ms) { tone_duty(hz, ms, 512); }
+
+static void buzz(int ms) { tone_duty(170, ms, 384); }
 
 void buzzer_init(int gpio)
 {
@@ -39,12 +44,20 @@ void buzzer_init(int gpio)
 
 void buzzer_click(void)
 {
-    if (pin >= 0 && enabled) tone(2700, 12);
+    if (pin < 0 || sound == SOUND_OFF) return;
+    if (sound == SOUND_BUZZ) buzz(25);
+    else tone(2700, 12);
 }
 
 void buzzer_mark(void)
 {
-    if (pin < 0 || !enabled) return;
+    if (pin < 0 || sound == SOUND_OFF) return;
+    if (sound == SOUND_BUZZ) {
+        buzz(70);
+        vTaskDelay(pdMS_TO_TICKS(70));
+        buzz(70);
+        return;
+    }
     tone(2200, 60);
     vTaskDelay(pdMS_TO_TICKS(40));
     tone(3000, 80);

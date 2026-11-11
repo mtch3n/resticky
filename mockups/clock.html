@@ -1,7 +1,48 @@
-<!doctype html><meta charset=utf-8><style>@font-face{font-family:H;src:url(assets/fonts/Caveat.ttf)}@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
-*{margin:0;padding:0;box-sizing:border-box}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:M}
-.status{position:absolute;top:0;left:0;width:480px;height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
-.h{font-family:H;font-weight:700;position:absolute}</style><body><div class=status><span style="display:flex;align-items:center;gap:10px"><svg
+<!doctype html><meta charset=utf-8><style>
+@font-face{font-family:M;src:url(assets/fonts/Montserrat.ttf)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:480px;height:800px;overflow:hidden;background:#fff;color:#000;font-family:M;font-weight:500;display:flex;flex-direction:column}
+.status{height:44px;display:flex;justify-content:space-between;align-items:center;padding:0 24px;font-size:18px;font-weight:600}
+.status span{display:flex;align-items:center;gap:6px}
+.title{font-family:M;font-weight:700;font-size:30px;padding:2px 24px 0}
+.clock{font-size:96px;font-weight:700;letter-spacing:-3px;line-height:1;padding:8px 24px 0}
+.date{font-size:22px;font-weight:600;padding:6px 26px 0}
+.apps{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px 0;padding:28px 12px}
+.app{display:flex;flex-direction:column;align-items:center;gap:10px;font-size:19px;font-weight:600}
+.ic{width:104px;height:104px;border:3px solid #000;border-radius:28px;display:flex;align-items:center;justify-content:center}
+.ic.on{background:#000}
+.sub{font-size:15px;font-weight:600;margin-top:-6px}
+.card{margin:0 20px;border:3px solid #000;border-radius:24px;padding:20px 22px;display:flex;flex-direction:column;gap:12px}
+.pill{display:inline-flex;align-items:center;gap:8px;background:#000;color:#fff;border-radius:999px;padding:6px 16px;font-size:18px;font-weight:700}
+.nums{display:flex;justify-content:space-between}
+.nums div{font-size:16px;font-weight:600} .nums b{display:block;font-size:34px;font-weight:700}
+.btn{height:64px;border:3px solid #000;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:20px;font-weight:700}
+.btn.on{background:#000;color:#fff}
+.row{min-height:64px;display:flex;align-items:center;gap:16px;padding:0 24px;font-size:21px;font-weight:500}
+.status + .row{margin-top:12px}
+.row .v{margin-left:auto;font-weight:500;font-size:18px;display:flex;align-items:center;gap:4px}
+.quote{font-size:21px;line-height:1.4;font-weight:500}
+.tabs{margin-top:auto;height:72px;border-top:3px solid #000;display:flex}
+.tabs div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:15px;font-weight:700}
+.tabs .on{background:#000;color:#fff}
+
+.hdr{display:flex;align-items:center;gap:4px;padding:2px 16px 10px;font-size:30px;font-weight:700;border-bottom:2px solid #000}
+.sec{font-size:16px;font-weight:800;padding:24px 24px 6px;text-transform:uppercase;letter-spacing:1.5px}
+.seg{display:flex;margin:0 24px;border:3px solid #000;border-radius:999px;overflow:hidden;height:60px}
+.seg div{flex:1;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700}
+.seg .on{background:#000;color:#fff}
+.sw{margin-left:auto;width:104px;height:48px;border:3px solid #000;border-radius:999px;position:relative;display:flex;align-items:center;justify-content:flex-end;padding:0 14px;font-size:17px;font-weight:800;letter-spacing:1px}
+.sw:after{content:'';position:absolute;top:5px;left:5px;width:32px;height:32px;border-radius:50%;background:#000}
+.sw.on{background:#000;color:#fff;justify-content:flex-start}.sw.on:after{left:auto;right:5px;background:#fff}
+.step{display:flex;align-items:center;gap:14px;margin-left:auto}
+.step b{font-size:24px;min-width:80px;text-align:center}
+.rb{width:52px;height:52px;border:3px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700}
+.bar{margin:0 24px;height:28px;border:3px solid #000;border-radius:999px;overflow:hidden}
+.bar div{height:100%;background:#000}
+.btns{display:flex;flex-direction:column;gap:14px;padding:18px 24px}
+.chk{width:40px;height:40px;border:3px solid #000;border-radius:10px;display:flex;align-items:center;justify-content:center;flex:none}
+.chk.on{background:#000}
+</style><body><div class=status><span style="gap:10px"><svg
   xmlns="http://www.w3.org/2000/svg"
   width="22"
   height="22"
@@ -18,7 +59,7 @@
   <path d="M9.172 15.172a4 4 0 0 1 5.656 0" />
   <path d="M6.343 12.343a8 8 0 0 1 11.314 0" />
   <path d="M3.515 9.515c4.686 -4.687 12.284 -4.687 17 0" />
-</svg><b style="font-size:22px">Clock</b></span><span style="display:flex;align-items:center;gap:6px">78% <svg
+</svg><b style="font-size:22px;font-weight:700">Clock</b></span><span style="gap:16px"><span style="display:flex;align-items:center;gap:6px">78% <svg
   xmlns="http://www.w3.org/2000/svg"
   width="28"
   height="28"
@@ -35,22 +76,7 @@
   <path d="M7 10l0 4" />
   <path d="M10 10l0 4" />
   <path d="M13 10l0 4" />
-</svg></span></div><svg id=s width=480 height=800 style='position:absolute;left:0;top:0'></svg><script src='assets/js/rough.js'></script><script src='assets/js/art.js'></script><script>const EVENTS = [["11:00", "Billing review"], ["13:30", "Lunch with Jo"], ["15:00", "Product launch sync"], ["18:30", "Gym"]];
-const text = (x, y, t, size, anchor = 'middle', weight = 700) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y);
-  e.setAttribute('text-anchor', anchor); e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', weight); e.setAttribute('font-size', size); e.textContent = t; svg.appendChild(e); };
-const agenda = (top) => { text(24, top, 'today', 32, 'start');
-  EVENTS.forEach(([t, n], i) => { const y = top + 44 + i * 50; add(rc.circle(36, y - 7, 10, {...pen(2, 70 + i), fill: '#000', fillStyle: 'solid'}));
-    text(56, y, t, 28, 'start'); text(140, y, n, 28, 'start', 500); }); };
-
-const cx = 240, cy = 226, r = 150;
-add(rc.circle(cx, cy, r * 2, pen(3.4, 1, 1.4)));
-add(rc.circle(cx, cy, r * 2 - 18, pen(1.6, 2, 1.6)));
-for (let k = 0; k < 60; k++) { if (k % 5) { const a = k * Math.PI / 30; add(rc.circle(cx + (r - 20) * Math.cos(a), cy + (r - 20) * Math.sin(a), 3, {...pen(1, 100 + k), fill: '#000', fillStyle: 'solid'})); } }
-for (let k = 1; k <= 12; k++) { const a = (k * 30 - 90) * Math.PI / 180; text(cx + (r - 46) * Math.cos(a), cy + (r - 46) * Math.sin(a) + 13, k, k % 3 ? 30 : 40); }
-const hand = (ang, len, w, s) => { const a = (ang - 90) * Math.PI / 180, x = cx + len * Math.cos(a), y = cy + len * Math.sin(a), nx = -Math.sin(a) * w, ny = Math.cos(a) * w;
-  add(rc.polygon([[cx + nx, cy + ny], [x, y], [cx - nx, cy - ny], [cx - 0.25 * len * Math.cos(a), cy - 0.25 * len * Math.sin(a)]], {...pen(2, s), fill: '#000', fillStyle: 'solid'})); };
-hand((10 + 42 / 60) * 30, 78, 9, 3); hand(42 * 6, 120, 6, 4);
-add(rc.circle(cx, cy, 16, {...pen(2, 5), fill: '#fff', fillStyle: 'solid'}));
-text(240, 432, 'tuesday, 10 november', 40);
-agenda(492);
-</script></body>
+</svg></span></span></div>
+<div style="padding:22px 24px 0"><div style="font-size:120px;font-weight:700;letter-spacing:-5px;line-height:1">10:42</div>
+<div style="font-size:24px;font-weight:600;margin-top:6px">Tuesday, 10 November</div></div>
+<div class=sec style="padding-top:28px">Today</div><div class=row><b style="width:76px;font-size:20px">11:00</b>Billing review</div><div class=row><b style="width:76px;font-size:20px">13:30</b>Lunch with Jo</div><div class=row><b style="width:76px;font-size:20px">15:00</b>Product launch sync</div><div class=row><b style="width:76px;font-size:20px">18:30</b>Gym</div><div class=sec>Tomorrow</div><div class=row><b style="width:76px;font-size:20px">09:30</b>Stand-up</div></body>

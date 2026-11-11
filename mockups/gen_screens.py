@@ -82,7 +82,8 @@ page3("recorder", H("Recorder") + REC("Recording", "2 h 14 today", "Mute", True)
 <div class=quote>“…so we ship the billing report on Friday, and Sam checks the Q3 numbers first.”</div></div>''')
 page3("settings", T("Settings") + ''.join(
  f'<div class=row>{icon(i,32)}{n}<span class=v>{v} {icon("chevron-right",24)}</span></div>'
- for i,n,v in [("microphone","Recording","16 kbps"),("wifi","Wi-Fi","HomeWiFi"),("device-mobile-rotated","Hub","OK"),("cloud","Weather","Phone"),("hand-finger","Buttons",""),("device-mobile-rotated","Device","v0.4.3")]) + BACK)
+ for i,n,v in [("microphone","Recording","16 kbps"),("wifi","Wi-Fi","HomeWiFi"),("device-mobile-rotated","Hub","OK"),("cloud","Weather","Phone"),("hand-finger","Buttons",""),("home","Home screen","Apps"),("device-mobile-rotated","SD card","29 GB free"),("device-mobile-rotated","Device","v0.14.6")]) +
+ '<div style="flex:1"></div><div class=btns style="padding-bottom:28px"><div class=btn>Check for updates</div></div>' + BACK)
 
 
 page3("recorder-muted", H("Recorder") + REC("Muted", "12 min", "Record", False))
@@ -119,7 +120,8 @@ page3("settings-wifi", T("Wi-Fi") + '<div class=sec>Saved networks</div>' + ''.j
 page3("settings-hub", T("Hub") + f'''<div class=row>Name<span class=v>laptop</span></div>
 <div class=row>Status<span class=v>OK</span></div>
 <div class=btns><div class=btn>Test connection</div></div>''' + BACK)
-page3("settings-device", T("Device") + f'''<div class=row>Firmware<span class=v>0.4.3</span></div>
+page3("settings-device", T("Device") + f'''<div class=row>Firmware<span class=v>0.14.6</span></div>
+<div class=sec>Feedback</div><div class=seg><div>Off</div><div class=on>Beep</div><div>Buzz</div></div>
 <div style="flex:1"></div><div class=btns style="padding-bottom:28px"><div class=btn>Restart</div><div class=btn>Shut down</div></div>''' + BACK)
 
 

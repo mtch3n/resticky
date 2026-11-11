@@ -1,0 +1,7 @@
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keep class com.google.ai.edge.litertlm.** { *; }
+-keep class dev.resticky.app.** { native <methods>; }
+-dontwarn org.slf4j.**
+-dontwarn java.lang.management.**
+-dontwarn io.netty.**
+-dontwarn reactor.blockhound.**

@@ -79,7 +79,7 @@ bool ota_is_newer(const char *version)
     return false;
 }
 
-bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb progress)
+bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb progress, const volatile bool *cancel)
 {
     char url[160];
     snprintf(url, sizeof url, "%s/api/firmware/bin?version=%s", base_url, info->version);
@@ -89,7 +89,8 @@ bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb p
                                     .crt_bundle_attach = info->url[0] ? esp_crt_bundle_attach : NULL};
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     esp_ota_handle_t h = 0;
-    bool ok = buf && slot && esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0;
+    bool ok = c && buf && slot && info->size > 0 && info->size <= slot->size && esp_http_client_open(c, 0) == ESP_OK &&
+              esp_http_client_fetch_headers(c) >= 0;
     for (int hops = 0; ok && hops < 4; hops++) {
         int st = esp_http_client_get_status_code(c);
         if (st != 301 && st != 302 && st != 303 && st != 307 && st != 308) break;
@@ -99,7 +100,7 @@ bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb p
     ok = ok && esp_http_client_get_status_code(c) == 200 && esp_ota_begin(slot, info->size, &h) == ESP_OK;
     size_t done = 0;
     int last = -1;
-    while (ok && done < info->size) {
+    while (ok && done < info->size && !*cancel) {
         int n = esp_http_client_read(c, (char *)buf, BLOCK);
         if (n <= 0) break;
         esp_err_t w = esp_ota_write(h, buf, n);
@@ -109,7 +110,7 @@ bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb p
         int pct = done * 100 / info->size;
         if (pct != last) progress(last = pct);
     }
-    esp_http_client_cleanup(c);
+    if (c) esp_http_client_cleanup(c);
     free(buf);
     ok = ok && done == info->size;
     esp_err_t end = h && ok ? esp_ota_end(h) : ESP_FAIL;
@@ -130,6 +131,15 @@ bool ota_install(const char *base_url, const ota_info_t *info, ota_progress_cb p
 static esp_ota_handle_t stream;
 static const esp_partition_t *stream_slot;
 static size_t stream_size, stream_done;
+
+void ota_stream_abort(void)
+{
+    if (stream) esp_ota_abort(stream);
+    stream = 0;
+    stream_size = stream_done = 0;
+}
+
+size_t ota_stream_done(void) { return stream_done; }
 
 bool ota_stream_begin(const char *version, size_t size)
 {

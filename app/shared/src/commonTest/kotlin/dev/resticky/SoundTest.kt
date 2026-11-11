@@ -7,24 +7,26 @@ import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class BeepTest {
+class SoundTest {
     @Test
     fun theNewestChangeWins() = runTest {
-        val root = Path(SystemTemporaryDirectory, "resticky-beep-${Random.nextLong().toULong()}")
+        val root = Path(SystemTemporaryDirectory, "resticky-sound-${Random.nextLong().toULong()}")
         val store = Store(root)
         val hub = Hub(store, Pipeline(store, { emptyList() }, { _, _ -> Summary("", "") }, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})
-        suspend fun report(beep: Boolean?) = hub.checkin(Checkin("ab", beep = beep), "wifi")
+        suspend fun report(sound: String?) = hub.checkin(Checkin("ab", sound = sound), "wifi")
         report(null)
-        assertEquals(true, hub.beep.value)
-        report(false)
-        assertEquals(false, hub.beep.value)
-        hub.setBeep(true)
-        report(false)
-        assertEquals(true, hub.beep.value)
-        report(true)
-        report(false)
-        assertEquals(false, hub.beep.value)
-        assertEquals(false, hub.display().beep)
+        assertEquals("beep", hub.sound.value)
+        report("buzz")
+        assertEquals("buzz", hub.sound.value)
+        report("loud")
+        assertEquals("buzz", hub.sound.value)
+        hub.setSound("off")
+        report("buzz")
+        assertEquals("off", hub.sound.value)
+        report("off")
+        report("beep")
+        assertEquals("beep", hub.sound.value)
+        assertEquals("beep", hub.display().sound)
     }
 
     @Test

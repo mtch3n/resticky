@@ -58,6 +58,11 @@ class HubService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val app = application as HubApp
         intent?.getStringExtra("passkey")?.let { app.ble.enterPasskey(it) }
+        when (intent?.getStringExtra("firmware")) {
+            "check" -> app.stickyUpdate.check()
+            "update" -> app.stickyUpdate.update()
+            "cancel" -> app.stickyUpdate.cancel()
+        }
         if (scope != null) return START_STICKY
         startForeground(1, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         mdns = intent?.getBooleanExtra("mdns", true) != false

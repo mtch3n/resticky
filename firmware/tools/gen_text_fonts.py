@@ -25,6 +25,7 @@ FONTS = [
     ("clock_112", "Montserrat-Bold.ttf", 112, [0x20] + list(range(0x30, 0x3B)) + [0xB0, 0x2D, 0x25]),
     ("hand_28", "Caveat.ttf", 28, CODEPOINTS, 700),
     ("hand_40", "Caveat.ttf", 40, CODEPOINTS, 700),
+    ("hand_56", "Caveat.ttf", 56, [0x20, 0x2E] + list(range(0x30, 0x3A)) + list(range(0x61, 0x7B)), 700),
     ("hand_64", "Caveat.ttf", 64, [0x20, 0x2D] + list(range(0x30, 0x3A)) + [0xB0], 700),
     ("hand_88", "Caveat.ttf", 88, [0x20, 0x27, 0x2D] + list(range(0x61, 0x7B)), 700),
     ("hand_128", "Caveat.ttf", 128, [0x20, 0x2D] + list(range(0x30, 0x3A)) + [0xB0], 700),

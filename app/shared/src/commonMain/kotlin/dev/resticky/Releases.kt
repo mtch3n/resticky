@@ -4,7 +4,6 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,11 +18,15 @@ import kotlinx.io.readString
 import kotlinx.io.writeString
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import io.ktor.client.plugins.onDownload
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.contentLength
+import io.ktor.utils.io.readAvailable
 import kotlin.time.Clock
 
 const val RELEASES_REPO = "mtch3n/resticky"
 const val APK_ASSET = "resticky-android.apk"
+private const val DOWNLOAD_BUFFER = 64 * 1024
 private const val LATEST = "https://api.github.com/repos/$RELEASES_REPO/releases/latest"
 private val FIRMWARE_ASSET = Regex("""^resticky-firmware-(\d+\.\d+\.\d+)\.bin$""")
 private val SEMVER = Regex("""(\d+)\.(\d+)\.(\d+)""")
@@ -57,7 +60,9 @@ class FirmwareShelf(val dir: Path) {
             .maxWithOrNull { a, b -> if (isNewer(a.first, b.first)) 1 else if (isNewer(b.first, a.first)) -1 else 0 }
     }
 
-    fun has(version: String) = SystemFileSystem.exists(Path(dir, "$version.bin"))
+    fun path(version: String) = Path(dir, "$version.bin")
+
+    fun has(version: String) = SystemFileSystem.exists(path(version))
 
     fun read(version: String): ByteArray? {
         if (SEMVER.matchEntire(version) == null) return null
@@ -91,7 +96,8 @@ class Releases(private val cacheFile: Path, private val log: (String) -> Unit, p
 
     suspend fun check(): Release? = lock.withLock {
         val now = Clock.System.now().toEpochMilliseconds()
-        if (now < cache.retryMs) return@withLock cache.release
+        log("INFO releases check start cached=${cache.release?.version}")
+        if (now < cache.retryMs) return@withLock cache.release.also { log("WARN releases rate limited until=${cache.retryMs}") }
         val res = runCatching {
             http.get(LATEST) {
                 header("User-Agent", userAgent)
@@ -122,19 +128,50 @@ class Releases(private val cacheFile: Path, private val log: (String) -> Unit, p
         cache.release
     }
 
-    suspend fun download(asset: ReleaseAsset, progress: (Long, Long) -> Unit = { _, _ -> }): ByteArray {
-        val res = http.get(asset.url) {
-            header("User-Agent", userAgent)
-            onDownload { done, total -> progress(done, total ?: asset.size) }
+    suspend fun download(asset: ReleaseAsset, dest: Path, progress: (Long, Long) -> Unit = { _, _ -> }) {
+        val part = Path("$dest.part")
+        dest.parent?.let { SystemFileSystem.createDirectories(it) }
+        log("INFO download start name=${asset.name} size=${asset.size}")
+        try {
+            fetch(asset, part, progress)
+        } catch (e: Throwable) {
+            SystemFileSystem.delete(part, mustExist = false)
+            throw e
         }
-        check(res.status == HttpStatusCode.OK) { "download failed: ${res.status.value}" }
-        return res.bodyAsBytes()
+        SystemFileSystem.atomicMove(part, dest)
+        log("INFO download done name=${asset.name}")
     }
+
+    private suspend fun fetch(asset: ReleaseAsset, part: Path, progress: (Long, Long) -> Unit) =
+        http.prepareGet(asset.url) { header("User-Agent", userAgent) }.execute { res ->
+            check(res.status == HttpStatusCode.OK) { "download failed: ${res.status.value}" }
+            val total = res.contentLength() ?: asset.size
+            val channel = res.bodyAsChannel()
+            val buf = ByteArray(DOWNLOAD_BUFFER)
+            var done = 0L
+            var shown = -1L
+            SystemFileSystem.sink(part).buffered().use { sink ->
+                while (true) {
+                    val n = channel.readAvailable(buf, 0, buf.size)
+                    if (n < 0) break
+                    sink.write(buf, 0, n)
+                    done += n
+                    progress(done, total)
+                    val pct = if (total > 0) done * 100 / total else 0
+                    if (pct / 10 != shown) {
+                        shown = pct / 10
+                        log("INFO download name=${asset.name} percent=$pct")
+                    }
+                }
+            }
+            check(total <= 0 || done == total) { "download incomplete: $done of $total bytes" }
+            check(asset.size <= 0 || done == asset.size) { "download size $done is not the release size ${asset.size}" }
+        }
 
     suspend fun mirrorFirmware(shelf: FirmwareShelf) {
         val (version, asset) = latest.value?.firmware ?: return
         if (shelf.has(version)) return
-        runCatching { shelf.write(version, download(asset)) }
+        runCatching { download(asset, shelf.path(version)) }
             .onSuccess { log("INFO firmware mirrored version=$version") }
             .onFailure { log("WARN firmware mirror failed version=$version err=${it.message}") }
     }

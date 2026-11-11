@@ -51,6 +51,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.withStyle
 import dev.resticky.CLEANED
+import dev.resticky.SOUNDS
 import dev.resticky.cleanText
 import dev.resticky.skipRanges
 import androidx.compose.ui.text.font.FontWeight
@@ -863,7 +864,7 @@ private fun CodeEntry(enabled: Boolean, onCode: (String) -> Unit) {
     }
 }
 
-class StickyDisplay(val home: String, val clock: String, val weather: String, val beep: Boolean, val wifi: String, val health: String, val firmware: FirmwareView)
+class StickyDisplay(val home: String, val clock: String, val weather: String, val sound: String, val wifi: String, val health: String, val firmware: FirmwareView)
 
 class FirmwareView(val current: String?, val latest: String?, val checkedMs: Long, val state: FwState, val connected: Boolean) {
     val newer: Boolean get() = latest != null && current != null && isNewer(latest, current)
@@ -871,13 +872,15 @@ class FirmwareView(val current: String?, val latest: String?, val checkedMs: Lon
 }
 
 @Composable
-fun FirmwareRow(name: String, f: FirmwareView, first: Boolean, check: () -> Unit, update: () -> Unit) {
+fun FirmwareRow(name: String, f: FirmwareView, first: Boolean, check: () -> Unit, update: () -> Unit, cancel: () -> Unit) {
     val (title, subtitle, percent) = when (val s = f.state) {
         FwState.Checking -> Triple(name, "Checking GitHub…", null)
-        is FwState.Downloading -> Triple("Downloading ${s.version}", "${s.percent} % · from GitHub", s.percent)
-        is FwState.Sending -> Triple("Sending to the Sticky", "${s.percent} % · over Bluetooth · keep the phone near", s.percent)
-        is FwState.Restarting -> Triple("The Sticky restarts", "Waiting for it to connect again", null)
-        is FwState.Updated -> Triple("Updated to ${s.version}", "The Sticky checks itself for 3 minutes", null)
+        is FwState.Downloading -> Triple("1 Download ${s.version}", "${s.percent} % · from GitHub", s.percent)
+        is FwState.Sending -> Triple("2 Send to the Sticky", "${s.percent} %${if (s.kbps > 0) " · ${s.kbps} KB/s" else ""} · keep the phone near", s.percent)
+        is FwState.Installing -> Triple("3 Install ${s.version}", "The Sticky checks the image", null)
+        is FwState.Restarting -> Triple("3 Install ${s.version}", "The Sticky restarts · waiting for it to connect again", null)
+        FwState.Cancelled -> Triple("Update cancelled", "Update now starts again from the download", null)
+        is FwState.Updated -> Triple("4 Done · ${s.version}", "The Sticky checks itself for 3 minutes", null)
         is FwState.RolledBack -> Triple("Rolled back to ${s.version}", "The new firmware failed its check", null)
         is FwState.Failed -> Triple("Update failed", s.message, null)
         FwState.Idle -> Triple(
@@ -885,7 +888,8 @@ fun FirmwareRow(name: String, f: FirmwareView, first: Boolean, check: () -> Unit
             when {
                 f.current == null -> "Unknown until the first check-in"
                 f.newer -> "Latest ${f.latest} · ${f.checked}" + if (f.connected) "" else " · connect the Sticky over Bluetooth"
-                else -> "Up to date · ${f.checked}"
+                f.latest == null -> "No release found · ${f.checked}"
+                else -> "Up to date · latest release ${f.latest} · ${f.checked}"
             },
             null,
         )
@@ -905,7 +909,8 @@ fun FirmwareRow(name: String, f: FirmwareView, first: Boolean, check: () -> Unit
         when (f.state) {
             FwState.Idle -> if (f.newer && f.connected) Pill("Update now", Ink.black, Ink.white, onClick = update)
                 else Pill("Check for updates", Ink.white, onClick = check)
-            is FwState.Failed, is FwState.RolledBack -> Pill("Try again", Ink.white, onClick = update)
+            is FwState.Failed, is FwState.RolledBack, FwState.Cancelled -> Pill("Try again", Ink.white, onClick = update)
+            is FwState.Downloading, is FwState.Sending -> Pill("Cancel", Ink.white, onClick = cancel)
             is FwState.Updated -> Pill("Check for updates", Ink.white, onClick = check)
             else -> Unit
         }
@@ -924,6 +929,7 @@ fun UpdatesScreen(
     check: () -> Unit,
     installApp: () -> Unit,
     updateSticky: () -> Unit,
+    cancelSticky: () -> Unit,
 ) = Page("Updates", back) {
     item { Section("Phone app") }
     gap()
@@ -952,7 +958,7 @@ fun UpdatesScreen(
     gap()
     item { Section("Sticky firmware") }
     gap()
-    item { CardList { FirmwareRow(sticky, firmware, true, check, updateSticky) } }
+    item { CardList { FirmwareRow(sticky, firmware, true, check, updateSticky, cancelSticky) } }
     gap()
     item {
         Text(
@@ -984,9 +990,10 @@ fun StickyScreen(
     onCode: (String) -> Unit,
     pair: () -> Unit,
     forget: () -> Unit,
-    setBeep: (Boolean) -> Unit,
+    setSound: (String) -> Unit,
     checkFirmware: () -> Unit,
     updateFirmware: () -> Unit,
+    cancelFirmware: () -> Unit,
     open: (Detail) -> Unit,
 ) = Page("Sticky settings", back) {
     val paired = ble.address != null
@@ -1038,12 +1045,15 @@ fun StickyScreen(
         }
     }
     gap()
+    item { Section("Feedback") }
+    gap()
+    item { Segmented(SOUNDS.map { it to it.replaceFirstChar(Char::uppercase) }, display.sound, big = true, onSelect = setSound) }
+    gap()
     item { Section("Sticky") }
     gap()
     item {
         CardList {
-            ListRow("Sounds on the Sticky", "Button and alert sounds", first = true, lead = { Glyph(R.drawable.ic_bell) }, onClick = { setBeep(!display.beep) }) { Toggle(display.beep, setBeep) }
-            ListRow("Wi-Fi networks", display.wifi, lead = { Glyph(R.drawable.ic_wifi) }, onClick = { open(Detail.Wifi) }) { Chevron() }
+            ListRow("Wi-Fi networks", display.wifi, first = true, lead = { Glyph(R.drawable.ic_wifi) }, onClick = { open(Detail.Wifi) }) { Chevron() }
             ListRow("Health", display.health, lead = { Glyph(R.drawable.ic_heart_rate_monitor) }, onClick = { open(Detail.Health) }) { Chevron() }
         }
     }
@@ -1052,7 +1062,7 @@ fun StickyScreen(
     gap()
     item {
         CardList {
-            FirmwareRow("Firmware${sticky?.firmware?.takeIf { it.isNotEmpty() }?.let { " $it" }.orEmpty()}", display.firmware, true, checkFirmware, updateFirmware)
+            FirmwareRow("Firmware${sticky?.firmware?.takeIf { it.isNotEmpty() }?.let { " $it" }.orEmpty()}", display.firmware, true, checkFirmware, updateFirmware, cancelFirmware)
             ListRow(
                 "Link",
                 when {

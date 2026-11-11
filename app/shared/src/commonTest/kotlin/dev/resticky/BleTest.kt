@@ -3,6 +3,7 @@ package dev.resticky
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class BleTest {
@@ -66,16 +67,16 @@ class BleTest {
 
     @Test
     fun displayFrameCarriesTheDisplaySettings() {
-        val frames = FrameReader().feed(frame(FRAME_DISPLAY, hubJson.encodeToString(DisplayInfo("words", "week", "12", false, "clock")).encodeToByteArray()))
+        val frames = FrameReader().feed(frame(FRAME_DISPLAY, hubJson.encodeToString(DisplayInfo("words", "week", "12", "off", "clock")).encodeToByteArray()))
         assertEquals(14, frames.single().type)
-        assertEquals("{\"clock_face\":\"words\",\"weather_style\":\"week\",\"hour_format\":\"12\",\"beep\":false,\"home\":\"clock\"}", frames.single().payload.decodeToString())
+        assertEquals("{\"clock_face\":\"words\",\"weather_style\":\"week\",\"hour_format\":\"12\",\"sound\":\"off\",\"home\":\"clock\"}", frames.single().payload.decodeToString())
     }
 
     @Test
     fun checkinReplyHasDisplaySettings() {
         assertEquals(
-            "{\"hub_version\":\"1\",\"utc_offset_min\":-300,\"clock_face\":\"dial\",\"weather_style\":\"sketch\",\"hour_format\":\"24\",\"beep\":true,\"home\":\"apps\"}",
-            hubJson.encodeToString(CheckinReply("1", -300, CLOCK_DIAL, WEATHER_SKETCH, HOUR_24, true, HOME_APPS)),
+            "{\"hub_version\":\"1\",\"utc_offset_min\":-300,\"clock_face\":\"dial\",\"weather_style\":\"sketch\",\"hour_format\":\"24\",\"sound\":\"beep\",\"home\":\"apps\"}",
+            hubJson.encodeToString(CheckinReply("1", -300, CLOCK_DIAL, WEATHER_SKETCH, HOUR_24, SOUND_BEEP, HOME_APPS)),
         )
         assertEquals(listOf("dial", "digits", "words", "note", "flip"), CLOCK_FACES)
         assertEquals(listOf("sketch", "big", "journal", "week"), WEATHER_STYLES)
@@ -85,15 +86,10 @@ class BleTest {
 
 class OtaTest {
     @Test
-    fun dataFramesCarryTheOffsetAndSequentialBlocks() {
-        val image = ByteArray(10_000) { it.toByte() }
-        val frames = otaFrames(image).flatMap { FrameReader().feed(it) }
-        assertEquals(3, frames.size)
-        assertEquals(listOf(19, 19, 19), frames.map { it.type })
-        val offsets = frames.map { f -> (0 until 4).fold(0) { v, i -> v or ((f.payload[i].toInt() and 0xff) shl (8 * i)) } }
-        assertEquals(listOf(0, 4096, 8192), offsets)
-        assertEquals(listOf(4100, 4100, 1812), frames.map { it.payload.size })
-        assertEquals(image.toList(), frames.flatMap { it.payload.drop(4) })
+    fun dataFrameCarriesTheOffsetLittleEndian() {
+        val f = FrameReader().feed(frame(FRAME_OTA_DATA, otaData(0x01020304, byteArrayOf(9, 8)))).single()
+        assertEquals(19, f.type)
+        assertEquals(listOf(4, 3, 2, 1, 9, 8), f.payload.map { it.toInt() })
     }
 
     @Test
@@ -101,6 +97,26 @@ class OtaTest {
         assertEquals("""{"version":"0.14.4","size":1234}""", hubJson.encodeToString(OtaBegin("0.14.4", 1234)))
         assertEquals(OtaStatus("writing", 35), hubJson.decodeFromString<OtaStatus>("""{"state":"writing","percent":35}"""))
         assertEquals(OtaStatus("ready"), hubJson.decodeFromString<OtaStatus>("""{"state":"ready"}"""))
+        assertEquals(OtaStatus("writing", 3, 81920), hubJson.decodeFromString<OtaStatus>("""{"state":"writing","percent":3,"offset":81920}"""))
+        assertEquals(22, FRAME_OTA_CANCEL)
+    }
+
+    @Test
+    fun windowKeepsAtMost16KiBUnacknowledged() {
+        assertTrue(otaWindowOpen(0, 0, 4096))
+        assertTrue(otaWindowOpen(12288, 0, 4096))
+        assertFalse(otaWindowOpen(16384, 0, 4096))
+        assertTrue(otaWindowOpen(16384, 4096, 4096))
+        assertFalse(otaWindowOpen(20480, 4096, 1))
+    }
+
+    @Test
+    fun readerDropsAnOversizedLength() {
+        val r = FrameReader()
+        assertEquals(emptyList(), r.feed(byteArrayOf(-1, -1, -1, 0x7f, 1, 2)))
+        assertFalse(r.pending)
+        assertEquals(listOf(3), r.feed(frame(3, byteArrayOf(9))).map { it.type })
+        assertEquals("The Sticky is busy with another update", otaMessage("busy"))
         assertEquals(listOf(18, 20, 21), listOf(FRAME_OTA_BEGIN, FRAME_OTA_END, FRAME_OTA_STATUS))
     }
 }

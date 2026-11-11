@@ -11,7 +11,7 @@ GROUPS = [
     ("Recorder", [("recorder", "Recording"), ("recorder-muted", "Muted"), ("transcripts", "Transcripts"), ("transcript", "Transcript (planned)")]),
     ("Settings", [("settings", "Settings"), ("settings-recording", "Recording"), ("settings-wifi", "Wi-Fi"), ("settings-hub", "Hub"), ("settings-weather", "Weather"), ("settings-device", "Device")]),
     ("Buttons and sleep", [("button-map", "Button map"), ("settings-buttons", "Settings > Buttons"), ("launcher-sleep", "Sleep: moon in the status row")]),
-    ("System", [("boot-3", "Boot, step 3 of 6"), ("boot-6", "Boot, ready"), ("power-off", "Off"), ("update-progress", "Updating (planned)"), ("update-done", "Update done (planned)")]),
+    ("System", [("boot-3", "Boot, step 3 of 6"), ("boot-6", "Boot, ready"), ("power-off", "Off"), ("update-progress", "Update: download, Cancel"), ("update-install", "Update: install"), ("update-done", "Update done")]),
 ]
 W, H, pad, gap, cols = 480, 800, 28, 20, 7
 

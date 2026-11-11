@@ -35,7 +35,7 @@ Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/gre
 | Fuel gauge, charger status, VBUS | Yes | Polled each second |
 | IMU | Yes | Face-down and double tap, polled |
 | RTC | Yes | Time at boot, set after SNTP |
-| Buzzer | Yes (0.13.0) | Click, mark sound, Sounds setting |
+| Buzzer | Yes (0.13.0) | Click and mark feedback: Feedback setting Off, Beep or Buzz (low pulses that imitate vibration, 0.14.6) |
 | Wi-Fi, BLE (2M PHY) | Yes | |
 | **SHT40 temperature and humidity** | **No** | Room climate for Clock/Weather/Health |
 | **microSD** | **No** | Large spool (plan layer 8) |

@@ -206,8 +206,9 @@ void net_set_climate(bool ok, int room_c10, int humidity)
     climate_c10 = room_c10;
     climate_rh = humidity;
 }
-static bool device_beep = true;
-static int64_t beep_local_at = -60000;
+static int device_sound = SOUND_BEEP;
+static int64_t sound_local_at = -60000;
+static const char *const SOUNDS[SOUND_COUNT] = {"off", "beep", "buzz"};
 
 static int device_home;
 static int64_t home_local_at = -60000;
@@ -219,10 +220,10 @@ void net_set_home(int home)
     device_home = home;
 }
 
-void net_set_beep(bool on)
+void net_set_sound(int sound)
 {
-    if (on != device_beep) beep_local_at = esp_log_timestamp();
-    device_beep = on;
+    if (sound != device_sound) sound_local_at = esp_log_timestamp();
+    device_sound = sound;
 }
 
 static void marks_delivered(void)
@@ -297,7 +298,7 @@ static void checkin_body(char *body, size_t n)
     cJSON_free(list);
     cJSON_free(ssid_json);
     size_t used = strlen(body);
-    if (used > 1 && used < n) snprintf(body + used - 1, n - used + 1, ",\"beep\":%s,\"home\":\"%s\",\"health\":%s}", device_beep ? "true" : "false", HOMES[device_home], health_json());
+    if (used > 1 && used < n) snprintf(body + used - 1, n - used + 1, ",\"sound\":\"%s\",\"home\":\"%s\",\"health\":%s}", SOUNDS[device_sound], HOMES[device_home], health_json());
     xSemaphoreTake(lock, portMAX_DELAY);
     for (int i = 0; i < mark_count; i++) {
         used = strlen(body);
@@ -374,15 +375,15 @@ static void apply_display(const cJSON *j)
     xSemaphoreTake(lock, portMAX_DELAY);
     uint8_t face = pick(cJSON_GetObjectItem(j, "clock_face"), FACES, FACE_COUNT, state.clock_face);
     uint8_t style = pick(cJSON_GetObjectItem(j, "weather_style"), STYLES, WXS_COUNT, state.weather_style);
-    const cJSON *bp = cJSON_GetObjectItem(j, "beep");
-    if (cJSON_IsBool(bp) && esp_log_timestamp() - beep_local_at > 60000 && cJSON_IsTrue(bp) != state.beep) {
-        state.beep = cJSON_IsTrue(bp);
-        state.beep_from_hub = true;
+    int sound = pick(cJSON_GetObjectItem(j, "sound"), SOUNDS, SOUND_COUNT, -1);
+    if (sound >= 0 && esp_log_timestamp() - sound_local_at > 60000 && sound != device_sound) {
+        state.sound = device_sound = sound;
+        state.sound_from_hub = true;
         state.version++;
     }
     int home = pick(cJSON_GetObjectItem(j, "home"), HOMES, HOME_COUNT, -1);
-    if (home >= 0 && esp_log_timestamp() - home_local_at > 60000 && home != state.home) {
-        state.home = home;
+    if (home >= 0 && esp_log_timestamp() - home_local_at > 60000 && home != device_home) {
+        state.home = device_home = home;
         state.home_from_hub = true;
         state.version++;
     }
@@ -686,6 +687,7 @@ static void check_firmware(void)
     if ((info.version[0] || !latest.url[0]) && strcmp(latest.version, info.version)) {
         latest = info;
         strlcpy(state.update_version, info.version, sizeof state.update_version);
+        if (info.version[0]) state.update_check = UPDATE_IDLE;
         state.version++;
     }
     xSemaphoreGive(lock);
@@ -701,7 +703,18 @@ void net_check_updates(void)
     xSemaphoreTake(lock, portMAX_DELAY);
     latest = (ota_info_t){0};
     state.update_version[0] = 0;
+    state.update_check = UPDATE_CHECKING;
     state.version++;
+    xSemaphoreGive(lock);
+}
+
+static void set_check(update_check_t check)
+{
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (!state.update_version[0]) {
+        state.update_check = check;
+        state.version++;
+    }
     xSemaphoreGive(lock);
 }
 
@@ -721,6 +734,7 @@ static void check_github(void)
     esp_http_client_cleanup(c);
     if (len <= 0) {
         ESP_LOGW(TAG, "github release check failed");
+        set_check(UPDATE_FAILED);
         return;
     }
     resp[len] = 0;
@@ -742,49 +756,182 @@ static void check_github(void)
         xSemaphoreTake(lock, portMAX_DELAY);
         latest = info;
         strlcpy(state.update_version, info.version, sizeof state.update_version);
+        state.update_check = UPDATE_IDLE;
         state.version++;
         xSemaphoreGive(lock);
     }
+    else set_check(tag ? UPDATE_NONE : UPDATE_FAILED);
     cJSON_Delete(j);
 }
 
 static volatile int64_t restart_at;
+static volatile bool cancel_wanted;
 
-void net_ota_progress(int percent)
+#define OTA_BLOCK 4096
+#define OTA_SLOTS 6
+#define OTA_IDLE_MS 20000
+
+typedef struct {
+    uint8_t type;
+    uint32_t offset;
+    uint16_t len;
+    uint8_t data[OTA_BLOCK];
+} ota_item_t;
+
+static QueueHandle_t ota_items;
+EXT_RAM_BSS_ATTR static uint8_t ota_item_store[OTA_SLOTS * sizeof(ota_item_t)];
+EXT_RAM_BSS_ATTR static ota_item_t ota_in, ota_work;
+static StaticQueue_t ota_item_queue;
+
+static void set_phase(update_phase_t phase, int percent, update_check_t check)
 {
     xSemaphoreTake(lock, portMAX_DELAY);
-    state.updating = percent >= 0 && percent < 100;
-    state.update_progress = percent < 0 ? 0 : percent;
+    state.update_phase = phase;
+    state.update_progress = percent;
+    state.update_check = check;
     state.version++;
     xSemaphoreGive(lock);
 }
 
-void net_restart_soon(void) { restart_at = esp_log_timestamp() + 1500; }
+static bool updating(void) { return state.update_phase != UPDATE_OFF; }
 
-static void show_progress(int percent)
+static bool power_ok(void) { return tele.usb || tele.battery_pct >= OTA_MIN_BATTERY; }
+
+void net_cancel_update(void) { cancel_wanted = true; }
+
+void net_ota_frame(uint8_t type, const uint8_t *p, size_t n)
 {
-    xSemaphoreTake(lock, portMAX_DELAY);
-    state.update_progress = percent;
-    state.version++;
-    xSemaphoreGive(lock);
+    ota_in.type = type;
+    ota_in.offset = 0;
+    ota_in.len = 0;
+    if (type == BLE_TYPE_OTA_DATA) {
+        if (n < 4 || n - 4 > OTA_BLOCK) {
+            ESP_LOGW(TAG, "ota data frame of %u bytes ignored", (unsigned)n);
+            return;
+        }
+        memcpy(&ota_in.offset, p, 4);
+        p += 4;
+        n -= 4;
+    }
+    else if (n > OTA_BLOCK) return;
+    memcpy(ota_in.data, p, n);
+    ota_in.len = n;
+    if (xQueueSend(ota_items, &ota_in, 0) != pdTRUE) ESP_LOGW(TAG, "ota queue full, frame %u dropped", type);
+}
+
+static void ota_reply(const char *st)
+{
+    char j[96];
+    snprintf(j, sizeof j, "{\"state\":\"%s\",\"percent\":%d,\"offset\":%u}", st, ota_stream_percent(), (unsigned)ota_stream_done());
+    ble_send_json(BLE_TYPE_OTA_STATUS, j);
+}
+
+static void ota_begin_phone(const ota_item_t *it)
+{
+    cJSON *j = cJSON_ParseWithLength((const char *)it->data, it->len);
+    const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(j, "version"));
+    double size = cJSON_GetNumberValue(cJSON_GetObjectItem(j, "size"));
+    bool valid = v && strlen(v) < OTA_VERSION_LEN && size >= 1 && size <= 16 * 1024 * 1024 && size == (double)(size_t)size;
+    if (updating() && state.update_phase != UPDATE_RECEIVE) {
+        ota_reply("busy");
+    }
+    else if (!power_ok()) {
+        ota_reply("battery");
+        set_phase(UPDATE_OFF, 0, UPDATE_LOW_BATTERY);
+    }
+    else if (!valid || !ota_stream_begin(v, (size_t)size)) {
+        ota_reply("error");
+        set_phase(UPDATE_OFF, 0, UPDATE_INSTALL_FAILED);
+    }
+    else {
+        xSemaphoreTake(lock, portMAX_DELAY);
+        strlcpy(state.update_version, v, sizeof state.update_version);
+        xSemaphoreGive(lock);
+        cancel_wanted = false;
+        set_phase(UPDATE_RECEIVE, 0, UPDATE_IDLE);
+        ota_reply("ready");
+    }
+    cJSON_Delete(j);
+}
+
+static void receive_from_phone(void)
+{
+    int64_t last = esp_log_timestamp();
+    int shown = -1;
+    while (state.update_phase == UPDATE_RECEIVE) {
+        if (cancel_wanted || !ble_ready() || esp_log_timestamp() - last > OTA_IDLE_MS) {
+            bool cancelled = cancel_wanted;
+            ESP_LOGW(TAG, "phone update stopped: %s", cancelled ? "cancelled" : ble_ready() ? "no data" : "link lost");
+            ota_stream_abort();
+            if (ble_ready()) ota_reply(cancelled ? "cancelled" : "error");
+            set_phase(UPDATE_OFF, 0, cancelled ? UPDATE_IDLE : UPDATE_INSTALL_FAILED);
+            break;
+        }
+        if (xQueueReceive(ota_items, &ota_work, pdMS_TO_TICKS(500)) != pdTRUE) continue;
+        last = esp_log_timestamp();
+        if (ota_work.type == BLE_TYPE_OTA_CANCEL) cancel_wanted = true;
+        else if (ota_work.type == BLE_TYPE_OTA_BEGIN) ota_begin_phone(&ota_work);
+        else if (ota_work.type == BLE_TYPE_OTA_DATA) {
+            if (!ota_stream_write(ota_work.offset, ota_work.data, ota_work.len)) {
+                ota_reply("error");
+                set_phase(UPDATE_OFF, 0, UPDATE_INSTALL_FAILED);
+                break;
+            }
+            ota_reply("writing");
+            int pct = ota_stream_percent();
+            if (pct / 2 != shown) {
+                shown = pct / 2;
+                set_phase(UPDATE_RECEIVE, pct, UPDATE_IDLE);
+            }
+        }
+        else if (ota_work.type == BLE_TYPE_OTA_END) {
+            set_phase(UPDATE_INSTALL, 100, UPDATE_IDLE);
+            ota_reply("installing");
+            bool ok = ota_stream_end();
+            ota_reply(ok ? "ok" : "error");
+            set_phase(ok ? UPDATE_DONE : UPDATE_OFF, 100, ok ? UPDATE_IDLE : UPDATE_INSTALL_FAILED);
+            if (ok) restart_at = esp_log_timestamp() + 4000;
+        }
+    }
+}
+
+static void phone_frames(void)
+{
+    while (xQueueReceive(ota_items, &ota_work, 0) == pdTRUE) {
+        if (ota_work.type == BLE_TYPE_OTA_BEGIN) ota_begin_phone(&ota_work);
+        else if (ota_work.type == BLE_TYPE_OTA_CANCEL) ota_reply("cancelled");
+        if (state.update_phase == UPDATE_RECEIVE) receive_from_phone();
+    }
+}
+
+static void download_progress(int percent)
+{
+    if (percent >= 100) set_phase(UPDATE_INSTALL, 100, UPDATE_IDLE);
+    else if (percent % 2 == 0) set_phase(UPDATE_DOWNLOAD, percent, UPDATE_IDLE);
 }
 
 static void install_update(void)
 {
     install_now = false;
-    if (!latest.version[0] || (tele.battery_pct < OTA_MIN_BATTERY && !tele.usb)) {
+    xSemaphoreTake(lock, portMAX_DELAY);
+    ota_info_t info = latest;
+    xSemaphoreGive(lock);
+    if (!info.version[0] || updating()) return;
+    if (!power_ok()) {
         ESP_LOGW(TAG, "update not started: battery %d%%, usb %d", tele.battery_pct, tele.usb);
+        set_phase(UPDATE_OFF, 0, UPDATE_LOW_BATTERY);
         return;
     }
-    xSemaphoreTake(lock, portMAX_DELAY);
-    state.updating = true;
-    state.version++;
-    xSemaphoreGive(lock);
-    if (ota_install(hub_url, &latest, show_progress)) esp_restart();
-    xSemaphoreTake(lock, portMAX_DELAY);
-    state.updating = false;
-    state.version++;
-    xSemaphoreGive(lock);
+    cancel_wanted = false;
+    set_phase(UPDATE_DOWNLOAD, 0, UPDATE_IDLE);
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    if (ota_install(hub_url, &info, download_progress, &cancel_wanted)) {
+        set_phase(UPDATE_DONE, 100, UPDATE_IDLE);
+        restart_at = esp_log_timestamp() + 4000;
+        return;
+    }
+    ESP_LOGW(TAG, "update %s", cancel_wanted ? "cancelled" : "failed");
+    set_phase(UPDATE_OFF, 0, cancel_wanted ? UPDATE_IDLE : UPDATE_INSTALL_FAILED);
 }
 
 static void sync_wifi(bool testing)
@@ -823,6 +970,11 @@ static void net_task(void *arg)
 {
     for (;;) {
         if (restart_at && esp_log_timestamp() > restart_at) esp_restart();
+        if (ble_ready()) phone_frames();
+        if (updating()) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         ota_tick();
         spool_fresh();
         bool ble = ble_ready() && esp_log_timestamp() >= ble_pause_until;
@@ -851,6 +1003,7 @@ void net_init(void)
 {
     lock = xSemaphoreCreateMutex();
     chunks = xQueueCreate(8, sizeof(audio_chunk_t *));
+    ota_items = xQueueCreateStatic(OTA_SLOTS, sizeof(ota_item_t), ota_item_store, &ota_item_queue);
     spool_init();
     todo_changes = xQueueCreate(8, sizeof(todo_change_t));
     uint8_t mac[6];

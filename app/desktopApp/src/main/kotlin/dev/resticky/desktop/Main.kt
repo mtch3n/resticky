@@ -20,6 +20,8 @@ import dev.resticky.CLOCK_DIAL
 import dev.resticky.CLOCK_FACES
 import dev.resticky.HOME_APPS
 import dev.resticky.HOME_SCREENS
+import dev.resticky.SOUNDS
+import dev.resticky.SOUND_BEEP
 import dev.resticky.HOUR_24
 import dev.resticky.HOUR_FORMATS
 import dev.resticky.HUB_VERSION
@@ -243,8 +245,8 @@ fun main(args: Array<String>) {
     require(weatherStyle in WEATHER_STYLES) { "-weather-style must be one of ${WEATHER_STYLES.joinToString("|")}" }
     val hourFormat = flags.string("hour-format", HOUR_24)
     require(hourFormat in HOUR_FORMATS) { "-hour-format must be one of ${HOUR_FORMATS.joinToString("|")}" }
-    val beep = flags.string("beep", "on")
-    require(beep in setOf("on", "off")) { "-beep must be on or off" }
+    val sound = flags.string("sound", SOUND_BEEP)
+    require(sound in SOUNDS) { "-sound must be one of ${SOUNDS.joinToString("|")}" }
     val homeScreen = flags.string("home", HOME_APPS)
     require(homeScreen in HOME_SCREENS) { "-home must be one of ${HOME_SCREENS.joinToString("|")}" }
     val firmware = FirmwareShelf(IoPath(flags.string("firmware", "$home/.local/share/resticky/firmware")))
@@ -252,7 +254,7 @@ fun main(args: Array<String>) {
     hub.clockFace.value = clockFace
     hub.weatherStyle.value = weatherStyle
     hub.hourFormat.value = hourFormat
-    hub.beepSetting.load(beep == "on")
+    hub.soundSetting.load(sound)
     hub.homeSetting.load(homeScreen)
     val announcer = if (flags.string("mdns", "true") == "true") Announcer(port) else null
     Runtime.getRuntime().addShutdownHook(Thread { announcer?.close() })
@@ -272,7 +274,7 @@ fun main(args: Array<String>) {
             store.deleteOldAudio(Clock.System.now() - AUDIO_KEEP)
         }
     }
-    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat beep=$beep home=$homeScreen weather_interval=$weatherInterval")
+    log("INFO resticky hub listening port=$port data=$data model=$model segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen weather_interval=$weatherInterval")
     embeddedServer(CIO, port = port) {
         hub.module(this)
     }.start(wait = true)

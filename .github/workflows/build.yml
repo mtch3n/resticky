@@ -56,12 +56,13 @@ jobs:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 }}
         if: env.KEYSTORE != ''
         run: mkdir -p ~/.android && echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
-      - run: ./gradlew :shared:jvmTest :desktopApp:installDist :androidApp:assembleDebug
+      - run: ./gradlew :shared:jvmTest :desktopApp:installDist :androidApp:assembleDebug :androidApp:assembleRelease
         working-directory: app
       - run: app/contract/run.sh app/desktopApp/build/install/resticky-hub/bin/resticky-hub
       - run: |
           mkdir -p out
-          cp app/androidApp/build/outputs/apk/debug/*.apk out/resticky-android.apk
+          cp app/androidApp/build/outputs/apk/release/*.apk out/resticky-android.apk
+          cp app/androidApp/build/outputs/apk/debug/*.apk out/resticky-android-debug.apk
           (cd app/desktopApp/build/install && zip -qr ../../../../out/resticky-hub-desktop.zip resticky-hub)
       - uses: actions/upload-artifact@v4
         with:

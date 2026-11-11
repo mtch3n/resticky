@@ -11,6 +11,8 @@ import android.provider.Settings
 import dev.resticky.Release
 import dev.resticky.Releases
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.io.files.Path
+import java.io.File
 
 private const val INSTALLED = "dev.resticky.app.INSTALLED"
 
@@ -42,23 +44,36 @@ class Updater(private val context: Context, private val releases: Releases) {
             context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             return
         }
+        val apk = File(context.cacheDir, "update.apk")
         status.value = "Downloading ${release.version}…"
-        val bytes = runCatching { releases.download(asset) }.getOrElse {
+        runCatching {
+            releases.download(asset, Path(apk.path)) { done, total ->
+                status.value = "Downloading ${release.version}… ${if (total > 0) done * 100 / total else 0} %"
+            }
+        }.onFailure {
             status.value = "Download failed: ${it.message}"
             return
         }
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply { setAppPackageName(context.packageName) }
         val id = installer.createSession(params)
-        installer.openSession(id).use { session ->
-            session.openWrite("resticky.apk", 0, bytes.size.toLong()).use {
-                it.write(bytes)
-                session.fsync(it)
-            }
-            val done = PendingIntent.getBroadcast(context, id, Intent(INSTALLED).setPackage(context.packageName), PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            session.commit(done.intentSender)
+        runCatching { commit(installer, id, apk) }.onFailure {
+            runCatching { installer.abandonSession(id) }
+            apk.delete()
+            status.value = "Install failed: ${it.message}"
+            return
         }
         status.value = "Installing ${release.version}…"
         log("INFO app update started version=${release.version}")
+    }
+
+    private fun commit(installer: PackageInstaller, id: Int, apk: File) = installer.openSession(id).use { session ->
+        session.openWrite("resticky.apk", 0, apk.length()).use { out ->
+            apk.inputStream().use { it.copyTo(out, 64 * 1024) }
+            session.fsync(out)
+        }
+        apk.delete()
+        val done = PendingIntent.getBroadcast(context, id, Intent(INSTALLED).setPackage(context.packageName), PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        session.commit(done.intentSender)
     }
 }

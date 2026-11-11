@@ -132,7 +132,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
     val face by model.clockFace.collectAsState()
     val hourFormat by model.hourFormat.collectAsState()
     val weatherStyle by model.weatherStyle.collectAsState()
-    val beep by model.beep.collectAsState()
+    val sound by model.sound.collectAsState()
     val home by model.home.collectAsState()
     val chosen = calendarList.count { it.id in calendarChoice.selected }
     val calendarsLabel = if (calendarsAllowed && calendarChoice.show) "$chosen calendar${if (chosen == 1) "" else "s"}" else "Off"
@@ -159,9 +159,9 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                         HOME_SCREEN.firstOrNull { it.first == home }?.second ?: home,
                         "${optionName(CLOCK_FACE, face)} · $hourFormat h",
                         "${optionName(WEATHER_STYLE, weatherStyle)} · ${weatherReport.place.ifEmpty { if (weatherSettings.mode == MODE_PHONE) "From phone" else "Fixed city" }}",
-                        beep, wifiSummary(hub.sticky), healthStatus(hub.sticky), offer,
+                        sound, wifiSummary(hub.sticky), healthStatus(hub.sticky), offer,
                     ),
-                    back, model::enterPasskey, pair, model::forget, model::setBeep, { model.checkUpdates() }, { model.updateSticky() },
+                    back, model::enterPasskey, pair, model::forget, model::setSound, { model.checkUpdates() }, { model.updateSticky() }, { model.cancelSticky() },
                 ) { stack.add(it) }
                 Detail.Pipeline -> PipelineScreen(hub, runs, back)
                 Detail.Health -> {
@@ -232,7 +232,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 is Detail.WifiAdd -> WifiAddScreen(d.network, back, model::addWifi)
                 Detail.Updates -> UpdatesScreen(
                     model.appVersion, release, releaseChecked, updateStatus, stickyName(hub, ble), offer, back,
-                    { model.checkUpdates() }, { model.installApp() }, { model.updateSticky() },
+                    { model.checkUpdates() }, { model.installApp() }, { model.updateSticky() }, { model.cancelSticky() },
                 )
                 null -> when (tab) {
                     Tab.Hub -> {

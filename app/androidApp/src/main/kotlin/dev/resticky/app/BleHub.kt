@@ -54,6 +54,9 @@ import java.util.UUID
 
 private const val MTU = 515
 private const val RETRY_MS = 3_000L
+private const val WRITE_RETRY_MS = 200L
+private const val MAX_WRITE_RETRIES = 10
+private const val DRAIN_MS = 15_000L
 private val SERVICE = UUID.fromString(BLE_SERVICE)
 private val RX = UUID.fromString(BLE_RX)
 private val TX = UUID.fromString(BLE_TX)
@@ -85,6 +88,8 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
     val otaStatus = MutableStateFlow<OtaStatus?>(null)
     val ready: Boolean get() = state.value.status == LinkStatus.Ready
     private var writing = false
+    private var inFlight: ByteArray? = null
+    private var retries = 0
     private val sent = mutableMapOf<Int, String>()
     private var watchers = emptyList<Job>()
 
@@ -171,9 +176,33 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) log("WARN ble write failed status=$status")
-            synchronized(outbox) { writing = false }
-            pump()
+            val retry = synchronized(outbox) {
+                writing = false
+                val piece = inFlight
+                inFlight = null
+                when {
+                    status == BluetoothGatt.GATT_SUCCESS -> {
+                        retries = 0
+                        false
+                    }
+                    piece != null && retries < MAX_WRITE_RETRIES -> {
+                        retries++
+                        outbox.addFirst(piece)
+                        true
+                    }
+                    else -> null
+                }
+            }
+            if (status != BluetoothGatt.GATT_SUCCESS) log("WARN ble write failed status=$status retry=$retry")
+            when (retry) {
+                true -> main.postDelayed(::pump, WRITE_RETRY_MS)
+                false -> pump()
+                null -> {
+                    log("WARN ble write gave up, closing the link")
+                    resetOutbox()
+                    g.disconnect()
+                }
+            }
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
@@ -231,7 +260,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             val next = outbox.firstOrNull() ?: return
             val result = g.writeCharacteristic(rx, next, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             if (result == BluetoothStatusCodes.SUCCESS) {
-                outbox.removeFirst()
+                inFlight = outbox.removeFirst()
                 writing = true
             } else {
                 main.postDelayed(::pump, 50)
@@ -241,6 +270,8 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
 
     private fun resetOutbox() = synchronized(outbox) {
         outbox.clear()
+        inFlight = null
+        retries = 0
         writing = false
         sent.clear()
     }
@@ -251,26 +282,39 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         write(frame(type, json.encodeToByteArray()))
     }
 
+    @Volatile var updating = false
+        set(value) {
+            field = value
+            gatt?.requestConnectionPriority(if (value) BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+            if (!value) push()
+        }
+
     fun push() {
-        if (state.value.status != LinkStatus.Ready) return
+        if (state.value.status != LinkStatus.Ready || updating) return
         sendIfChanged(FRAME_TIME, hubJson.encodeToString(TimeInfo(utcOffsetMin())))
         sendIfChanged(FRAME_WEATHER, hubJson.encodeToString(hub.weather.report.value))
         sendIfChanged(FRAME_AGENDA, hubJson.encodeToString(hub.agendaNow()))
         sendIfChanged(FRAME_DISPLAY, hubJson.encodeToString(hub.display()))
     }
 
-    suspend fun sendDrained(bytes: ByteArray): Boolean {
+    fun send(bytes: ByteArray): Boolean {
         if (!ready) return false
         write(bytes)
+        return true
+    }
+
+    suspend fun sendDrained(bytes: ByteArray, timeoutMs: Long = DRAIN_MS): Boolean {
+        if (!send(bytes)) return false
+        val end = System.currentTimeMillis() + timeoutMs
         while (synchronized(outbox) { outbox.isNotEmpty() || writing }) {
-            if (!ready) return false
+            if (!ready || System.currentTimeMillis() > end) return false
             kotlinx.coroutines.delay(5)
         }
         return ready
     }
 
     fun sendPhoto(frame: ByteArray): Boolean {
-        if (state.value.status != LinkStatus.Ready) return false
+        if (state.value.status != LinkStatus.Ready || updating) return false
         write(frame(FRAME_PHOTO, frame))
         log("INFO ble photo sent bytes=${frame.size}")
         return true
@@ -319,7 +363,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             scope.launch { hub.clockFace.collect { push() } },
             scope.launch { hub.weatherStyle.collect { push() } },
             scope.launch { hub.hourFormat.collect { push() } },
-            scope.launch { hub.beep.collect { push() } },
+            scope.launch { hub.sound.collect { push() } },
             scope.launch { hub.home.collect { push() } },
         )
         val filter = IntentFilter().apply {

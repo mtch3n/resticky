@@ -70,28 +70,31 @@ for k in range(1, 7):
     page(f"boot-{k}", k, f'<div data-bar="{k / 6:.3f}"></div><div class=t style="top:704px;font-size:30px;font-weight:600">{STEPS[k - 1]}</div>')
 
 
-def drawn(name, mark, title, lines, bar=None):
+def drawn(name, mark, title, lines, bar=None, button=None):
     html = f"""<!doctype html><meta charset=utf-8><style>
 @font-face{{font-family:H;src:url(assets/fonts/Caveat.ttf)}}
 *{{margin:0;padding:0}}body{{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:H}}
 .t{{position:absolute;width:480px;text-align:center}}
 </style><body><svg id=s width=480 height=800 style="position:absolute;left:0;top:0"></svg>
-<div class=t style="top:478px;font-size:56px;font-weight:700">{title}</div>
+<div class=t style="top:400px;font-size:56px;font-weight:700">{title}</div>
 {"".join(f'<div class=t style="top:{y}px;font-size:32px;font-weight:600">{t}</div>' for y, t in lines)}
+{f'<div style="position:absolute;left:24px;top:712px;width:426px;height:58px;border:3px solid #000;border-radius:32px;display:flex;align-items:center;justify-content:center;font-family:sans-serif;font-size:20px;font-weight:700">{button}</div>' if button else ""}
 <script src="assets/js/rough.js"></script><script>
 const svg = document.getElementById('s'), rc = rough.svg(svg), add = n => svg.appendChild(n);
 const pen = (w, s) => ({{roughness: 1.1, strokeWidth: w, seed: s}});
 const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-g.setAttribute('transform', 'rotate(-5 240 320)');
+g.setAttribute('transform', 'translate(0 -80) rotate(-5 240 320)');
 g.appendChild(rc.path('M160 230 L320 230 L320 370 L284 406 L160 406 Z', pen(3, 40)));
 g.appendChild(rc.path('M320 370 L284 370 L284 406', pen(2.6, 41)));
 {mark}.forEach((d, i) => g.appendChild(rc.path(d, pen(4, 80 + i))));
 add(g);
-{f"add(rc.rectangle(94, 604, 292 * {bar}, 22, {{stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2.4, hachureAngle: -50, seed: 70}})); add(rc.rectangle(90, 600, 300, 30, pen(2.6, 71)));" if bar is not None else ""}
+{f"add(rc.rectangle(94, 534, 292 * {bar}, 22, {{stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2.4, hachureAngle: -50, seed: 70}})); add(rc.rectangle(90, 530, 300, 30, pen(2.6, 71)));" if bar is not None else ""}
 </script></body>"""
     open(f"{root}/{name}.html", "w").write(html)
 
 
-drawn("update-progress", ["M240 262 L240 352", "M206 322 L240 356 L274 322"], "updating to v0.2.0",
-      [(646, "62%"), (690, "keep on USB or battery above 20%")], 0.62)
-drawn("update-done", ["M196 316 L228 350 L290 270"], "v0.2.0 installed", [(560, "recording again")])
+drawn("update-progress", ["M240 262 L240 352", "M206 322 L240 356 L274 322"], "updating to v0.14.6",
+      [(470, "downloading"), (570, "62%"), (614, "recording waits until the end")], 0.62, "Cancel")
+drawn("update-install", ["M240 262 L240 352", "M206 322 L240 356 L274 322"], "updating to v0.14.6",
+      [(470, "installing"), (570, "100%"), (614, "do not turn off")], 1.0)
+drawn("update-done", ["M196 316 L228 350 L290 270"], "v0.14.6 installed", [(470, "restarting")])
