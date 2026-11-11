@@ -86,6 +86,7 @@ typedef struct {
     bool hour12, sound_from_hub, home_from_hub, night_from_hub, night_on;
     unsigned short night_start, night_end;
     uint8_t home, sound;
+    bool phone;
     unsigned version;
 } net_state_t;
 
@@ -110,3 +111,7 @@ void net_ota_frame(uint8_t type, const uint8_t *p, size_t n);
 void net_check_updates(void);
 void net_cancel_update(void);
 void net_set_climate(bool ok, int room_c10, int humidity);
+void net_lists_frame(const char *json, size_t len);
+void net_need_wifi(void);
+bool net_park(uint32_t timeout_ms);
+

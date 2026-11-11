@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "dsps_biquad.h"
@@ -29,8 +30,10 @@
 #define GAIN 4
 #define DMA_DESCS 16
 #define DMA_FRAMES 1000
-#define PREROLL_FRAMES 100
-#define HANG_FRAMES 750
+#define PREROLL_FRAMES 25
+#define HANG_FRAMES 75
+#define MAX_PACKET 400
+#define IDLE_BIT BIT0
 #define MIC_START_MS 60
 #define HPF_HZ 80.0f
 #define DB_FLOOR 96
@@ -49,7 +52,8 @@ static audio_chunk_cb chunk_cb;
 static volatile bool want_recording;
 static bool mic_on = true;
 static volatile int want_bitrate = 16000;
-static volatile uint32_t overflows;
+static volatile uint32_t overflows, lost_chunks;
+static EventGroupHandle_t events;
 static audio_load_t load;
 static volatile uint32_t cur_session, cur_offset_ms;
 static bool vad_ok;
@@ -119,6 +123,7 @@ static audio_chunk_t *chunk_new(uint32_t session, uint32_t seq)
     if (c) c->data = heap_caps_malloc(CHUNK_CAP, MALLOC_CAP_SPIRAM);
     if (!c || !c->data) {
         free(c);
+        lost_chunks++;
         ESP_LOGE(TAG, "no memory for a new chunk");
         return NULL;
     }
@@ -141,42 +146,144 @@ static void log_vad(const audio_chunk_t *c)
     if (!c->has_vad || mbedtls_base64_encode((unsigned char *)speech, sizeof speech, &o, c->vad.speech, n) ||
         mbedtls_base64_encode((unsigned char *)keep, sizeof keep, &o, c->vad.keep, n))
         return;
-    ESP_LOGI(TAG, "vad session %08lx seq %lu speech %s keep %s keep_prev %lu", c->session, c->seq, speech, keep, c->vad.keep_prev);
+    ESP_LOGI(TAG, "vad session %08lx seq %lu speech %s keep %s", c->session, c->seq, speech, keep);
+}
+
+typedef struct {
+    int16_t pcm[FRAME_SAMPLES];
+    bool speech;
+} slot_t;
+
+typedef struct {
+    audio_chunk_t *chunk;
+    uint32_t session, seq, session_ms;
+    int32_t in, last_speech;
+    int ring_n, ring_head;
+    uint32_t frames, kept, speech, enc_fail, early;
+    int64_t enc_us, enc_max_us;
+} rec_t;
+
+EXT_RAM_BSS_ATTR static slot_t ring[PREROLL_FRAMES];
+EXT_RAM_BSS_ATTR static slot_t out_slot;
+static uint8_t packet[MAX_PACKET];
+static meter_t meter;
+
+static void close_chunk(rec_t *r, bool final)
+{
+    if (!r->chunk) r->chunk = chunk_new(r->session, r->seq);
+    if (!r->chunk) return;
+    r->chunk->final = final;
+    log_vad(r->chunk);
+    close_meter(r->chunk, &meter);
+    r->session_ms += r->chunk->duration_ms;
+    chunk_cb(r->chunk);
+    r->chunk = NULL;
+    r->seq++;
+}
+
+static void emit(rec_t *r, const slot_t *f, bool keep)
+{
+    int n = 0;
+    if (keep) {
+        int64_t t = esp_timer_get_time();
+        esp_audio_enc_in_frame_t in = {.buffer = (uint8_t *)f->pcm, .len = sizeof f->pcm};
+        esp_audio_enc_out_frame_t out = {.buffer = packet, .len = sizeof packet};
+        esp_audio_err_t er = esp_opus_enc_process(enc, &in, &out);
+        t = esp_timer_get_time() - t;
+        r->enc_us += t;
+        if (t > r->enc_max_us) r->enc_max_us = t;
+        if (er == ESP_AUDIO_ERR_OK) n = out.encoded_bytes;
+        else r->enc_fail++;
+    }
+    if (r->chunk && r->chunk->len + 2 + n > CHUNK_CAP) {
+        r->early++;
+        ESP_LOGW(TAG, "chunk session %08lx seq %lu full after %lu ms, closed early", r->session, r->seq, r->chunk->duration_ms);
+        close_chunk(r, false);
+    }
+    if (!r->chunk) r->chunk = chunk_new(r->session, r->seq);
+    if (!r->chunk) return;
+    audio_chunk_t *c = r->chunk;
+    int i = c->duration_ms / 20;
+    c->data[c->len++] = n & 0xFF;
+    c->data[c->len++] = n >> 8;
+    memcpy(c->data + c->len, packet, n);
+    c->len += n;
+    r->frames++;
+    if (f->speech) {
+        r->speech++;
+        mark(c->vad.speech, i);
+    }
+    if (keep) {
+        r->kept++;
+        mark(c->vad.keep, i);
+    }
+    c->duration_ms += 20;
+    if (c->duration_ms >= CHUNK_MS) close_chunk(r, false);
+}
+
+static bool keep_frame(const rec_t *r, int32_t index)
+{
+    return !vad_ok || r->last_speech >= index - HANG_FRAMES;
+}
+
+static void drain(rec_t *r)
+{
+    for (; r->ring_n > 0; r->ring_n--) {
+        int32_t index = r->in - r->ring_n;
+        emit(r, &ring[r->ring_head], keep_frame(r, index));
+        r->ring_head = (r->ring_head + 1) % PREROLL_FRAMES;
+    }
+}
+
+static void record(rec_t *r, int16_t *pcm, int64_t *vad_us, int64_t *vad_max_us)
+{
+    condition(pcm, &meter);
+    bool speech = true;
+    if (vad_ok) {
+        int64_t t = esp_timer_get_time();
+        speech = vad_frame(pcm, FRAME_SAMPLES);
+        t = esp_timer_get_time() - t;
+        *vad_us += t;
+        if (t > *vad_max_us) *vad_max_us = t;
+    }
+    if (speech) r->last_speech = r->in;
+    int slot = (r->ring_head + r->ring_n) % PREROLL_FRAMES;
+    if (r->ring_n == PREROLL_FRAMES) {
+        out_slot = ring[r->ring_head];
+        r->ring_head = (r->ring_head + 1) % PREROLL_FRAMES;
+        r->ring_n--;
+        emit(r, &out_slot, keep_frame(r, r->in - PREROLL_FRAMES));
+    }
+    memcpy(ring[slot].pcm, pcm, sizeof ring[slot].pcm);
+    ring[slot].speech = speech;
+    r->ring_n++;
+    r->in++;
+    cur_session = r->session;
+    cur_offset_ms = r->session_ms + (r->chunk ? r->chunk->duration_ms : 0) + r->ring_n * 20;
 }
 
 static void audio_task(void *arg)
 {
     esp_pm_lock_handle_t fast;
     ESP_ERROR_CHECK(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "audio", &fast));
-    bool held = false;
     int16_t pcm[FRAME_SAMPLES];
-    uint8_t packet[400];
-    audio_chunk_t *chunk = NULL;
-    uint32_t session = 0, seq = 0;
+    static rec_t r;
     int bitrate = 16000;
-    uint32_t frames = 0, enc_fail = 0;
-    int64_t last_report = 0;
-    int quiet = HANG_FRAMES;
-    uint32_t vad_frames = 0, speech_frames = 0, kept_frames = 0;
-    int64_t vad_us = 0, vad_max_us = 0, dsp_us = 0, enc_us = 0, enc_max_us = 0;
-    static meter_t meter;
+    int64_t last_report = 0, vad_us = 0, vad_max_us = 0, dsp_us = 0;
     for (;;) {
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_report >= 60000) {
-            ESP_LOGI(TAG, "frames %lu, encode failures %lu, overflows %lu, recording %d, session %08lx", frames, enc_fail,
-                     overflows, want_recording, session);
-            if (vad_frames)
-                ESP_LOGI(TAG, "vad: cpu %lld.%02lld%%, max %lld us, speech %lu%%, keep %lu%% of %lu frames", vad_us / (now - last_report) / 10,
-                         vad_us / (now - last_report) % 10 * 10, vad_max_us, speech_frames * 100 / vad_frames,
-                         kept_frames * 100 / vad_frames, vad_frames);
             int64_t span_us = (now - last_report) * 1000;
-            ESP_LOGI(TAG, "cpu at %d MHz: filter %lld.%02lld%%, opus %lld.%02lld%% (max %lld us), vad %lld.%02lld%%",
-                     CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ, dsp_us * 100 / span_us, dsp_us * 10000 / span_us % 100, enc_us * 100 / span_us,
-                     enc_us * 10000 / span_us % 100, enc_max_us, vad_us * 100 / span_us, vad_us * 10000 / span_us % 100);
-            load = (audio_load_t){.filter_pm = dsp_us * 1000 / span_us, .opus_pm = enc_us * 1000 / span_us,
-                                  .vad_pm = vad_us * 1000 / span_us, .opus_max_us = enc_max_us, .overflows = overflows};
-            vad_frames = speech_frames = kept_frames = 0;
-            vad_us = vad_max_us = dsp_us = enc_us = enc_max_us = 0;
+            ESP_LOGI(TAG, "frames %lu, encoded %lu, speech %lu, encode failures %lu, early chunks %lu, lost chunks %lu, overflows %lu, recording %d, session %08lx",
+                     r.frames, r.kept, r.speech, r.enc_fail, r.early, lost_chunks, overflows, want_recording, r.session);
+            ESP_LOGI(TAG, "cpu at %d MHz: filter %lld.%02lld%%, opus %lld.%02lld%% (max %lld us), vad %lld.%02lld%% (max %lld us)",
+                     CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ, dsp_us * 100 / span_us, dsp_us * 10000 / span_us % 100, r.enc_us * 100 / span_us,
+                     r.enc_us * 10000 / span_us % 100, r.enc_max_us, vad_us * 100 / span_us, vad_us * 10000 / span_us % 100, vad_max_us);
+            load = (audio_load_t){.filter_pm = dsp_us * 1000 / span_us, .opus_pm = r.enc_us * 1000 / span_us,
+                                  .vad_pm = vad_us * 1000 / span_us, .opus_max_us = r.enc_max_us, .overflows = overflows,
+                                  .keep_pm = r.frames ? r.kept * 1000 / r.frames : 0, .early_chunks = r.early, .lost_chunks = lost_chunks};
+            r.frames = r.kept = r.speech = 0;
+            r.enc_us = r.enc_max_us = vad_us = vad_max_us = dsp_us = 0;
             last_report = now;
         }
         if (want_bitrate != bitrate) {
@@ -184,15 +291,13 @@ static void audio_task(void *arg)
             esp_opus_enc_set_bitrate(enc, bitrate);
             ESP_LOGI(TAG, "opus bitrate %d", bitrate);
         }
-        if (held) {
-            esp_pm_lock_release(fast);
-            held = false;
-        }
         if (!mic_on && !want_recording) {
+            xEventGroupSetBits(events, IDLE_BIT);
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
         if (!mic_on) {
+            xEventGroupClearBits(events, IDLE_BIT);
             gpio_set_level(PIN_MIC_EN, 1);
             vTaskDelay(pdMS_TO_TICKS(MIC_START_MS));
             i2s_channel_enable(rx);
@@ -206,97 +311,37 @@ static void audio_task(void *arg)
             continue;
         }
         esp_pm_lock_acquire(fast);
-        held = true;
-        frames++;
         if (!want_recording) {
-            if (session) {
-                if (!chunk) chunk = chunk_new(session, seq);
-                if (!chunk) {
-                    session = 0;
-                    continue;
-                }
-                chunk->final = true;
-                close_meter(chunk, &meter);
-                chunk_cb(chunk);
-                ESP_LOGI(TAG, "session %08lx ended after %lu chunks", session, seq + 1);
-                chunk = NULL;
-                session = 0;
+            if (r.session) {
+                drain(&r);
+                close_chunk(&r, true);
+                ESP_LOGI(TAG, "session %08lx ended after %lu chunks", r.session, r.seq);
+                r.session = 0;
             }
-            if (!session) {
-                i2s_channel_disable(rx);
-                gpio_set_level(PIN_MIC_EN, 0);
-                mic_on = false;
-                ESP_LOGI(TAG, "mic off");
-            }
+            i2s_channel_disable(rx);
+            gpio_set_level(PIN_MIC_EN, 0);
+            mic_on = false;
+            ESP_LOGI(TAG, "mic off");
+            esp_pm_lock_release(fast);
             continue;
         }
-        if (!session) {
-            session = esp_random();
-            seq = 0;
-            quiet = HANG_FRAMES;
+        if (!r.session) {
+            r = (rec_t){.session = esp_random(), .last_speech = INT32_MIN / 2, .frames = r.frames, .kept = r.kept, .speech = r.speech,
+                        .enc_fail = r.enc_fail, .early = r.early, .enc_us = r.enc_us, .enc_max_us = r.enc_max_us};
+            memset(&meter, 0, sizeof meter);
         }
-        if (!chunk) chunk = chunk_new(session, seq);
-        if (!chunk) continue;
         int64_t t0 = esp_timer_get_time();
-        condition(pcm, &meter);
-        int64_t t1 = esp_timer_get_time();
-        esp_audio_enc_in_frame_t in = {.buffer = (uint8_t *)pcm, .len = sizeof pcm};
-        esp_audio_enc_out_frame_t out = {.buffer = packet, .len = sizeof packet};
-        esp_audio_err_t er = esp_opus_enc_process(enc, &in, &out);
-        int64_t t2 = esp_timer_get_time();
-        dsp_us += t1 - t0;
-        enc_us += t2 - t1;
-        if (t2 - t1 > enc_max_us) enc_max_us = t2 - t1;
-        if (er != ESP_AUDIO_ERR_OK) {
-            enc_fail++;
-            continue;
-        }
-        if (chunk->len + 2 + out.encoded_bytes <= CHUNK_CAP) {
-            chunk->data[chunk->len++] = out.encoded_bytes & 0xFF;
-            chunk->data[chunk->len++] = out.encoded_bytes >> 8;
-            memcpy(chunk->data + chunk->len, packet, out.encoded_bytes);
-            chunk->len += out.encoded_bytes;
-        }
-        if (chunk->has_vad) {
-            int i = chunk->duration_ms / 20;
-            int64_t t = esp_timer_get_time();
-            bool speech = vad_frame(pcm, FRAME_SAMPLES);
-            t = esp_timer_get_time() - t;
-            vad_us += t;
-            if (t > vad_max_us) vad_max_us = t;
-            vad_frames++;
-            if (speech) {
-                speech_frames++;
-                mark(chunk->vad.speech, i);
-                if (quiet >= HANG_FRAMES) {
-                    for (int j = i > PREROLL_FRAMES ? i - PREROLL_FRAMES : 0; j < i; j++) mark(chunk->vad.keep, j);
-                    if (i < PREROLL_FRAMES && seq > 0) chunk->vad.keep_prev = PREROLL_FRAMES - i;
-                }
-                quiet = 0;
-            } else if (quiet < HANG_FRAMES) {
-                quiet++;
-            }
-            if (quiet < HANG_FRAMES) {
-                kept_frames++;
-                mark(chunk->vad.keep, i);
-            }
-        }
-        chunk->duration_ms += 20;
-        cur_session = session;
-        cur_offset_ms = seq * CHUNK_MS + chunk->duration_ms;
-        if (chunk->duration_ms >= CHUNK_MS) {
-            log_vad(chunk);
-            close_meter(chunk, &meter);
-            chunk_cb(chunk);
-            chunk = NULL;
-            seq++;
-        }
+        int64_t v0 = vad_us, e0 = r.enc_us;
+        record(&r, pcm, &vad_us, &vad_max_us);
+        dsp_us += esp_timer_get_time() - t0 - (vad_us - v0) - (r.enc_us - e0);
+        esp_pm_lock_release(fast);
     }
 }
 
 void audio_init(audio_chunk_cb on_chunk)
 {
     chunk_cb = on_chunk;
+    events = xEventGroupCreate();
     gpio_config_t en = {.pin_bit_mask = 1ULL << PIN_MIC_EN, .mode = GPIO_MODE_OUTPUT};
     gpio_config(&en);
     gpio_set_level(PIN_MIC_EN, 1);
@@ -346,6 +391,19 @@ void audio_get_load(audio_load_t *out)
 void audio_set_recording(bool recording)
 {
     want_recording = recording;
+}
+
+bool audio_stop(uint32_t timeout_ms)
+{
+    want_recording = false;
+    bool idle = xEventGroupWaitBits(events, IDLE_BIT, false, true, pdMS_TO_TICKS(timeout_ms)) & IDLE_BIT;
+    ESP_LOGI(TAG, "stop: %s", idle ? "final chunk queued, mic off" : "no answer");
+    return idle;
+}
+
+void audio_count_lost(void)
+{
+    lost_chunks++;
 }
 
 void audio_set_bitrate(int bits_per_s)

@@ -91,7 +91,82 @@ miss anything that is important").
 - Gate decision rule: switch the gate on only when the report shows no missed words that matter over
   several days of normal use.
 
+## Speech gate (firmware 0.15.0, built)
+
+The battery used about 11.5 % each hour (8.5 to 9 h) with DFS (80 to 240 MHz) and Wi-Fi maximum modem
+sleep. Opus encoded all audio, also silence. The gate removes this work.
+
+- The audio task runs the filter and VADNet first on each 20 ms frame. Then it puts the frame into a PCM ring
+  of `PREROLL_FRAMES` frames (PSRAM). The frame that leaves the ring is encoded only if a speech frame is in
+  the ring (pre-roll) or came less than `HANG_FRAMES` frames before it (hang-over). Other frames are empty
+  frames (`[u16 0]`), so the timeline stays exact (see "Audio frames" in `protocol.md`).
+- Because of the ring, the audio is 500 ms late. Thus the pre-roll is always in the same chunk, and a mark
+  adds the 500 ms in the ring to its offset. When recording stops, the device encodes the frames in the ring
+  before the final chunk.
+- Without the VADNet model, the device encodes all frames, as before.
+- The `CPU_FREQ_MAX` lock is held only from the end of an I2S read to the end of the filter, VAD and encode
+  work of that frame. While the task waits for the next frame, DFS can go to 80 MHz.
+- A full chunk buffer (72,000 bytes) closes the chunk early (`early chunks` in the log and `early_chunks` in
+  health). The device never drops a frame from a chunk. A chunk that the device cannot queue counts in
+  `lost_chunks`.
+
+Sensitivity settings (constants, change and build):
+
+| Constant | File | Default | Effect |
+|---|---|---|---|
+| `VAD_MODE` | `src/vad.c` | `VAD_MODE_0` | `VAD_MODE_0` is the most sensitive. `VAD_MODE_1` to `VAD_MODE_4` need more certain speech (fewer false starts, more missed quiet speech). The log at start gives the threshold of the mode. |
+| `VAD_MIN_SPEECH_MS` | `src/vad.c` | 128 | Speech must last this time before VADNet says speech. |
+| `VAD_MIN_NOISE_MS` | `src/vad.c` | 1000 | Noise must last this time before VADNet says noise (an internal hang-over). |
+| `PREROLL_FRAMES` | `src/audio.c` | 25 (500 ms) | Audio kept before the first speech frame. Also the audio delay. |
+| `HANG_FRAMES` | `src/audio.c` | 75 (1.5 s) | Audio kept after the last speech frame, added to `VAD_MIN_NOISE_MS`. |
+
+Expected CPU load (health fields, at 240 MHz, to measure): `cpu_vad_pm` stays the same as in shadow mode
+(about 200), because VADNet runs on all frames. `cpu_opus_pm` goes down to about the shadow-mode value
+(about 340) × `audio_keep_pm` / 1000. For example, at 30 % kept frames it is about 100. `cpu_filter_pm` adds
+the ring copy (a few per mille). With the example values in "Health" of `protocol.md` (filter 120, Opus 340,
+VAD 210), the audio core is busy about 43 % of the time at 30 % kept frames, against 67 % before. Measure
+the battery % per hour over long runs with the same use as before.
+
+## Recording control (firmware 0.15.0)
+
+The device keeps the reasons why recording is off. It records only when there is no reason.
+
+| Reason | Set by | Cleared by |
+|---|---|---|
+| Mute | The mute action (key, back tap, Settings › Recording). Stored in NVS (`muted`), so it stays after a restart, a sleep and a power off. | Only the mute action. This also clears "face down". |
+| Face down | Face down for 2 s (with "Stop when face down" on). | Face up for 2 s, or the setting off. |
+| Update | Update mode. | The end of update mode. |
+| Power | Restart, sleep and power off. | The next start. |
+
+Thus face up never starts a recording that the user muted.
+
+## Sleep sequence (firmware 0.15.0)
+
+Before 0.15.0, sleep waited a fixed 3 s and then slept with Wi-Fi, BLE and the audio task on. GPIO7 (the IMU
+and the fuel gauge interrupt, low = active) was always in the wake mask, so a low line woke the device at
+once. The sequence now is:
+
+1. Show the moon in the status row.
+2. Stop recording. The audio task encodes the ring, queues the final chunk, switches the mic off and gives an
+   acknowledgement (at most 5 s).
+3. Park the net task. It writes the upload queue to the flash outbox and then stops (at most 20 s). If the
+   net task does not stop in time, the caller writes the queue to flash.
+4. Stop BLE (`nimble_port_stop`, `nimble_port_deinit`) and Wi-Fi (`esp_wifi_stop`).
+5. Read the IMU interrupt sources (`TAP_SRC`, `WAKE_UP_SRC`, `D6D_SRC`) to release the latched INT1, and log
+   the GPIO7 level before and after.
+6. Wait at most 5 s until the keys are released. Log the levels of the keys and GPIO7. Put a key or GPIO7 into
+   the ext1 mask only when its line is high. The power key is always in the mask.
+7. `esp_deep_sleep_start`.
+
+Restart and power off use steps 2 and 3. After an OTA install, the net task stops the audio and writes the
+upload queue to flash before `esp_restart`, so the last recording is not lost. The boot report (reset
+reason, wake cause, ext1 pins, core dump summary) did not change.
+
+The fuel gauge can also pull GPIO7 low (for example a state-of-charge pulse) during deep sleep. This wakes the
+device. The boot report shows `wake=ext1 pins=0x80` for this case.
+
 ## Next step: quiet mode (design, not built)
+
 
 Quiet mode lowers the power when nobody speaks. It needs the gate on (dropped frames are not stored).
 

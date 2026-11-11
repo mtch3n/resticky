@@ -1,12 +1,16 @@
 #include "board.h"
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
+#include "esp_log.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #define HELD_PINS ((1ULL << PIN_PWR_HOLD) | (1ULL << PIN_PWR_LOCK) | (1ULL << PIN_CHG_EN_N))
-#define WAKE_PINS ((1ULL << PIN_BTN_POWER) | (1ULL << PIN_BTN_UP) | (1ULL << PIN_BTN_DOWN) | (1ULL << PIN_MOTION_INT))
+static const char *TAG = "board";
+static const int WAKE_PINS[] = {PIN_BTN_POWER, PIN_BTN_UP, PIN_BTN_DOWN, PIN_MOTION_INT};
+#define WAKE_COUNT (sizeof WAKE_PINS / sizeof WAKE_PINS[0])
 
 void board_power_latch(void)
 {
@@ -31,8 +35,24 @@ void board_power_off(void)
     esp_deep_sleep_start();
 }
 
-void board_sleep(uint32_t wake_after_s)
+static bool keys_down(void)
 {
+    return !gpio_get_level(PIN_BTN_POWER) || !gpio_get_level(PIN_BTN_UP) || !gpio_get_level(PIN_BTN_DOWN);
+}
+
+void board_sleep(uint32_t wake_after_s, uint32_t release_wait_ms)
+{
+    int64_t until = esp_timer_get_time() + release_wait_ms * 1000LL;
+    while (keys_down() && esp_timer_get_time() < until) vTaskDelay(pdMS_TO_TICKS(20));
+    uint64_t mask = 0;
+    int levels[WAKE_COUNT];
+    for (int i = 0; i < WAKE_COUNT; i++) {
+        levels[i] = gpio_get_level(WAKE_PINS[i]);
+        if (levels[i] || WAKE_PINS[i] == PIN_BTN_POWER) mask |= 1ULL << WAKE_PINS[i];
+    }
+    ESP_LOGI(TAG, "sleep: power %d up %d down %d int %d (1 = high), wake mask 0x%llx, timer %lu s", levels[0], levels[1], levels[2],
+             levels[3], (unsigned long long)mask, (unsigned long)wake_after_s);
+    if (!levels[3]) ESP_LOGW(TAG, "gpio %d is low: no wake on tap", PIN_MOTION_INT);
     gpio_hold_en(PIN_PWR_HOLD);
     gpio_hold_en(PIN_PWR_LOCK);
     gpio_hold_en(PIN_CHG_EN_N);
@@ -41,7 +61,8 @@ void board_sleep(uint32_t wake_after_s)
         rtc_gpio_pullup_en(pin);
         rtc_gpio_pulldown_dis(pin);
     }
-    esp_sleep_enable_ext1_wakeup_io(WAKE_PINS, ESP_EXT1_WAKEUP_ANY_LOW);
+    if (mask) esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+
     if (wake_after_s) esp_sleep_enable_timer_wakeup((uint64_t)wake_after_s * 1000000);
     esp_deep_sleep_start();
 }

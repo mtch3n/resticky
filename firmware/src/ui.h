@@ -19,6 +19,7 @@ typedef struct {
     ui_action_cb install_update;
     ui_action_cb check_updates;
     ui_action_cb cancel_update;
+    ui_action_cb need_wifi;
 } ui_actions_t;
 
 void ui_init(const ui_actions_t *actions);

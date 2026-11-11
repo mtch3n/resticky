@@ -7,8 +7,9 @@
 #include <string.h>
 
 #define MAX_CHUNK 1024
-#define MIN_SPEECH_MS 128
-#define MIN_NOISE_MS 1000
+#define VAD_MODE VAD_MODE_0
+#define VAD_MIN_SPEECH_MS 128
+#define VAD_MIN_NOISE_MS 1000
 
 static const char *TAG = "vad";
 static const esp_vadn_iface_t *iface;
@@ -28,7 +29,7 @@ bool vad_init(void)
         return false;
     }
     iface = esp_vadn_handle_from_name(name);
-    model = iface ? iface->create(name, VAD_MODE_0, 1, MIN_SPEECH_MS, MIN_NOISE_MS) : NULL;
+    model = iface ? iface->create(name, VAD_MODE, 1, VAD_MIN_SPEECH_MS, VAD_MIN_NOISE_MS) : NULL;
     if (!model) {
         ESP_LOGE(TAG, "%s not created", name);
         return false;
@@ -40,8 +41,8 @@ bool vad_init(void)
         model = NULL;
         return false;
     }
-    ESP_LOGI(TAG, "%s ready: %d samples at %d Hz per call, internal %u bytes, psram %u bytes", name, chunk_samples,
-             iface->get_samp_rate(model), (unsigned)(int0 - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+    ESP_LOGI(TAG, "%s ready: mode %d, threshold %.2f, min speech %d ms, min noise %d ms, %d samples at %d Hz per call, internal %u bytes, psram %u bytes",
+             name, VAD_MODE, iface->get_det_threshold(model), VAD_MIN_SPEECH_MS, VAD_MIN_NOISE_MS, chunk_samples, iface->get_samp_rate(model), (unsigned)(int0 - heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
              (unsigned)(ps0 - heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
     return true;
 }

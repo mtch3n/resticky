@@ -18,7 +18,9 @@ typedef struct {
     bool night_on;
     unsigned short night_start, night_end;
     unsigned char home;
+    bool muted;
 } settings_t;
+
 
 void settings_load(settings_t *out);
 void settings_save(const settings_t *s);

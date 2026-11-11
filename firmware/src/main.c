@@ -24,31 +24,52 @@
 #include "settings.h"
 #include "touch.h"
 #include "ui.h"
+#include "wifi.h"
 #include "lvgl.h"
+
 #include <string.h>
 #include <time.h>
 
 static const char *TAG = "main";
-static bool recording = true;
-static bool update_pause, resume_after_update;
+
+typedef enum { OFF_MUTE = 1, OFF_FACE_DOWN = 2, OFF_UPDATE = 4, OFF_POWER = 8 } off_reason_t;
+
+static unsigned off_reasons;
+static bool recording;
+static bool update_pause;
 static settings_t settings;
 
-static void set_recording(bool rec)
+static void set_off(unsigned reason, bool on)
 {
-    recording = rec;
-    ESP_LOGI(TAG, "recording %s", rec ? "on" : "off");
-    audio_set_recording(rec);
-    ui_set_recording(rec);
+    unsigned next = on ? off_reasons | reason : off_reasons & ~reason;
+    if (next == off_reasons) return;
+    off_reasons = next;
+    recording = !next;
+    ESP_LOGI(TAG, "recording %s (off reasons 0x%x)", recording ? "on" : "off", next);
+    audio_set_recording(recording);
+    ui_set_recording(recording);
 }
 
-static void toggle_recording(void) { set_recording(!recording); }
+static void set_muted(bool muted)
+{
+    set_off(OFF_MUTE, muted);
+    if (!muted) set_off(OFF_FACE_DOWN, false);
+    settings.muted = muted;
+    settings_save(&settings);
+}
 
-#define FINAL_UPLOAD_MS 3000
+static void toggle_recording(void) { set_muted(recording); }
+
+#define AUDIO_STOP_MS 5000
+#define NET_PARK_MS 20000
+#define BUTTON_RELEASE_MS 5000
 
 static void apply_settings(const settings_t *s)
 {
     bool sample = s->sound != settings.sound || s->buzz_pitch != settings.buzz_pitch;
+    bool muted = settings.muted;
     settings = *s;
+    settings.muted = muted;
     settings_save(&settings);
     audio_set_bitrate(settings.bitrate_kbps * 1000);
     buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
@@ -59,20 +80,27 @@ static void apply_settings(const settings_t *s)
     ESP_LOGI(TAG, "settings: %d kbps, flip stop %d", settings.bitrate_kbps, settings.flip_stop);
 }
 
+static void quiesce(void)
+{
+    set_off(OFF_POWER, true);
+    audio_stop(AUDIO_STOP_MS);
+    net_park(NET_PARK_MS);
+}
+
 static void restart(void)
 {
-    set_recording(false);
-    vTaskDelay(pdMS_TO_TICKS(FINAL_UPLOAD_MS));
+    quiesce();
     esp_restart();
 }
 
 static void sleep_for(uint32_t seconds)
 {
-    set_recording(false);
     ui_show_sleep();
-    vTaskDelay(pdMS_TO_TICKS(FINAL_UPLOAD_MS));
-    sensors_double_tap();
-    board_sleep(seconds);
+    quiesce();
+    ble_stop();
+    wifi_stop();
+    sensors_sleep_prepare();
+    board_sleep(seconds, BUTTON_RELEASE_MS);
 }
 
 static void go_sleep(void)
@@ -110,8 +138,7 @@ static void night_check(void)
 
 static void power_off(void)
 {
-    set_recording(false);
-    vTaskDelay(pdMS_TO_TICKS(FINAL_UPLOAD_MS));
+    quiesce();
     ui_show_off();
     board_power_off();
 }
@@ -204,8 +231,11 @@ void app_main(void)
     touch_init();
     buttons_init();
     buzzer_init(PIN_BUZZER);
-    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates, net_cancel_update});
+    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates, net_cancel_update, net_need_wifi});
     settings_load(&settings);
+    off_reasons = settings.muted ? OFF_MUTE : 0;
+    recording = !off_reasons;
+    ui_set_recording(recording);
     buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
     net_set_home(settings.home);
     net_set_sound(settings.sound);
@@ -254,9 +284,9 @@ void app_main(void)
         bool face_down = s.imu_ok && s.az_mg < FACE_DOWN_MG;
         down_s = face_down ? down_s + 1 : 0;
         up_s = face_down ? 0 : up_s + 1;
-        if (update_pause) {}
-        else if (settings.flip_stop && recording && down_s == FLIP_HOLD_S) set_recording(false);
-        else if (settings.flip_stop && !recording && up_s == FLIP_HOLD_S) set_recording(true);
+        if (!settings.flip_stop) set_off(OFF_FACE_DOWN, false);
+        else if (down_s == FLIP_HOLD_S) set_off(OFF_FACE_DOWN, true);
+        else if (up_s == FLIP_HOLD_S) set_off(OFF_FACE_DOWN, false);
         ui_set_sensors(&s);
         net_set_telemetry(s.soc_pct, s.voltage_mv, s.current_ma, recording, s.usb);
         net_set_climate(s.climate_ok, s.room_c10, s.humidity);
@@ -265,11 +295,7 @@ void app_main(void)
         if ((ns.update_phase != UPDATE_OFF) != update_pause) {
             update_pause = !update_pause;
             ESP_LOGI(TAG, "update mode %s", update_pause ? "on" : "off");
-            if (update_pause) {
-                resume_after_update = recording;
-                if (recording) set_recording(false);
-            }
-            else if (resume_after_update) set_recording(true);
+            set_off(OFF_UPDATE, update_pause);
         }
         if (ns.night_from_hub && (ns.night_on != settings.night_on || ns.night_start != settings.night_start || ns.night_end != settings.night_end)) {
             settings.night_on = ns.night_on;

@@ -24,7 +24,7 @@ static int count;
 static char ssids[WIFI_MAX_PROFILES][WIFI_SSID_LEN];
 static char psks[WIFI_MAX_PROFILES][PSK_LEN];
 static char connected[WIFI_SSID_LEN];
-static volatile bool connecting;
+static volatile bool connecting, off;
 static TaskHandle_t task;
 
 static void save(void)
@@ -124,7 +124,7 @@ static void wifi_task(void *arg)
             esp_wifi_disconnect();
             connecting = false;
         }
-        if (!up && !connecting && count > 0) {
+        if (!off && !up && !connecting && count > 0) {
             connecting = connect_best();
             started = now;
             idle_ms = connecting ? SCAN_FIRST_MS : idle_ms * 2 < SCAN_MAX_MS ? idle_ms * 2 : SCAN_MAX_MS;
@@ -153,6 +153,27 @@ void wifi_start(void)
     if (xTaskCreate(wifi_task, "wifi", 4096, NULL, 4, &task) != pdPASS) ESP_LOGE(TAG, "wifi task not created");
 }
 
+void wifi_stop(void)
+{
+    off = true;
+    esp_wifi_stop();
+    xEventGroupClearBits(events, UP_BIT);
+    xSemaphoreTake(lock, portMAX_DELAY);
+    connected[0] = 0;
+    xSemaphoreGive(lock);
+    connecting = false;
+    ESP_LOGI(TAG, "stopped");
+}
+
+void wifi_resume(void)
+{
+    esp_wifi_start();
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+    off = false;
+    if (task) xTaskNotifyGive(task);
+    ESP_LOGI(TAG, "started again");
+}
+
 bool wifi_wait_up(TickType_t timeout)
 {
     return xEventGroupWaitBits(events, UP_BIT, false, true, timeout) & UP_BIT;
@@ -166,6 +187,8 @@ void wifi_get_status(wifi_status_t *out)
     strlcpy(out->connected, connected, sizeof out->connected);
     xSemaphoreGive(lock);
     out->up = xEventGroupGetBits(events) & UP_BIT;
+    out->off = off;
+
     wifi_ap_record_t ap;
     out->rssi = out->up && esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
 }
