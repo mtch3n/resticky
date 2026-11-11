@@ -125,7 +125,10 @@ val SPEECH_MODELS get() = listOf(Model.Auto) + Model.entries.filter { it.name.st
 val DEFAULT_SPEECH = Model.Auto
 private val AUTO_ENGLISH = Model.WhisperSmallQ8
 private val AUTO_PARTS = listOf(AUTO_ENGLISH, Model.SenseVoice, Model.SenseVoiceTokens)
-private val CHINESE = setOf("zh", "yue", "ja", "ko")
+private fun mostlyChinese(text: String): Boolean {
+    val cjk = text.count(::isCjk)
+    return cjk >= 2 && cjk * 2 >= text.count { it.isLetter() }
+}
 val SPEAKER_MODELS = listOf(Model.SpeakerSegmentation, Model.SpeakerEmbedding)
 val DIARIZE_WINDOW_MS = 20 * 60 * 1000L
 const val LISTEN_FILE = "listen.opus"
@@ -308,7 +311,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
             Model.SenseVoice -> senseVoice(audio, w).let { "sensevoice" to it.second }
             Model.Auto -> {
                 val sense = if (AUTO_PARTS.drop(1).all { modelPath(it) != null }) senseVoice(audio, w) else null
-                if (sense != null && (sense.first in CHINESE || sense.second.any { s -> s.text.any(::isCjk) })) "sensevoice:${sense.first}" to sense.second
+                if (sense != null && mostlyChinese(sense.second.joinToString("") { it.text })) "sensevoice:${sense.first}" to sense.second
                 else "whisper:${sense?.first ?: "-"}" to whisper(AUTO_ENGLISH, audio)
             }
             else -> "whisper" to whisper(m, audio)
