@@ -267,6 +267,25 @@ void net_set_home(int home)
     device_home = home;
 }
 
+static int device_buzz_hz = 175;
+static int64_t buzz_local_at = -60000;
+static volatile int buzz_test_hz;
+
+void net_set_buzz_hz(int hz)
+{
+    if (hz != device_buzz_hz) buzz_local_at = esp_log_timestamp();
+    device_buzz_hz = hz;
+}
+
+void net_buzz_test(int hz) { buzz_test_hz = hz; }
+
+int net_take_buzz_test(void)
+{
+    int hz = buzz_test_hz;
+    buzz_test_hz = 0;
+    return hz;
+}
+
 void net_set_sound(int sound)
 {
     if (sound != device_sound) sound_local_at = esp_log_timestamp();
@@ -353,7 +372,7 @@ static void checkin_body(char *body, size_t n)
     if (used > 1 && used < n) {
         char night[16];
         night_text(night, sizeof night);
-        snprintf(body + used - 1, n - used + 1, ",\"sound\":\"%s\",\"home\":\"%s\",\"night\":\"%s\",\"health\":%s}", SOUNDS[device_sound], HOMES[device_home], night, health_json());
+        snprintf(body + used - 1, n - used + 1, ",\"sound\":\"%s\",\"buzz_hz\":%d,\"home\":\"%s\",\"night\":\"%s\",\"health\":%s}", SOUNDS[device_sound], device_buzz_hz, HOMES[device_home], night, health_json());
     }
     xSemaphoreTake(lock, portMAX_DELAY);
     for (int i = 0; i < mark_count; i++) {
@@ -431,6 +450,13 @@ static void apply_display(const cJSON *j)
     xSemaphoreTake(lock, portMAX_DELAY);
     uint8_t face = pick(cJSON_GetObjectItem(j, "clock_face"), FACES, FACE_COUNT, state.clock_face);
     uint8_t style = pick(cJSON_GetObjectItem(j, "weather_style"), STYLES, WXS_COUNT, state.weather_style);
+    const cJSON *bz = cJSON_GetObjectItem(j, "buzz_hz");
+    if (cJSON_IsNumber(bz) && bz->valueint >= BUZZ_HZ_MIN && bz->valueint <= BUZZ_HZ_MAX && esp_log_timestamp() - buzz_local_at > 60000 &&
+        bz->valueint != device_buzz_hz) {
+        state.buzz_hz = device_buzz_hz = bz->valueint;
+        state.buzz_from_hub = true;
+        state.version++;
+    }
     int sound = pick(cJSON_GetObjectItem(j, "sound"), SOUNDS, SOUND_COUNT, -1);
     if (sound >= 0 && esp_log_timestamp() - sound_local_at > 60000 && sound != device_sound) {
         state.sound = device_sound = sound;
@@ -1255,7 +1281,7 @@ void net_get_state(net_state_t *out)
 {
     xSemaphoreTake(lock, portMAX_DELAY);
     *out = state;
-    state.sound_from_hub = state.home_from_hub = state.night_from_hub = false;
+    state.buzz_from_hub = state.sound_from_hub = state.home_from_hub = state.night_from_hub = false;
     xSemaphoreGive(lock);
     wifi_get_status(&out->wifi);
 }

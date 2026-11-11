@@ -66,14 +66,15 @@ static void toggle_recording(void) { set_muted(recording); }
 
 static void apply_settings(const settings_t *s)
 {
-    bool sample = s->sound != settings.sound || s->buzz_pitch != settings.buzz_pitch;
+    bool sample = s->sound != settings.sound || s->buzz_hz != settings.buzz_hz;
     bool muted = settings.muted;
     settings = *s;
     settings.muted = muted;
     settings_save(&settings);
     audio_set_bitrate(settings.bitrate_kbps * 1000);
-    buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
+    buzzer_set_sound(settings.sound, settings.buzz_hz);
     net_set_sound(settings.sound);
+    net_set_buzz_hz(settings.buzz_hz);
     net_set_home(settings.home);
     net_set_night(settings.night_on, settings.night_start, settings.night_end);
     if (sample) buzzer_mark();
@@ -236,9 +237,10 @@ void app_main(void)
     off_reasons = settings.muted ? OFF_MUTE : 0;
     recording = !off_reasons;
     ui_set_recording(recording);
-    buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
+    buzzer_set_sound(settings.sound, settings.buzz_hz);
     net_set_home(settings.home);
     net_set_sound(settings.sound);
+    net_set_buzz_hz(settings.buzz_hz);
     report_boot();
     net_set_night(settings.night_on, settings.night_start, settings.night_end);
     ui_boot_step(2);
@@ -312,10 +314,18 @@ void app_main(void)
             settings_save(&settings);
             ui_set_settings(&settings);
         }
+        if (ns.buzz_from_hub && ns.buzz_hz != settings.buzz_hz) {
+            settings.buzz_hz = ns.buzz_hz;
+            settings_save(&settings);
+            buzzer_set_sound(settings.sound, settings.buzz_hz);
+            ui_set_settings(&settings);
+        }
+        int test_hz = net_take_buzz_test();
+        if (test_hz) buzzer_test(test_hz);
         if (ns.sound_from_hub && ns.sound != settings.sound) {
             settings.sound = ns.sound;
             settings_save(&settings);
-            buzzer_set_sound(settings.sound, BUZZ_HZ[settings.buzz_pitch]);
+            buzzer_set_sound(settings.sound, settings.buzz_hz);
             ui_set_settings(&settings);
         }
         if (ns.version != net_version || memcmp(&ns.wifi, &net_wifi, sizeof net_wifi) || ns.hub != net_hub) {

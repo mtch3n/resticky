@@ -1462,7 +1462,10 @@ static void show_settings(void)
     for (int i = 0; i < 2; i++) lv_label_set_text_fmt(night_times[i], "%02d:%02d", ends[i] / 60, ends[i] % 60);
     if (current.night_on) lv_label_set_text_fmt(night_value, "%02d:%02d\xE2\x80\x93%02d:%02d", ends[0] / 60, ends[0] % 60, ends[1] / 60, ends[1] % 60);
     else lv_label_set_text(night_value, "Off");
-    seg_set(&pitch_seg, current.buzz_pitch);
+    int preset = -1;
+    for (int i = 0; i < BUZZ_PITCHES; i++)
+        if (BUZZ_HZ[i] == current.buzz_hz) preset = i;
+    seg_set(&pitch_seg, preset);
     set_hidden(pitch_title, current.sound != SOUND_BUZZ);
     set_hidden(pitch_seg.box, current.sound != SOUND_BUZZ);
     switch_set(&mic_switch, recording);
@@ -1817,7 +1820,7 @@ static void power_off_clicked(lv_event_t *e) { actions.power_off(); }
 
 static void pitch_clicked(lv_event_t *e)
 {
-    current.buzz_pitch = (int)(intptr_t)lv_event_get_user_data(e);
+    current.buzz_hz = BUZZ_HZ[(int)(intptr_t)lv_event_get_user_data(e)];
     show_settings();
     actions.settings_changed(&current);
 }

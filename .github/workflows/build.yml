@@ -24,6 +24,10 @@ jobs:
             firmware/managed_components
           key: pio-${{ hashFiles('firmware/platformio.ini', 'firmware/dependencies.lock', 'firmware/sdkconfig.defaults') }}
       - run: pip install platformio==6.1.18
+      - name: Firmware signing key
+        env:
+          KEY: ${{ secrets.FIRMWARE_SIGNING_KEY_B64 }}
+        run: mkdir -p firmware/signing && echo "$KEY" | base64 -d > firmware/signing/firmware-signing.pem
       - run: pio run
         working-directory: firmware
       - run: |

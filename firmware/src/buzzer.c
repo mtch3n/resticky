@@ -53,6 +53,19 @@ void buzzer_click(void)
     else tone(2700, 12);
 }
 
+void buzzer_test(int hz)
+{
+    if (pin < 0) return;
+    int keep = buzz_hz;
+    buzz_hz = hz;
+    buzz(35);
+    vTaskDelay(pdMS_TO_TICKS(400));
+    buzz(100);
+    vTaskDelay(pdMS_TO_TICKS(80));
+    buzz(100);
+    buzz_hz = keep;
+}
+
 void buzzer_mark(void)
 {
     if (pin < 0 || sound == SOUND_OFF) return;

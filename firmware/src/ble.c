@@ -80,6 +80,13 @@ static void on_frame(uint8_t type, const uint8_t *p, size_t n)
         if (xQueueSend(acks, ack, 0) != pdTRUE) ESP_LOGW(TAG, "ack queue full");
         return;
     }
+    if (type == BLE_TYPE_BUZZ_TEST) {
+        cJSON *j = cJSON_ParseWithLength((const char *)p, n);
+        const cJSON *hz = cJSON_GetObjectItem(j, "hz");
+        if (cJSON_IsNumber(hz) && hz->valueint >= BUZZ_HZ_MIN && hz->valueint <= BUZZ_HZ_MAX) net_buzz_test(hz->valueint);
+        cJSON_Delete(j);
+        return;
+    }
     if (type == HUB_FRAME_WEATHER || type == HUB_FRAME_AGENDA || type == HUB_FRAME_DISPLAY) {
         net_hub_frame(type, (const char *)p, n);
         return;

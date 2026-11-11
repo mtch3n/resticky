@@ -5,6 +5,8 @@ typedef enum { ACT_NOTHING, ACT_SLEEP, ACT_MUTE, ACT_PREV, ACT_NEXT, ACT_HOME, A
 typedef enum { SLOT_POWER_PRESS, SLOT_POWER_DOUBLE, SLOT_UP_PRESS, SLOT_UP_HOLD, SLOT_DOWN_PRESS, SLOT_DOWN_HOLD, SLOT_BACK_TAP, SLOT_COUNT } button_slot_t;
 
 #define BUZZ_PITCHES 4
+#define BUZZ_HZ_MIN 60
+#define BUZZ_HZ_MAX 1000
 extern const int BUZZ_HZ[BUZZ_PITCHES];
 
 typedef enum { SOUND_OFF, SOUND_BEEP, SOUND_BUZZ, SOUND_COUNT } sound_t;
@@ -14,7 +16,8 @@ typedef struct {
     int bitrate_kbps;
     bool flip_stop;
     unsigned char buttons[SLOT_COUNT];
-    unsigned char sound, buzz_pitch;
+    unsigned char sound;
+    unsigned short buzz_hz;
     bool night_on;
     unsigned short night_start, night_end;
     unsigned char home;
