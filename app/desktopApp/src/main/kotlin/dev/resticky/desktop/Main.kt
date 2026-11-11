@@ -306,7 +306,7 @@ fun main(args: Array<String>) {
     val flags = Flags(args)
     val port = flags.string("port", "8787").toInt()
     val data = flags.string("data", "$home/.local/share/resticky/data")
-    val model = flags.string("model", "$home/.local/share/resticky/models/ggml-base.en.bin")
+    val model = flags.string("model", "$home/.local/share/resticky/models/ggml-small.en-q8_0.bin")
     val store = Store(IoPath(data))
     val segmentation = flags.string("segmentation", "$home/.local/share/resticky/models/$SEGMENTATION_MODEL")
     val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
