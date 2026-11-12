@@ -7,6 +7,7 @@
 
 #define BUZZER_TIMER LEDC_TIMER_1
 #define BUZZER_CHANNEL LEDC_CHANNEL_1
+#define HALF_DUTY (1 << 13)
 
 static int pin = -1;
 static int sound = SOUND_BEEP, buzz_hz = 175;
@@ -19,7 +20,7 @@ void buzzer_set_sound(int s, int hz)
 
 static void attach(int gpio)
 {
-    ledc_timer_config_t t = {.speed_mode = LEDC_LOW_SPEED_MODE, .timer_num = BUZZER_TIMER, .duty_resolution = LEDC_TIMER_10_BIT,
+    ledc_timer_config_t t = {.speed_mode = LEDC_LOW_SPEED_MODE, .timer_num = BUZZER_TIMER, .duty_resolution = LEDC_TIMER_14_BIT,
                              .freq_hz = 2700, .clk_cfg = LEDC_AUTO_CLK};
     ledc_timer_config(&t);
     ledc_channel_config_t c = {.gpio_num = gpio, .speed_mode = LEDC_LOW_SPEED_MODE, .channel = BUZZER_CHANNEL, .timer_sel = BUZZER_TIMER, .duty = 0};
@@ -36,9 +37,9 @@ static void tone_duty(int hz, int ms, int duty)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_CHANNEL);
 }
 
-static void tone(int hz, int ms) { tone_duty(hz, ms, 512); }
+static void tone(int hz, int ms) { tone_duty(hz, ms, HALF_DUTY); }
 
-static void buzz(int ms) { tone_duty(buzz_hz, ms, 512); }
+static void buzz(int ms) { tone_duty(buzz_hz, ms, HALF_DUTY); }
 
 void buzzer_init(int gpio)
 {
