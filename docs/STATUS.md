@@ -103,7 +103,9 @@ low power and storage use that we can profile.
   - Look at on the device: the log lines `light sleep: woke after N s (M night checks)`,
     `ble: ready` after the wake (BLE starts again), `touch: wake: ok`, and the boot report for
     `sleep_step=11` to `19` (a hang or crash in light sleep; 16 = during the sleep).
-- Firmware 0.15.4 (2026-11-12, built, not flashed, not measured): power and loss visibility.
+- Firmware 0.15.5 (2026-11-12): the release of the 0.15.4 changes below (the v0.15.4 CI run failed), with the
+  hub fixes, the summary backoff and the to-do rules.
+- Firmware 0.15.4 (2026-11-12, built, not released, not flashed, not measured): power and loss visibility.
   - BLE asks for the fast interval while audio chunks wait in the outbox, and for the slow interval when
     the outbox is empty. Health: `ble_fast_s`, `ble_tx_bytes`.
   - E-paper: the SSD1677 goes into deep sleep after each refresh; each refresh does a reset and the init
