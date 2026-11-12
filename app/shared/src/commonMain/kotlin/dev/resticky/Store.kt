@@ -13,7 +13,13 @@ import kotlin.time.Instant
 
 private val AUDIO = setOf("opus", "ogg", "wav")
 
-enum class Added { SESSION, CHUNK, REPEAT, CONFLICT }
+enum class Added { SESSION, CHUNK, REPEAT, RESTORED, CONFLICT }
+
+expect fun sync(path: Path)
+
+expect fun sha256(data: ByteArray): ByteArray
+
+fun conflictName(seq: Int, data: ByteArray) = "$seq.conflict-${sha256(data).copyOf(8).toHexString()}.opus"
 
 class Store(val root: Path) {
     private val mutex = Mutex()
@@ -25,13 +31,16 @@ class Store(val root: Path) {
         hubJson.decodeFromString<Session>(text)
     }.getOrNull()
 
-    private fun save(s: Session) = write(Path(dir(s.device, s.id), "meta.json"), hubJson.encodeToString(s).encodeToByteArray())
+    private fun save(s: Session, durable: Boolean = false) =
+        write(Path(dir(s.device, s.id), "meta.json"), hubJson.encodeToString(s).encodeToByteArray(), durable)
 
-    fun write(path: Path, data: ByteArray) {
+    fun write(path: Path, data: ByteArray, durable: Boolean = false) {
         path.parent?.let { SystemFileSystem.createDirectories(it) }
         val tmp = Path("$path.tmp")
         SystemFileSystem.sink(tmp).buffered().use { it.write(data) }
+        if (durable) sync(tmp)
         SystemFileSystem.atomicMove(tmp, path)
+        if (durable) generateSequence(path.parent) { d -> d.parent?.takeIf { "$d" != "$root" } }.forEach(::sync)
     }
 
     fun read(path: Path): ByteArray? =
@@ -54,12 +63,19 @@ class Store(val root: Path) {
         val m = load(device, id) ?: Session(device, id, now, now, 0, chunks = mutableMapOf())
         val file = Path(dir(device, id), "$seq.opus")
         if ("$seq" in m.chunks) {
-            val stored = read(file) ?: return@withLock Added.REPEAT
-            return@withLock if (stored.contentEquals(data)) Added.REPEAT else Added.CONFLICT
+            val stored = read(file)
+            if (stored == null) {
+                write(file, data, durable = true)
+                return@withLock Added.RESTORED
+            }
+            if (stored.contentEquals(data)) return@withLock Added.REPEAT
+            val copy = Path(dir(device, id), conflictName(seq, data))
+            if (read(copy)?.contentEquals(data) != true) write(copy, data, durable = true)
+            return@withLock Added.CONFLICT
         }
         val first = m.chunks.isEmpty()
         if (first) m.started = capturedAt ?: (now - durationMs.milliseconds)
-        write(file, data)
+        write(file, data, durable = true)
         m.chunks["$seq"] = PENDING
         m.durationMs += durationMs
         m.chunkMs["$seq"] = durationMs
@@ -69,7 +85,7 @@ class Store(val root: Path) {
         m.lastChunk = now
         m.final = m.final || final
         m.ready = false
-        save(m)
+        save(m, durable = true)
         if (first) Added.SESSION else Added.CHUNK
     }
 
