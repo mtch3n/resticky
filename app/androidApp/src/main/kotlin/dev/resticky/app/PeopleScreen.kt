@@ -36,23 +36,22 @@ fun peopleLabel(people: List<Person>): String {
 @Composable
 fun PeopleScreen(people: List<Person>, back: () -> Unit, voice: () -> Unit, edit: (Person) -> Unit, delete: (String) -> Unit) = Page("People", back) {
     val me = people.find { it.isMe }
-    val others = people.filter { !it.isMe }
+    val others = people.filter { !it.isMe }.sortedWith(compareBy({ it.unnamed }, { it.name }))
     item {
         CardList {
-            ListRow("Your voice", me?.let { "${it.name} · ${duration(it.talkMs)}" } ?: "Not recorded", first = true, lead = { Glyph(R.drawable.ic_microphone) }, onClick = voice) { Chevron() }
-        }
-    }
-    gap()
-    item { Section("People") }
-    gap()
-    item {
-        CardList {
-            if (others.isEmpty()) ListRow("No people yet", "Name a speaker in a transcript", first = true, lead = { Glyph(R.drawable.ic_users) })
+            if (others.isEmpty()) ListRow("No people yet", "Voices that come back in recordings show here", first = true, subtitleLines = 2, lead = { Glyph(R.drawable.ic_users) })
             others.forEachIndexed { i, p ->
                 ListRow(p.name, duration(p.talkMs), first = i == 0, lead = { Glyph(R.drawable.ic_users) }, onClick = { edit(p) }) {
                     Pill("Delete", onClick = { delete(p.id) })
                 }
             }
+        }
+    }
+    gap()
+    item {
+        CardList {
+            val found = if (me == null) "Optional · found from your recordings" else if (me.auto) "Found from your recordings" else "Recorded · ${duration(me.talkMs)}"
+            ListRow("Your voice", found, first = true, lead = { Glyph(R.drawable.ic_microphone) }, onClick = voice) { Chevron() }
         }
     }
     gap()

@@ -136,10 +136,10 @@ class VocabularyTest {
                 "1" to listOf(Segment(0, 1000, "Christa there", words = listOf(Word(0, 500, "Christa"), Word(500, 1000, "there")))),
             ),
         )
-        assertEquals(1, s.applyRule(Rule("Christa", "Krista")) { it == CHUNK_MS })
+        assertEquals(1, s.applyRule(Rule("Christa", "Krista")) { it == CHUNK_MS }.size)
         assertEquals("Christa here", s.chunks["0"])
         assertEquals("Krista there", s.chunks["1"])
-        assertEquals(1, s.applyRule(Rule("Christa", "Krista")) { true })
+        assertEquals(1, s.applyRule(Rule("Christa", "Krista")) { true }.size)
         assertEquals("Krista here Krista there", s.transcript())
     }
 
@@ -149,12 +149,14 @@ class VocabularyTest {
         val v = Vocabulary(file, tick)
         v.correct("Christa", "Krista", everywhere = true)
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
+        val people = People(Path(root, "people.json"))
+        people.learn("Sam", Voiceprint(floatArrayOf(1f, 0f), 1000), null)
         val prompts = mutableListOf<String>()
         Pipeline(
             store, { _, p -> prompts += p; listOf(Segment(0, 1000, "ask Christa", words = listOf(Word(0, 500, "ask"), Word(500, 1000, "Christa")))) },
-            { _, _ -> Summary("T", "S") }, NO_SPEAKERS, vocabulary = v, extraNames = { listOf("Sam") }, calendarTerms = { _, _ -> listOf("Standup") },
+            { _, _ -> Summary("T", "S") }, NO_SPEAKERS, vocabulary = v, people = people, calendarTerms = { _, _ -> listOf("Standup") }, attendees = { _, _ -> listOf("Dana Fox") },
         ) {}.drain()
-        assertEquals(listOf("Sam, Standup, Krista."), prompts)
+        assertEquals(listOf("Sam, Standup, Dana Fox, Krista."), prompts)
         val m = store.list("ab").single()
         assertEquals("ask Krista", m.chunks["0"])
         assertEquals(1, m.chunkRules["0"])

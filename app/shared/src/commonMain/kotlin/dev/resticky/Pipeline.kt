@@ -29,9 +29,13 @@ fun interface Summarizer {
 
 val AUDIO_KEEP = 7.days
 
-const val SUMMARY_SCHEMA = """{"type":"object","additionalProperties":false,"required":["title","summary","todos"],
+const val SUMMARY_SCHEMA = """{"type":"object","additionalProperties":false,"required":["title","summary","todos","speakers","corrections"],
 "properties":{"title":{"type":"string"},"summary":{"type":"string"},"todos":{"type":"array","items":{"type":"object","additionalProperties":false,
-"required":["task","quote"],"properties":{"task":{"type":"string"},"quote":{"type":"string"}}}}}}"""
+"required":["task","quote"],"properties":{"task":{"type":"string"},"quote":{"type":"string"}}}},
+"speakers":{"type":"array","items":{"type":"object","additionalProperties":false,
+"required":["speaker","name","evidence"],"properties":{"speaker":{"type":"string"},"name":{"type":"string"},"evidence":{"type":"string"}}}},
+"corrections":{"type":"array","items":{"type":"object","additionalProperties":false,
+"required":["from","to","evidence"],"properties":{"from":{"type":"string"},"to":{"type":"string"},"evidence":{"type":"string"}}}}}}"""
 
 const val NO_SPEECH = "No speech"
 const val SHORT_NOTE = "Short note"
@@ -39,16 +43,29 @@ const val MIN_SPEECH_UNITS = 25
 const val MIN_NOTE_UNITS = 5
 val RETRY_WAIT = 10.seconds
 
-class SummaryContext(val place: String = "", val moments: List<String> = emptyList(), val photos: List<String> = emptyList())
+data class SummaryContext(
+    val place: String = "",
+    val moments: List<String> = emptyList(),
+    val photos: List<String> = emptyList(),
+    val attendees: List<String> = emptyList(),
+    val candidates: List<String> = emptyList(),
+)
 
 fun summaryPrompt(c: SummaryContext): String = "This is a transcript of a conversation recorded by a desk device. It can mix English, Mandarin and Cantonese. " +
-    "Return JSON with the keys title (at most 6 words, about the main topic), summary (at most 3 plain sentences) and todos. " +
+    "Return JSON with the keys title (at most 6 words, about the main topic), summary (at most 3 plain sentences), todos, speakers and corrections. " +
     "Each todo is an object: task (a short action that starts with a verb) and quote (the exact words from the transcript that ask for or promise it). " +
     "Only list a todo when someone in the transcript asks for, agrees to or promises a concrete action; else return an empty array. " +
     "Name an owner in the task only if the transcript says the name of the person; never use \"Speaker A\" style names as owners. " +
     "Use only facts from the transcript, in the language of the transcript. " +
     "If the transcript is not a real conversation (only noise, music, or a few unrelated words), return the title \"$NO_SPEECH\", an empty summary and no todos. " +
-    "When lines start with a speaker name and a colon, that is who speaks." +
+    "When lines start with a speaker name and a colon, that is who speaks. " +
+    "Each speaker is an object: speaker (the label at the start of the line, for example \"Speaker B\"), name and evidence (the exact words from the transcript that show the name). " +
+    "Only add a speaker when the transcript shows the real name of that speaker: the speaker says their own name (\"this is Krista\"), " +
+    "or another speaker says the name to them and they answer in the next line. Never guess a name; else return an empty array." +
+    (if (c.attendees.isEmpty()) "" else " The people invited to this meeting are: ${c.attendees.joinToString(", ")}.") +
+    " Each correction is an object: from (the exact word or words in the transcript), to and evidence (the exact words around it). " +
+    (if (c.candidates.isEmpty()) "Return an empty corrections array."
+    else "Only add a correction when speech recognition wrote one of these names or terms wrongly and from sounds like it: ${c.candidates.joinToString(", ")}. Else return an empty array.") +
     (if (c.place.isEmpty()) "" else " The recording was made at the place that the user calls \"${c.place}\"; use it only as context.") +
     (if (c.moments.isEmpty()) "" else "\n\nThe user marked important moments on the device. Give them weight in the title, the summary and the todos. " +
         "Each line is the time of the mark and the text of the 2 minutes before it:\n" + c.moments.joinToString("\n") { "- $it" }) +
@@ -60,7 +77,13 @@ fun summaryPrompt(c: SummaryContext): String = "This is a transcript of a conver
 private class TodoDraft(val task: String, val quote: String)
 
 @Serializable
-private class SummaryDraft(val title: String, val summary: String, val todos: List<TodoDraft> = emptyList())
+private class SummaryDraft(
+    val title: String,
+    val summary: String,
+    val todos: List<TodoDraft> = emptyList(),
+    val speakers: List<SpeakerName> = emptyList(),
+    val corrections: List<Correction> = emptyList(),
+)
 
 private fun isCjk(c: Char) = c in '\u3400'..'\u9fff' || c in '\uf900'..'\ufaff'
 
@@ -145,7 +168,9 @@ fun parseSummary(raw: String, transcript: String): Summary {
         val span = quoteSpan(t.quote, transcript)
         if (task.isEmpty() || span == null || negated(task) != negated(span)) null else Todo(task, span)
     }
-    return Summary(d.title.trim(), d.summary.trim(), todos.distinctBy { it.task })
+    val speakers = d.speakers.map { SpeakerName(it.speaker.trim(), it.name.trim(), it.evidence.trim()) }.filter { it.speaker.isNotEmpty() && it.name.isNotEmpty() }
+    val corrections = d.corrections.map { Correction(it.from.trim(), it.to.trim(), it.evidence.trim()) }.filter { it.from.isNotEmpty() && it.to.isNotEmpty() }
+    return Summary(d.title.trim(), d.summary.trim(), todos.distinctBy { it.task }, speakers = speakers, corrections = corrections)
 }
 
 private val TAG_OPEN = setOf('[', '(', '*', '<')
@@ -229,9 +254,9 @@ class Pipeline(
     private val diarizeWindowMs: Long = Long.MAX_VALUE,
     private val speechId: () -> String = { "" },
     private val vocabulary: Vocabulary? = null,
-    private val extraNames: () -> List<String> = { emptyList() },
     private val calendarTerms: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
-    private val people: () -> List<Person> = { emptyList() },
+    private val attendees: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
+    private val people: People? = null,
     private val log: (String) -> Unit,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -249,8 +274,10 @@ class Pipeline(
             val seq = m.chunks.entries.firstOrNull { it.value == PENDING }?.key ?: continue
             val start = TimeSource.Monotonic.markNow()
             val prompt = vocabulary?.let { v ->
-                val calendar = runCatching { calendarTerms(m.started, m.wallAt(m.endMs())) }.getOrElse { emptyList() }
-                v.prompt(extraNames(), calendar)
+                val from = m.started
+                val to = m.wallAt(m.endMs())
+                val calendar = runCatching { calendarTerms(from, to) }.getOrElse { emptyList() } + invited(from, to)
+                v.prompt(spokenNames(people?.all().orEmpty()), calendar)
             }.orEmpty()
             val raw = runCatching { cleanSegments(transcriber.transcribe(Path(store.dir(m.device, m.id), "$seq.opus"), prompt)) }
                 .getOrElse {
@@ -275,11 +302,12 @@ class Pipeline(
             diarize(m)
             return true
         }
-        for (c in conversations(all)) {
+        val list = conversations(all)
+        for (c in list) {
             val sessions = c.parts.map { it.session }.distinct()
             if (sessions.any { it.pending || it.needsSpeakers || !it.closed(now) || it.place == PENDING && now - it.lastChunk < PLACE_WAIT }) continue
             if (c.ready()) continue
-            return summarize(c)
+            return summarize(c, list)
         }
         return false
     }
@@ -303,30 +331,70 @@ class Pipeline(
             it.speakersFailed = frames != null && found == null
             if (found != null) {
                 it.assignSpeakers(found.turns)
-                it.labelVoices(found.voices, people())
+                it.labelVoices(found.voices, people?.all().orEmpty())
             }
         }
-        if (found != null) log("INFO diarized session=${m.id} speakers=${found.turns.map { it.speaker }.distinct().size} turns=${found.turns.size} took=${start.elapsedNow()}")
+        if (found != null) {
+            log("INFO diarized session=${m.id} speakers=${found.turns.map { it.speaker }.distinct().size} turns=${found.turns.size} took=${start.elapsedNow()}")
+            learnVoices()
+        }
     }
 
-    private suspend fun summarize(c: Conversation): Boolean {
+    private suspend fun invited(from: Instant, to: Instant): List<String> = runCatching { attendees(from, to) }.getOrElse { emptyList() }
+
+    private suspend fun learnVoices() {
+        val book = people ?: return
+        val all = store.all()
+        val before = book.all().size
+        book.discover(all)
+        val now = book.all()
+        var linked = 0
+        for (s in all) if (s.linkPeople(now)) {
+            store.update(s.device, s.id) { it.linkPeople(now) }
+            linked++
+        }
+        if (now.size != before || linked > 0) log("INFO voices people=${now.size} new=${now.size - before} linked_sessions=$linked")
+    }
+
+    private suspend fun learnNames(c: Conversation, sum: Summary, text: String, invited: List<String>) {
+        val book = people ?: return
+        val accepted = acceptNames(sum.speakers, text, invited, c.slots(book.all()))
+        for ((slot, name) in accepted) nameSpeaker(store, book, slot.session.device, slot.session.id, slot.speaker, name, auto = true)
+        if (accepted.isNotEmpty()) log("INFO named conversation=${c.key} proposed=${sum.speakers.size} accepted=${accepted.size}")
+    }
+
+    private suspend fun learnWords(c: Conversation, title: String, all: List<Conversation>, invited: List<String>) {
+        val v = vocabulary ?: return
+        val others = all.filter { it.key != c.key }.take(AUTO_TERMS_WINDOW).map { it.transcript() + "\n" + it.recap().title }
+        v.learnTerms(invited, TermSource.Calendar)
+        v.learnTerms(recurringTerms(c.transcript() + "\n" + title, others), TermSource.Auto)
+        v.learnRules(repeatedFixes(conversations(store.list(c.device))))
+    }
+
+    private suspend fun summarize(c: Conversation, all: List<Conversation>): Boolean {
         val input = c.input()
         val units = speechUnits(c.transcript())
         val start = TimeSource.Monotonic.markNow()
+        val text = c.labelledTranscript().trim()
+        val invited = invited(c.start, c.parts.last().let { it.session.wallAt(it.toMs) })
+        val candidates = (invited + spokenNames(people?.all().orEmpty()) + vocabulary?.terms().orEmpty())
+            .map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.take(CANDIDATES_MAX)
         val sum = when {
             units < MIN_NOTE_UNITS -> Summary(NO_SPEECH, "")
             units < MIN_SPEECH_UNITS -> Summary(SHORT_NOTE, c.transcript().trim())
-            else -> runCatching { summarizer.summarize(c.labelledTranscript().trim(), c.context()) }.getOrElse {
+            else -> runCatching { summarizer.summarize(text, c.context().copy(attendees = invited, candidates = candidates)) }.getOrElse {
                 log("WARN summarize conversation=${c.key} err=${it.message}")
                 return false
             }.also { log("INFO summarized conversation=${c.key} parts=${c.parts.size} title=\"${it.title}\" todos=${it.todos.size} took=${start.elapsedNow()}") }
         }
         val todos = sum.todos.take(TODO_SLOTS)
         val quotes = todos.map { c.quote(it.quote) }
+        var fixed = 0
         val saved = store.updateDevice(c.device) { sessions ->
             val now = conversations(sessions).firstOrNull { it.key == c.key }
             if (now == null || now.input() != input) return@updateDevice emptyList()
             val members = now.parts.map { it.session }.distinct()
+            val rules = acceptCorrections(sum.corrections, text, candidates, members.flatMap { it.refusedFixes() }.toSet())
             val ticks = members.flatMap { s -> s.recaps().flatMap { it.second.ticks() } }
             val texts = todos.map { it.task }
             val done = mutableMapOf<String, Time>()
@@ -336,12 +404,19 @@ class Pipeline(
                 tick.done?.let { done["$i"] = it }
                 tick.changed?.let { changes["$i"] = it }
             }
-            val head = now.head.session
-            head.putRecap(now.head.fromMs, Recap(sum.title, sum.summary, texts, quotes, sum.engine, done, changes, true, input))
+            for (r in rules) for (s in members) fixed += s.autoFix(r) { ms -> now.parts.any { it.session === s && it.covers(ms) } }
+            val recap = rules.fold(Recap(sum.title, sum.summary, texts, quotes, sum.engine, done, changes, true, input)) { r, rule -> r.fixed(rule) }
+            now.head.session.putRecap(now.head.fromMs, recap.copy(input = now.input()))
             members.filter { it.place == PENDING }.forEach { it.place = "" }
             members
         }
-        if (saved == 0) log("INFO summary dropped conversation=${c.key} reason=input_changed")
+        if (saved == 0) {
+            log("INFO summary dropped conversation=${c.key} reason=input_changed")
+            return true
+        }
+        if (fixed > 0) log("INFO fixed conversation=${c.key} proposed=${sum.corrections.size} changed=$fixed")
+        learnNames(c, sum, text, invited)
+        learnWords(c, sum.title, all, invited)
         return true
     }
 

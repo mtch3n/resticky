@@ -23,6 +23,7 @@ private fun sourceLabel(s: TermSource): String = when (s) {
     TermSource.Correction -> "From a correction"
     TermSource.Calendar -> "From the calendar"
     TermSource.People -> "From people"
+    TermSource.Auto -> "From your recordings"
 }
 
 @Composable
@@ -40,7 +41,7 @@ fun VocabularyScreen(data: VocabularyData, back: () -> Unit, add: (String) -> Un
     Page("Vocabulary", back) {
         item {
             Text(
-                "Names and words that speech recognition must know. Corrections in a transcript add a word and a fix for new transcripts.",
+                "Names and words that speech recognition must know. The app adds names from the calendar, people and words that come back in recordings.",
                 style = Type.small,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
@@ -54,7 +55,7 @@ fun VocabularyScreen(data: VocabularyData, back: () -> Unit, add: (String) -> Un
         gap()
         item {
             CardList {
-                if (data.rules.isEmpty()) ListRow("No fixes yet", "Long-press a word in a transcript to correct it", first = true, subtitleLines = 2)
+                if (data.rules.isEmpty()) ListRow("No fixes yet", "Fixes that repeat in transcripts show here", first = true, subtitleLines = 2)
                 data.rules.forEachIndexed { i, r ->
                     ListRow("${r.from} → ${r.to}", first = i == 0) { DeleteAction { removeRule(r) } }
                 }

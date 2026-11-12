@@ -191,23 +191,42 @@ Whisper spells names and work words incorrectly ("Christa" for "Krista", "QI" fo
 this in two steps.
 
 - Store: `vocabulary.json` next to the `data` folder (phone: app files; laptop: `~/.local/share/resticky/`). It
-  has terms (`text`, `source`: `user`, `correction`, `calendar` or `people`, `count`, `last_used`) and rules
+  has terms (`text`, `source`: `user`, `correction`, `calendar`, `people` or `auto`, `count`, `last_used`) and rules
   (`from` → `to`). The store keeps 300 terms at most. When it has more, it removes the non-user terms that have the
   oldest `last_used`. It never removes user terms.
 - Prompt: for each chunk, the hub makes a Whisper prompt in this order: user terms (newest first), people names,
-  titles of calendar events that overlap the session, correction terms (most used first). Each term occurs one
+  titles and attendee names of calendar events that overlap the session, correction terms (most used first),
+  `auto` terms (most used first). Each term occurs one
   time. The hub stops at a cost of 400 (1 for each ASCII character, 3 for each other character, 2 for each
   separator). This keeps the prompt below the Whisper limit of 224 tokens. Whisper.cpp keeps only the last
   tokens of a prompt that is too long, thus the hub must cut it. The phone sends it as `initial_prompt`
   (`no_context` stays true); the laptop sends `--prompt` to `whisper-cli`. SenseVoice has no prompt.
-- Calendar: the phone reads the titles of the events in the selected calendars from the session start to the
-  session end. Each title becomes a `calendar` term. Calendars.kt does not read attendees.
-- People: the pipeline gets the names from `extraNames` (empty until the people library connects to it).
+- Calendar: the phone reads the titles and the attendee names of the events in the selected calendars from the
+  session start to the session end. Each one becomes a `calendar` term.
+- People: the pipeline gets the names from the people library (not "You" and not an unnamed "Person N").
+- Automatic terms: after each summary, `recurringTerms` takes the capitalized words of the conversation text and
+  title that are not the first word of a sentence, have 3 letters or more, are not in `COMMON_WORDS` and do not
+  occur in lower case. A word that also occurs like this in one other recent conversation (of the last
+  `AUTO_TERMS_WINDOW`) becomes an `auto` term (at most `AUTO_TERMS_MAX` each time). The 300-term cap removes old
+  `auto` terms like other non-user terms.
 - Rules: after the clean-up step and before the summary, the hub applies each rule to the segment words and the
   text. A rule matches whole words, ignores case, keeps the punctuation around the word ("Christa," → "Krista,")
   and can have more than one word. The chunk records the number of changes in `chunk_rules` (key: the chunk). The
   hub does not keep the engine text.
-- Correction on the phone: long-press a word in the transcript. The sheet shows the heard word and the correct
+- Automatic correction (names only): the same summary call returns `corrections`:
+  `[{"from","to","evidence"}]`. The prompt lists the candidates (attendees, people names, vocabulary terms; at most
+  `CANDIDATES_MAX`). `acceptCorrections` keeps a correction only when `to` is a candidate, `from` is not a
+  candidate, `from` is in the transcript as whole words, no word of `from` is in `COMMON_WORDS` (for example will,
+  may, mark, grace, bill, art, hope, joy), and `soundsLike(from, to)` is true. `soundsLike` compares consonant
+  skeletons (`skeleton`: c/k/q → k, soft c → s, soft g → j, ph → f, vowels and h/w removed after the first letter,
+  double letters as one): the first sound must be equal and the edit distance must be 0 (skeleton of 2 or fewer),
+  1 (5 or fewer) or 2. The hub then changes the words in the conversation lines and in the title, summary and
+  to-dos, and saves the summary with the new input (no second model call). Each changed line gets a `fixes` entry
+  in `meta.json`: `{"from","to","at_ms","auto":true}`. The transcript page draws a light dotted line under the
+  word; a tap shows "Changed from X" and Undo. Undo changes the line back, sets `undone`, deletes the rule
+  `from` → `to` and makes a new summary. The hub never applies an undone pair to that session again. A pair that
+  is in the `fixes` of `RULE_CONVERSATIONS` conversations becomes a rule for new transcripts.
+- Correction on the phone (manual, optional): long-press a word in the transcript. The sheet shows the heard word and the correct
   word. "Fix" changes all equal words in this conversation, adds the rule and adds the correct word as a
   `correction` term. "Only here" changes only the line and adds the term, but no rule. The conversation then
   gets a new summary because its input changed.

@@ -530,5 +530,8 @@ private fun Summarizer.inParts(maxChars: Int) = Summarizer { text, sc ->
     val sums = parts.map { summarize(it.toString(), sc) }.filter { it.title != NO_SPEECH }
     if (sums.isEmpty()) return@Summarizer Summary(NO_SPEECH, "")
     val merged = summarize(sums.joinToString("\n") { it.summary }, sc)
-    Summary(merged.title.takeIf { it != NO_SPEECH } ?: sums.first().title, merged.summary, sums.flatMap { it.todos }.distinct())
+    Summary(
+        merged.title.takeIf { it != NO_SPEECH } ?: sums.first().title, merged.summary, sums.flatMap { it.todos }.distinct(),
+        speakers = sums.flatMap { it.speakers }.distinct(), corrections = sums.flatMap { it.corrections }.distinct(),
+    )
 }

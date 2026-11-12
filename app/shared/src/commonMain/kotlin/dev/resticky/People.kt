@@ -16,6 +16,11 @@ const val PERSON_MATCH = 0.62
 const val PERSON_MARGIN = 0.05
 const val PERSON_SUGGEST = 0.5
 const val ME_NAME = "You"
+const val OWNER_SHARE = 0.4
+const val OWNER_MIN_SESSIONS = 5
+const val RECURRING_MIN_SESSIONS = 3
+const val UNNAMED_PREFIX = "Person "
+private val UNNAMED = Regex("^${UNNAMED_PREFIX}(\\d+)$")
 
 @Serializable
 class Person(
@@ -24,9 +29,19 @@ class Person(
     @Serializable(FloatsBase64::class) val embedding: FloatArray,
     @SerialName("talk_ms") val talkMs: Long,
     @SerialName("is_me") val isMe: Boolean = false,
+    val auto: Boolean = false,
 ) {
-    fun copy(name: String = this.name, embedding: FloatArray = this.embedding, talkMs: Long = this.talkMs) = Person(id, name, embedding, talkMs, isMe)
+    fun copy(name: String = this.name, embedding: FloatArray = this.embedding, talkMs: Long = this.talkMs, isMe: Boolean = this.isMe, auto: Boolean = this.auto) =
+        Person(id, name, embedding, talkMs, isMe, auto)
+
+    val number: Int? get() = if (auto) UNNAMED.matchEntire(name)?.groupValues?.get(1)?.toIntOrNull() else null
+
+    val unnamed: Boolean get() = number != null
 }
+
+fun placeholderName(name: String): Boolean = name.trim().startsWith("Speaker ") || UNNAMED.matches(name.trim())
+
+fun spokenNames(people: List<Person>): List<String> = people.filter { !it.isMe && !it.unnamed }.map { it.name }
 
 class PersonMatch(val speaker: Int, val person: String, val sure: Boolean)
 
@@ -77,7 +92,7 @@ private fun sameName(a: String, b: String) = a.trim().equals(b.trim(), ignoreCas
 
 fun newPersonId(): String = Random.nextLong().toULong().toString(16)
 
-fun learnVoice(people: List<Person>, name: String, voice: Voiceprint?, from: String?, newId: () -> String = ::newPersonId): Pair<List<Person>, String?> {
+fun learnVoice(people: List<Person>, name: String, voice: Voiceprint?, from: String?, auto: Boolean = false, newId: () -> String = ::newPersonId): Pair<List<Person>, String?> {
     val wanted = name.trim()
     val old = people.find { it.id == from }
     if (old != null && sameName(old.name, wanted)) return people to old.id
@@ -89,9 +104,11 @@ fun learnVoice(people: List<Person>, name: String, voice: Voiceprint?, from: Str
     if (wanted.isEmpty() || wanted.startsWith("Speaker ")) return out to null
     val target = out.find { sameName(it.name, wanted) }
     return when {
-        target != null -> (if (voice == null) out else out.map { if (it.id == target.id) it.plus(voice) else it }) to target.id
+        target != null -> out.map { p ->
+            if (p.id != target.id) p else (if (voice == null) p else p.plus(voice)).let { if (auto) it else it.copy(auto = false) }
+        } to target.id
         voice == null -> out to null
-        else -> newId().let { id -> out + Person(id, wanted, voice.embedding.unit(), voice.talkMs) to id }
+        else -> newId().let { id -> out + Person(id, wanted, voice.embedding.unit(), voice.talkMs, auto = auto) to id }
     }
 }
 
@@ -122,7 +139,9 @@ class People(private val path: Path) {
         result
     }
 
-    suspend fun learn(name: String, voice: Voiceprint?, from: String?): String? = change { learnVoice(it, name, voice, from) }
+    suspend fun learn(name: String, voice: Voiceprint?, from: String?, auto: Boolean = false): String? = change { learnVoice(it, name, voice, from, auto) }
+
+    suspend fun discover(sessions: List<Session>) = change { autoPeople(it, sessions) to Unit }
 
     suspend fun setMe(voice: Voiceprint): String = change { list ->
         val me = list.find { it.isMe }
@@ -130,24 +149,30 @@ class People(private val path: Path) {
         else list.map { if (it.isMe) it.copy(embedding = voice.embedding.unit(), talkMs = voice.talkMs) else it } to me.id
     }
 
-    suspend fun rename(id: String, name: String): String? = change { list ->
+    suspend fun rename(id: String, name: String, auto: Boolean = false): String? = change { list ->
         val wanted = name.trim()
         val p = list.find { it.id == id }
         val other = list.find { it.id != id && sameName(it.name, wanted) }
         when {
             p == null || wanted.isEmpty() -> list to null
-            other == null -> list.map { if (it.id == id) it.copy(name = wanted) else it } to id
-            else -> list.filter { it.id != id }.map { if (it.id == other.id) it.plus(Voiceprint(p.embedding, p.talkMs)) else it } to other.id
+            other == null -> list.map { if (it.id == id) it.copy(name = wanted, auto = auto && it.auto) else it } to id
+            else -> list.filter { it.id != id }.map { o ->
+                if (o.id != other.id) o else o.plus(Voiceprint(p.embedding, p.talkMs)).copy(isMe = o.isMe || p.isMe, auto = auto && o.auto)
+            } to other.id
         }
     }
 
     suspend fun delete(id: String) = change { list -> list.filter { it.id != id } to Unit }
 }
 
-suspend fun nameSpeaker(store: Store, people: People, device: String, id: String, speaker: Int, name: String) {
+suspend fun nameSpeaker(store: Store, people: People, device: String, id: String, speaker: Int, name: String, auto: Boolean = false) {
     val key = "$speaker"
-    val (voice, from) = store.update(device, id) { it.voices[key] to it.people[key] } ?: return
-    val person = people.learn(name, voice, from)
+    val (voice, from) = store.update(device, id) { s ->
+        if (!auto) s.userNamed += key
+        s.voices[key] to s.people[key]
+    } ?: return
+    if (people.all().find { it.id == from }?.unnamed == true && !placeholderName(name) && name.isNotBlank()) return renamePerson(store, people, from!!, name, auto)
+    val person = people.learn(name, voice, from, auto)
     store.update(device, id) {
         it.renameSpeaker(speaker, name)
         if (person == null) it.people.remove(key) else it.people[key] = person
@@ -155,8 +180,8 @@ suspend fun nameSpeaker(store: Store, people: People, device: String, id: String
     }
 }
 
-suspend fun renamePerson(store: Store, people: People, id: String, name: String) {
-    val into = people.rename(id, name) ?: return
+suspend fun renamePerson(store: Store, people: People, id: String, name: String, auto: Boolean = false) {
+    val into = people.rename(id, name, auto) ?: return
     val now = people.all().first { it.id == into }.name
     for (s in store.all()) {
         val linked = s.people.filterValues { it == id || it == into }.keys
@@ -168,4 +193,66 @@ suspend fun renamePerson(store: Store, people: People, id: String, name: String)
             }
         }
     }
+}
+
+class VoiceCluster(var embedding: FloatArray, var talkMs: Long, val sessions: MutableSet<String>)
+
+fun clusterVoices(sessions: List<Session>): List<VoiceCluster> {
+    val voices = sessions.flatMap { s -> s.voices.values.map { "${s.device}/${s.id}" to it } }
+        .filter { it.second.talkMs > 0 && it.second.embedding.isNotEmpty() }
+        .sortedWith(compareByDescending<Pair<String, Voiceprint>> { it.second.talkMs }.thenBy { it.first })
+    val out = mutableListOf<VoiceCluster>()
+    for ((key, v) in voices) {
+        val e = v.embedding.unit()
+        val best = out.filter { key !in it.sessions && it.embedding.size == e.size }
+            .map { it to cosine(it.embedding, e) }.filter { it.second >= PERSON_MATCH }.maxByOrNull { it.second }?.first
+        if (best == null) out += VoiceCluster(e, v.talkMs, mutableSetOf(key))
+        else {
+            best.embedding = blend(best.embedding, best.talkMs, e, v.talkMs)
+            best.talkMs += v.talkMs
+            best.sessions += key
+        }
+    }
+    return out.sortedWith(compareByDescending<VoiceCluster> { it.sessions.size }.thenByDescending { it.talkMs })
+}
+
+fun autoPeople(people: List<Person>, sessions: List<Session>, newId: () -> String = ::newPersonId): List<Person> {
+    val clusters = clusterVoices(sessions)
+    val heard = sessions.count { it.voices.isNotEmpty() }
+    var out = people
+    fun known(c: VoiceCluster) = out.filter { it.talkMs > 0 && it.embedding.size == c.embedding.size }
+        .map { it to cosine(it.embedding, c.embedding) }.filter { it.second >= PERSON_MATCH }.maxByOrNull { it.second }?.first
+    val owner = clusters.firstOrNull()
+    if (owner != null && out.none { it.isMe } && owner.sessions.size >= OWNER_MIN_SESSIONS && owner.sessions.size >= heard * OWNER_SHARE) {
+        val same = known(owner)
+        out = if (same != null) out.map { if (it.id == same.id) it.copy(name = if (it.unnamed) ME_NAME else it.name, isMe = true) else it }
+        else out + Person(newId(), ME_NAME, owner.embedding, owner.talkMs, isMe = true, auto = true)
+    }
+    var next = (out.mapNotNull { it.number }.maxOrNull() ?: 0) + 1
+    for (c in clusters) {
+        if (c.sessions.size < RECURRING_MIN_SESSIONS || known(c) != null) continue
+        out = out + Person(newId(), "$UNNAMED_PREFIX${next++}", c.embedding, c.talkMs, auto = true)
+    }
+    return out
+}
+
+fun Session.linkPeople(people: List<Person>): Boolean {
+    val taken = this.people.values.toSet()
+    val free = voices.filterKeys { it !in this.people && it !in userNamed }.mapKeys { it.key.toInt() }
+    val names = people.associateBy { it.id }
+    var changed = false
+    for ((k, id) in this.people) {
+        val now = names[id]?.name ?: continue
+        if (k in userNamed || speakerName(k.toInt()) == now) continue
+        renameSpeaker(k.toInt(), now)
+        changed = true
+    }
+    for (m in matchPeople(free, people.filter { it.id !in taken })) {
+        if (!m.sure || !placeholderName(speakerName(m.speaker))) continue
+        this.people["${m.speaker}"] = m.person
+        suggested.remove("${m.speaker}")
+        renameSpeaker(m.speaker, names.getValue(m.person).name)
+        changed = true
+    }
+    return changed
 }

@@ -133,6 +133,8 @@ class Store(val root: Path) {
             m.diarized = false
             m.speakersFailed = false
             m.speakers.clear()
+            m.userNamed.clear()
+            m.fixes.removeAll { !it.undone }
             m.recaps().forEach { (from, r) -> m.putRecap(from, r.copy(ready = false, input = "")) }
             save(m)
             count++

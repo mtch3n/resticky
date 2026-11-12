@@ -23,6 +23,7 @@ enum class TermSource {
     @SerialName("correction") Correction,
     @SerialName("calendar") Calendar,
     @SerialName("people") People,
+    @SerialName("auto") Auto,
 }
 
 @Serializable
@@ -34,7 +35,7 @@ data class Rule(val from: String, val to: String)
 @Serializable
 data class VocabularyData(val terms: List<Term> = emptyList(), val rules: List<Rule> = emptyList())
 
-private fun same(a: String, b: String) = a.trim().equals(b.trim(), ignoreCase = true)
+internal fun same(a: String, b: String) = a.trim().equals(b.trim(), ignoreCase = true)
 
 private fun isCjk(c: Char) = c in '㐀'..'鿿' || c in '豈'..'﫿'
 
@@ -115,32 +116,33 @@ fun applyRules(segments: List<Segment>, rules: List<Rule>): Applied<List<Segment
     return Applied(out, count)
 }
 
-fun Session.applyRule(rule: Rule, at: (Long) -> Boolean): Int {
-    val offsets = offsets()
-    var count = 0
-    for ((seq, base) in offsets) {
+fun Session.applyRule(rule: Rule, at: (Long) -> Boolean): List<Long> {
+    val changed = mutableListOf<Long>()
+    for ((seq, base) in offsets()) {
         val text = chunks.getValue(seq)
         val segs = segments[seq].orEmpty()
         if (segs.isEmpty()) {
             if (text == PENDING || text.isEmpty() || !at(base)) continue
             val t = applyRules(text, listOf(rule))
-            count += t.count
+            if (t.count == 0) continue
+            changed += base
             chunks[seq] = t.value
             continue
         }
-        var changed = 0
+        var hit = false
         val next = segs.map { s ->
             if (!at(base + s.startMs)) return@map s
             val a = applyRules(listOf(s), listOf(rule))
-            changed += a.count
+            if (a.count == 0) return@map s
+            hit = true
+            changed += base + s.startMs
             a.value.single()
         }
-        if (changed == 0) continue
-        count += changed
+        if (!hit) continue
         segments[seq] = next
         chunks[seq] = next.joinToString(" ") { it.text }
     }
-    return count
+    return changed
 }
 
 fun whisperPrompt(groups: List<List<String>>, max: Int = PROMPT_COST): String {
@@ -199,7 +201,7 @@ class Vocabulary(private val file: Path, private val now: () -> Instant = { Cloc
 
     suspend fun removeTerm(text: String) = change { d -> d.copy(terms = d.terms.filterNot { it.text == text }) }
 
-    suspend fun removeRule(rule: Rule) = change { d -> d.copy(rules = d.rules - rule) }
+    suspend fun removeRule(rule: Rule) = change { d -> d.copy(rules = d.rules.filterNot { same(it.from, rule.from) && same(it.to, rule.to) }) }
 
     suspend fun correct(from: String, to: String, everywhere: Boolean) = change { d ->
         val f = from.trim()
@@ -208,6 +210,19 @@ class Vocabulary(private val file: Path, private val now: () -> Instant = { Cloc
         val withRule = if (everywhere) d.copy(rules = d.rules.filterNot { same(it.from, f) } + Rule(f, t)) else d
         withTerm(withRule, t, TermSource.Correction, now())
     }
+
+    suspend fun learnTerms(texts: List<String>, source: TermSource) {
+        if (texts.isNotEmpty()) change { d ->
+            val at = now()
+            texts.fold(d) { out, t -> withTerm(out, t, source, at) }
+        }
+    }
+
+    suspend fun learnRules(rules: List<Rule>) {
+        if (rules.isNotEmpty()) change { d -> d.copy(rules = d.rules + rules.filter { r -> d.rules.none { same(it.from, r.from) } }.distinctBy { it.from.lowercase() }) }
+    }
+
+    fun terms(): List<String> = _data.value.terms.map { it.text }
 
     suspend fun prompt(names: List<String>, calendar: List<String>): String {
         if (names.isNotEmpty() || calendar.isNotEmpty()) change { d ->
@@ -221,7 +236,9 @@ class Vocabulary(private val file: Path, private val now: () -> Instant = { Cloc
         val user = terms.filter { it.source == TermSource.User }.sortedByDescending { it.lastUsed }.map { it.text }
         val corrections = terms.filter { it.source == TermSource.Correction }
             .sortedWith(compareByDescending<Term> { it.count }.thenByDescending { it.lastUsed }).map { it.text }
-        return whisperPrompt(listOf(user, names, calendar, corrections))
+        val auto = terms.filter { it.source == TermSource.Auto }
+            .sortedWith(compareByDescending<Term> { it.count }.thenByDescending { it.lastUsed }).map { it.text }
+        return whisperPrompt(listOf(user, names, calendar, corrections, auto))
     }
 
     fun rules(): List<Rule> = _data.value.rules

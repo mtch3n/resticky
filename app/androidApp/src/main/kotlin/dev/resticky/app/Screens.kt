@@ -55,6 +55,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.rememberUpdatedState
 import dev.resticky.CLEANED
+import dev.resticky.Fix
+import dev.resticky.ruleRegex
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PathEffect
 import dev.resticky.SOUNDS
 import dev.resticky.BUZZ_RANGE
 import androidx.compose.material3.OutlinedButton
@@ -347,7 +352,20 @@ fun TranscriptsScreen(conversations: List<ConversationView>, open: (Conversation
 }
 
 @Composable
-private fun TimedLine(line: Line, at: Long, who: String?, cleanUp: Boolean, now: Boolean, near: Boolean, marked: Boolean, onWho: () -> Unit, onWord: (String) -> Unit, onClick: () -> Unit) {
+private fun TimedLine(
+    line: Line,
+    at: Long,
+    who: String?,
+    cleanUp: Boolean,
+    now: Boolean,
+    near: Boolean,
+    marked: Boolean,
+    fixes: List<Fix>,
+    onWho: () -> Unit,
+    onWord: (String) -> Unit,
+    onFix: (Fix) -> Unit,
+    onClick: () -> Unit,
+) {
     val shape = if (now) RoundedCornerShape(14.dp) else RectangleShape
     val background = when {
         now -> Ink.black
@@ -374,8 +392,29 @@ private fun TimedLine(line: Line, at: Long, who: String?, cleanUp: Boolean, now:
         var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
         val tap by rememberUpdatedState(onClick)
         val word by rememberUpdatedState(onWord)
-        val press = Modifier.pointerInput(body) {
-            detectTapGestures(onTap = { tap() }, onLongPress = { pos -> layout?.let { l -> wordAt(body.text, l.getOffsetForPosition(pos))?.let(word) } })
+        val fix by rememberUpdatedState(onFix)
+        val changed = remember(body, fixes) { fixes.flatMap { f -> ruleRegex(f.to)?.findAll(body.text)?.map { it.range to f }?.toList().orEmpty() } }
+        val dots = if (now) Ink.mutedDark else Ink.muted
+        val press = Modifier.pointerInput(body, changed) {
+            detectTapGestures(
+                onTap = { pos ->
+                    val at = layout?.getOffsetForPosition(pos)
+                    changed.firstOrNull { at != null && at in it.first }?.let { fix(it.second) } ?: tap()
+                },
+                onLongPress = { pos -> layout?.let { l -> wordAt(body.text, l.getOffsetForPosition(pos))?.let(word) } },
+            )
+        }.drawBehind {
+            val l = layout ?: return@drawBehind
+            val dot = 2.dp.toPx()
+            for ((r, _) in changed) {
+                if (r.last >= l.layoutInput.text.length) continue
+                for (n in l.getLineForOffset(r.first)..l.getLineForOffset(r.last)) {
+                    val from = maxOf(r.first, l.getLineStart(n))
+                    val to = minOf(r.last + 1, l.getLineEnd(n))
+                    val y = l.getLineBottom(n) - dot
+                    drawLine(dots, Offset(l.getHorizontalPosition(from, true), y), Offset(l.getHorizontalPosition(to, true), y), dot / 2, pathEffect = PathEffect.dashPathEffect(floatArrayOf(dot, dot)))
+                }
+            }
         }
         if (who == null) Text(body, style = style, modifier = press, onTextLayout = { layout = it })
         else {
@@ -401,6 +440,24 @@ private fun wordAt(text: String, offset: Int): String? {
     while (a > 0 && !text[a - 1].isWhitespace()) a--
     while (b < text.length && !text[b].isWhitespace()) b++
     return text.substring(a, b).trim { !it.isLetterOrDigit() }.takeIf { it.isNotEmpty() }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FixSheet(fix: Fix, dismiss: () -> Unit, undo: () -> Unit) {
+    ModalBottomSheet(
+        dismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = Ink.white,
+        scrimColor = Color.Black.copy(alpha = 0.45f),
+        dragHandle = { Box(Modifier.padding(top = 14.dp).width(40.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Ink.off)) },
+    ) {
+        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Changed from ${fix.from}", style = Type.body, modifier = Modifier.weight(1f))
+            Pill("Undo", Ink.card, onClick = undo)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -624,6 +681,7 @@ fun TranscriptScreen(
     startAt: Spot?,
     started: () -> Unit,
     correct: (String, String, Pair<String, Long>?) -> Unit,
+    undo: (Session, Fix) -> Unit,
     onTodo: (String, Int, Boolean) -> Unit,
 ) {
     val v = view ?: return Page("Transcript", back) {}
@@ -632,6 +690,7 @@ fun TranscriptScreen(
     val sessions = remember(c) { c.sessions() }
     var naming by remember { mutableStateOf<Pair<Session, Int>?>(null) }
     var fixing by remember { mutableStateOf<Pair<Said, String>?>(null) }
+    var showing by remember { mutableStateOf<Pair<Session, Fix>?>(null) }
     var viewing by remember { mutableStateOf<Shot?>(null) }
     var playingId by remember(c.key) { mutableStateOf(startAt?.session ?: c.head.session.id) }
     var pending by remember { mutableStateOf<Pair<Long, Boolean>?>(null) }
@@ -750,12 +809,10 @@ fun TranscriptScreen(
                         }
                     }
                     if (sessions.any { it.speakersFailed }) Text("Speakers not available", style = Type.small)
-                    val offers = sessions.flatMap { s ->
-                        s.suggested.filterKeys { it !in s.speakers }.mapNotNull { (k, id) -> people.find { it.id == id }?.let { Triple(s, k.toInt(), it.name) } }
-                    }
-                    if (offers.isNotEmpty()) {
+                    val named = sessions.flatMap { s -> s.speakers.entries.sortedBy { it.key.toInt() }.map { Triple(s, it.key.toInt(), it.value) } }.distinctBy { it.third }
+                    if (named.isNotEmpty()) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            offers.forEach { (s, speaker, name) -> Pill("${speakerLetter(speaker)}: $name?", Ink.card, onClick = { rename(s, speaker, name) }) }
+                            named.forEach { (s, speaker, name) -> Pill(name, Ink.card, onClick = { naming = s to speaker }) }
                         }
                     }
                     if (playback.audio == Audio.Missing) Text("The audio is deleted 7 days after the recording.", style = Type.small)
@@ -773,7 +830,11 @@ fun TranscriptScreen(
                 val i = row as Int
                 val s = said[i]
                 val speaker = s.line.speaker
-                TimedLine(s.line, s.at, if (speaker >= 0) s.session.speakerName(speaker) else null, prefs.cleanUp, i == current, i in near, i in starred, { naming = s.session to speaker }, { fixing = s to it }) {
+                val fixes = s.session.fixes.filter { !it.undone && it.atMs == s.line.atMs }
+                TimedLine(
+                    s.line, s.at, if (speaker >= 0) s.session.speakerName(speaker) else null, prefs.cleanUp, i == current, i in near, i in starred, fixes,
+                    { naming = s.session to speaker }, { fixing = s to it }, { showing = s.session to it },
+                ) {
                     go(s.session.id, s.line.atMs, false)
                 }
             }
@@ -793,6 +854,12 @@ fun TranscriptScreen(
         PhotoViewer(shot.photo, shot.at, file, { viewing = null }, { showOnSticky(file) }) {
             viewing = null
             go(shot.session.id, shot.photo.offsetMs, true)
+        }
+    }
+    showing?.let { (s, f) ->
+        FixSheet(f, { showing = null }) {
+            undo(s, f)
+            showing = null
         }
     }
     fixing?.let { (s, word) ->

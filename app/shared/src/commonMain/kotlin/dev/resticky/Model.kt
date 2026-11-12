@@ -98,6 +98,8 @@ class Session(
     val voices: MutableMap<String, Voiceprint> = mutableMapOf(),
     val people: MutableMap<String, String> = mutableMapOf(),
     val suggested: MutableMap<String, String> = mutableMapOf(),
+    @SerialName("user_named") val userNamed: MutableSet<String> = mutableSetOf(),
+    val fixes: MutableList<Fix> = mutableListOf(),
 ) {
     val pending: Boolean get() = chunks.values.any { it == PENDING }
 
@@ -265,7 +267,23 @@ data class TodoState(val done: Boolean, val at: Time)
 data class Todo(val task: String, val quote: String = "")
 
 @Serializable
-data class Summary(val title: String, val summary: String, val todos: List<Todo> = emptyList(), val engine: String = "")
+data class SpeakerName(val speaker: String, val name: String, val evidence: String = "")
+
+@Serializable
+data class Correction(val from: String, val to: String, val evidence: String = "")
+
+@Serializable
+data class Fix(val from: String, val to: String, @SerialName("at_ms") val atMs: Long, val auto: Boolean = true, val undone: Boolean = false)
+
+@Serializable
+data class Summary(
+    val title: String,
+    val summary: String,
+    val todos: List<Todo> = emptyList(),
+    val engine: String = "",
+    val speakers: List<SpeakerName> = emptyList(),
+    val corrections: List<Correction> = emptyList(),
+)
 
 @Serializable
 data class Quote(val text: String, val session: String = "", @SerialName("at_ms") val atMs: Long = -1)

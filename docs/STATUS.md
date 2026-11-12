@@ -148,9 +148,13 @@ low power and storage use that we can profile.
   "Segments", "Speakers", "Playback view" and "Photos" in `protocol.md`.
 - People (2026-11-11, built, not tested on a device): the hub keeps the voice of each session speaker in `meta.json`
   (`voices`), and a people library in `people.json`. After diarization it names a speaker when the cosine to a
-  person is ≥ 0.62 and 0.05 above the next person; from 0.5 it only suggests the name ("Speaker A: Krista?" pill on
-  the transcript page). A rename on the phone teaches the library. App settings › People: the list, delete, and
-  "Your voice" (45 s phone recording). The name sheet offers the attendees of overlapping calendar events. The
+  person is ≥ 0.62 and 0.05 above the next person; from 0.5 it only suggests the name (the first chip on
+  the name sheet). A rename on the phone teaches the library. Automatic (2026-11-11, built, not tested on a
+  device): after each diarization the hub groups the voices of all sessions, makes "You" from the voice in the most
+  sessions (≥ 5 and ≥ 40 %) and an unnamed "Person N" for each voice in ≥ 3 sessions; after each summary it takes
+  speaker names from the same model call when the transcript shows them (evidence quote, attendee or in the
+  transcript, never "You", a user name wins). App settings › People: the list, delete, and
+  the optional "Your voice" (45 s phone recording). The name sheet offers the attendees of overlapping calendar events. The
   thresholds are start values: tune them on the test set. See `plan-people.md`.
 - Speakers on the Phone hotspot XL (2026-11-10): a 22.5-minute session took 98 s for the first 20-minute window and
   20 s for the rest (5 speakers). Laptop: RTF 0.044. Models are in `~/.local/share/resticky/models` (laptop) and in
@@ -211,7 +215,10 @@ low power and storage use that we can profile.
 - Rules change new transcripts only. `chunk_rules` in `meta.json` records the changes for each chunk.
 - Phone: long-press a word on the transcript page to correct it; App settings › Vocabulary lists the terms and
   rules. Not tested on a device yet.
-- Open: wire `extraNames` to the people library in `HubApp`.
+- Automatic (2026-11-11, built, not tested on a device): calendar attendee names are terms; capitalized words
+  that come back in 2 conversations become `auto` terms; the summary call proposes name-only corrections that the
+  hub checks (candidate, not a common word, sound-alike) and applies with a dotted underline and Undo; a pair in
+  2 conversations becomes a rule. See `plan-transcription.md`.
 
 ## Documents
 

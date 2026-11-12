@@ -316,7 +316,7 @@ fun main(args: Array<String>) {
     val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
     val vad = flags.string("vad", "$home/.local/share/resticky/models/$VAD_MODEL")
     val people = People(IoPath(File(data).resolveSibling("people.json").path))
-    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, people = people::all, extraNames = { people.all().map { it.name } }, vocabulary = Vocabulary(IoPath(File(File(data).absoluteFile.parentFile, "vocabulary.json").path)), log = ::log)
+    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, people = people, vocabulary = Vocabulary(IoPath(File(File(data).absoluteFile.parentFile, "vocabulary.json").path)), log = ::log)
     val city = flags.string("city", "").ifBlank { null }
     val weatherInterval = flags.string("weather-interval", "$WEATHER_INTERVAL").toInt()
     require(weatherInterval in WEATHER_INTERVALS) { "-weather-interval must be one of ${WEATHER_INTERVALS.joinToString("|")}" }

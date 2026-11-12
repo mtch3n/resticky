@@ -90,22 +90,22 @@ class PeopleTest {
     fun renamingLearnsMergesAndMovesTheVoice() {
         var n = 0
         val id = { "p${n++}" }
-        val (one, krista) = learnVoice(emptyList(), " Krista ", print(1f, 0f, 0f, ms = 10_000), null, id)
+        val (one, krista) = learnVoice(emptyList(), " Krista ", print(1f, 0f, 0f, ms = 10_000), null, newId = id)
         assertEquals("p0", krista)
         assertEquals("Krista", one.single().name)
-        val (two, same) = learnVoice(one, "krista", print(0f, 1f, 0f, ms = 10_000), null, id)
+        val (two, same) = learnVoice(one, "krista", print(0f, 1f, 0f, ms = 10_000), null, newId = id)
         assertEquals("p0", same)
         val k = two.single()
         assertEquals(20_000, k.talkMs)
         assertEquals(0.7071, k.embedding[0].toDouble(), 1e-3)
-        val (again, still) = learnVoice(two, "Krista", print(0f, 1f, 0f, ms = 10_000), "p0", id)
+        val (again, still) = learnVoice(two, "Krista", print(0f, 1f, 0f, ms = 10_000), "p0", newId = id)
         assertEquals("p0", still)
         assertEquals(20_000, again.single().talkMs)
-        val (moved, sam) = learnVoice(two, "Sam", print(0f, 1f, 0f, ms = 10_000), "p0", id)
+        val (moved, sam) = learnVoice(two, "Sam", print(0f, 1f, 0f, ms = 10_000), "p0", newId = id)
         assertEquals("p1", sam)
         assertEquals(10_000, moved.first { it.id == "p0" }.talkMs)
         assertTrue(moved.first { it.id == "p0" }.embedding[0] > 0.9f)
-        val (gone, none) = learnVoice(moved, "", print(0f, 1f, 0f, ms = 10_000), "p1", id)
+        val (gone, none) = learnVoice(moved, "", print(0f, 1f, 0f, ms = 10_000), "p1", newId = id)
         assertNull(none)
         assertEquals(listOf("p0"), gone.map { it.id })
     }
@@ -171,7 +171,7 @@ class PeopleTest {
         val store = Store(Path(root, "data"))
         store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
         val diarizer = Diarizer { Diarization(listOf(Turn(0, 600, 0), Turn(600, 1000, 1)), listOf(Voice(0, floatArrayOf(0f, 1f), 600), Voice(1, floatArrayOf(1f, 0f), 400))) }
-        Pipeline(store, { _, _ -> listOf(Segment(0, 500, "hello $SPOKEN"), Segment(500, 1000, "world $SPOKEN")) }, { _, _ -> Summary("T", "S") }, diarizer, people = { listOf(person("ann", 1f, 0f)) }) {}.drain()
+        Pipeline(store, { _, _ -> listOf(Segment(0, 500, "hello $SPOKEN"), Segment(500, 1000, "world $SPOKEN")) }, { _, _ -> Summary("T", "S") }, diarizer, people = People(Path(root, "people.json")).also { it.learn("Ann", Voiceprint(floatArrayOf(1f, 0f), 60_000), null) }) {}.drain()
         val m = store.list("ab").single()
         assertEquals("Speaker A", m.speakerName(0))
         assertEquals("Ann", m.speakerName(1))

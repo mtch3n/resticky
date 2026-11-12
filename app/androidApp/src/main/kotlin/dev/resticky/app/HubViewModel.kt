@@ -23,6 +23,8 @@ import dev.resticky.Recap
 import dev.resticky.Rule
 import dev.resticky.VocabularyData
 import dev.resticky.applyRule
+import dev.resticky.Fix
+import dev.resticky.undoFix
 import dev.resticky.closed
 import dev.resticky.conversations
 import dev.resticky.Session
@@ -300,6 +302,12 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             app.store.update(p.session.device, p.session.id) { s -> s.applyRule(rule) { ms -> if (here == null) p.covers(ms) else ms == here.second } }
         }
         app.vocabulary.correct(rule.from, rule.to, everywhere = here == null)
+        app.pipeline.kick()
+    }
+
+    fun undoFix(s: Session, fix: Fix) = viewModelScope.launch {
+        app.store.update(s.device, s.id) { it.undoFix(fix) }
+        app.vocabulary.removeRule(Rule(fix.from, fix.to))
         app.pipeline.kick()
     }
 
