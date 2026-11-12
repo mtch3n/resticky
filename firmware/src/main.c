@@ -13,11 +13,13 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_timer.h"
 #include "esp_core_dump.h"
 #include "esp_sleep.h"
 #include <stdlib.h>
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sensors.h"
@@ -94,13 +96,43 @@ static void restart(void)
     esp_restart();
 }
 
+#define SLEEP_GUARD_US (45 * 1000000LL)
+
+static volatile int sleep_step;
+
+static void sleep_mark(int step)
+{
+    sleep_step = step;
+    nvs_handle_t h;
+    if (nvs_open("diag", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, "sleep_step", step);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void sleep_hung(void *arg)
+{
+    char why[48];
+    snprintf(why, sizeof why, "sleep hung at step %d", sleep_step);
+    esp_system_abort(why);
+}
+
 static void sleep_for(uint32_t seconds)
 {
+    esp_timer_handle_t guard;
+    esp_timer_create(&(esp_timer_create_args_t){.callback = sleep_hung, .name = "sleep_guard"}, &guard);
+    esp_timer_start_once(guard, SLEEP_GUARD_US);
+    sleep_mark(1);
     ui_show_sleep();
+    sleep_mark(2);
     quiesce();
+    sleep_mark(3);
     ble_stop();
+    sleep_mark(4);
     wifi_stop();
+    sleep_mark(5);
     sensors_sleep_prepare();
+    sleep_mark(6);
     board_sleep(seconds, BUTTON_RELEASE_MS);
 }
 
@@ -193,6 +225,16 @@ static void report_boot(void)
         if (r != ESP_RST_PANIC) esp_core_dump_image_erase();
     }
     free(sum);
+    nvs_handle_t h;
+    uint8_t step = 0;
+    if (nvs_open("diag", NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_get_u8(h, "sleep_step", &step) == ESP_OK && step) {
+            o += snprintf(text + o, sizeof text - o, " sleep_step=%u", step);
+            nvs_set_u8(h, "sleep_step", 0);
+            nvs_commit(h);
+        }
+        nvs_close(h);
+    }
     ESP_LOGI(TAG, "boot: %s", text);
     net_set_boot(text);
 }

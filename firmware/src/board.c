@@ -61,6 +61,7 @@ void board_sleep(uint32_t wake_after_s, uint32_t release_wait_ms)
         rtc_gpio_pullup_en(pin);
         rtc_gpio_pulldown_dis(pin);
     }
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
     if (mask) esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
 
     if (wake_after_s) esp_sleep_enable_timer_wakeup((uint64_t)wake_after_s * 1000000);
