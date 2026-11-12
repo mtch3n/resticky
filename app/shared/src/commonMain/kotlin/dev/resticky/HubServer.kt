@@ -10,6 +10,7 @@ import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText
@@ -17,6 +18,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -29,10 +31,10 @@ import kotlinx.datetime.format.MonthNames
 import kotlinx.datetime.format.char
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.io.files.Path
+import kotlinx.io.readByteArray
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-private const val MAX_CHUNK = 1 shl 20
 private const val MAX_ITEMS = 18
 private const val TEXT_TAIL = 180
 
@@ -128,6 +130,7 @@ class Hub(
     private val newSession: suspend (device: String, session: String) -> Unit = { _, _ -> },
     val token: String? = null,
 ) {
+    val changes: StateFlow<Long> get() = store.changes
     val agenda = MutableStateFlow<Agenda?>(null)
     val clockFace = MutableStateFlow(CLOCK_DIAL)
     val weatherStyle = MutableStateFlow(WEATHER_SKETCH)
@@ -276,7 +279,11 @@ class Hub(
             if (!ID_PATTERN.matches(device) || !ID_PATTERN.matches(session) || seq == null || seq < 0 || duration == null) {
                 return@post call.fail(HttpStatusCode.BadRequest, "need X-Device, X-Session (hex), X-Seq and X-Duration-Ms headers")
             }
-            val data = call.receive<ByteArray>().let { if (it.size > MAX_CHUNK) it.copyOf(MAX_CHUNK) else it }
+            val tooLarge = "chunk body over $MAX_CHUNK bytes"
+            if ((h[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0) > MAX_CHUNK) return@post call.fail(HttpStatusCode.PayloadTooLarge, tooLarge)
+            val data = call.receiveChannel().readRemaining(MAX_CHUNK + 1L).readByteArray()
+            if (data.size > MAX_CHUNK) return@post call.fail(HttpStatusCode.PayloadTooLarge, tooLarge)
+            if (!opusFramesOk(data)) return@post call.fail(HttpStatusCode.BadRequest, "body must be Opus packets, each with a 2-byte little-endian length")
             val added = receiveChunk(
                 device, session, seq, h["X-Final"] == "1", h["X-Start-Ms"]?.toLongOrNull() ?: 0, duration, data, "wifi",
                 bootKey(h["X-Boot-Id"]), h["X-Boot-Unix-Ms"]?.toLongOrNull()?.takeIf { it > 0 } ?: 0,

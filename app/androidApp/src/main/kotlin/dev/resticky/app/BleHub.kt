@@ -50,6 +50,7 @@ import dev.resticky.Hub
 import dev.resticky.ackFrame
 import dev.resticky.hubJson
 import dev.resticky.parseChunk
+import dev.resticky.chunkAudioOk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -64,7 +65,6 @@ private const val WRITE_RETRY_MS = 200L
 private const val MAX_WRITE_RETRIES = 10
 private const val DRAIN_MS = 15_000L
 private const val PHOTO_DRAIN_MS = 60_000L
-private const val LISTS_MS = 2_000L
 private val SERVICE = UUID.fromString(BLE_SERVICE)
 private val RX = UUID.fromString(BLE_RX)
 private val TX = UUID.fromString(BLE_TX)
@@ -259,6 +259,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
                 .onFailure { log("WARN ble bad todo_set ${it.message}") }
             FRAME_CHUNK -> {
                 val chunk = parseChunk(frame.payload) ?: return log("WARN ble bad chunk frame bytes=${frame.payload.size}")
+                if (!chunkAudioOk(chunk.audio)) return log("WARN ble bad chunk audio, no ack ${chunk.sessionId}/${chunk.seq} bytes=${chunk.audio.size}")
                 scope.launch {
                     runCatching { hub.receiveChunk(chunk.device, chunk.sessionId, chunk.seq.toInt(), chunk.final, chunk.startMs, chunk.durationMs, chunk.audio, "ble", chunk.boot, chunk.bootUnixMs) }
                         .onFailure { return@launch log("WARN ble chunk not stored, no ack ${chunk.sessionId}/${chunk.seq}: ${it.message}") }
@@ -417,12 +418,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             scope.launch { hub.buzzHz.collect { push() } },
             scope.launch { hub.night.collect { push() } },
             scope.launch { hub.home.collect { push() } },
-            scope.launch {
-                while (true) {
-                    pushLists()
-                    delay(LISTS_MS)
-                }
-            },
+            scope.launch { hub.changes.collect { pushLists() } },
         )
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_PAIRING_REQUEST)

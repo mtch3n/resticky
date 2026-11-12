@@ -33,6 +33,8 @@ import dev.resticky.TodoList
 import dev.resticky.TodoState
 import dev.resticky.todoList
 import dev.resticky.drainRates
+import dev.resticky.HEALTH_MAX_HOURS
+import dev.resticky.lossGrowth
 import android.net.wifi.WifiManager
 import dev.resticky.WeatherReport
 import dev.resticky.WeatherSettings
@@ -45,6 +47,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
@@ -89,8 +94,9 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
     val summaryClosed: StateFlow<SummaryEngine> = engines.summaryClosed
     val ble: StateFlow<BleState> = app.ble.state
 
-    val hub: StateFlow<HubState> = poll(HubState(), 1000) {
-        val sessions = app.store.all()
+    private val sessions = app.store.changes.map { app.store.all() }.flowOn(Dispatchers.IO).shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
+
+    val hub: StateFlow<HubState> = combine(sessions, ticks(1000)) { sessions, _ ->
         val sticky = app.hub.devices().values.maxByOrNull { it.seen ?: Instant.DISTANT_PAST }
         val zone = TimeZone.currentSystemDefault()
         val today = Clock.System.now().toLocalDateTime(zone).date
@@ -107,22 +113,26 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
                 StickyInfo(address, name ?: address.replace(":", "").takeLast(4))
             },
         )
-    }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HubState())
 
-    val conversations: StateFlow<List<ConversationView>> = poll(emptyList(), 2000) {
-        val sessions = app.store.all()
-        withContext(Dispatchers.Default) {
-            val now = Clock.System.now()
-            conversations(sessions).map { c ->
-                val tail = c.parts.last()
-                val ready = c.ready()
-                ConversationView(c, c.recap(), ready, !ready && tail.toMs == tail.session.endMs() && !tail.session.closed(now) && now - tail.session.wallAt(tail.toMs) < SESSION_IDLE)
-            }.filterNot { it.ready && it.recap.title == NO_SPEECH }
+    val conversations: StateFlow<List<ConversationView>> = combine(sessions, ticks(30_000)) { sessions, _ ->
+        val now = Clock.System.now()
+        conversations(sessions).map { c ->
+            val tail = c.parts.last()
+            val ready = c.ready()
+            ConversationView(c, c.recap(), ready, !ready && tail.toMs == tail.session.endMs() && !tail.session.closed(now) && now - tail.session.wallAt(tail.toMs) < SESSION_IDLE)
+        }.filterNot { it.ready && it.recap.title == NO_SPEECH }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todos: StateFlow<List<DeviceTodos>> = combine(sessions, ticks(60_000)) { sessions, _ ->
+        sessions.groupBy { it.device }.map { (device, list) -> DeviceTodos(device, todoList(list)) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private fun ticks(millis: Long) = flow {
+        while (true) {
+            emit(Unit)
+            delay(millis)
         }
-    }
-
-    val todos: StateFlow<List<DeviceTodos>> = poll(emptyList(), 1000) {
-        app.store.all().map { it.device }.distinct().map { DeviceTodos(it, todoList(app.store.list(it))) }
     }
 
     val models: StateFlow<ModelsState> = poll(ModelsState(), 1000) {
@@ -149,8 +159,9 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         val sticky = app.hub.devices().values.maxByOrNull { it.seen ?: Instant.DISTANT_PAST }
         val device = sticky?.device ?: app.hub.healthDevices().firstOrNull()
         val to = Clock.System.now().epochSeconds
-        val samples = device?.let { app.hub.health(it, hours) }.orEmpty()
-        return HealthView(hours, to - hours * 3600L, to, healthCharts(samples), drainRates(samples), sticky?.health?.boot.orEmpty())
+        val week = device?.let { app.hub.health(it, HEALTH_MAX_HOURS) }.orEmpty()
+        val samples = week.filter { it.t >= to - hours * 3600L }
+        return HealthView(hours, to - hours * 3600L, to, healthCharts(samples), drainRates(samples), sticky?.health?.boot.orEmpty(), lossGrowth(week))
     }
 
     private fun <T> poll(initial: T, millis: Long, read: suspend () -> T): StateFlow<T> = flow {

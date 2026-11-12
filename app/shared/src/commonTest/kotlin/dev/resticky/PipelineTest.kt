@@ -158,6 +158,70 @@ class PipelineTest {
     }
 
     @Test
+    fun failingChunkWaitsAndOtherWorkGoesOn() = runTest {
+        val store = Store(root)
+        val now = Clock.System.now()
+        store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4), capturedAt = now - 60.minutes)
+        store.addChunk("ab", "02", 0, true, 30_000, ByteArray(4), capturedAt = now - 20.minutes)
+        var broken = 0
+        val logs = mutableListOf<String>()
+        val transcriber = Transcriber { opus, _ ->
+            if (opus.parent?.name == "01") {
+                broken++
+                error("model missing")
+            }
+            listOf(Segment(0, 1000, SPOKEN))
+        }
+        val pipeline = Pipeline(store, transcriber, { _, _ -> Summary("T", "S") }, NO_SPEAKERS) { logs += it }
+        pipeline.drain()
+        pipeline.drain()
+        assertEquals(1, broken)
+        val first = store.list("ab").single { it.id == "01" }
+        val retry = first.chunkRetry.getValue("0")
+        assertEquals(1, retry.attempts)
+        assertEquals("model missing", retry.error)
+        assertTrue(!retry.failed && retry.next > now && first.pending)
+        assertTrue(store.list("ab").single { it.id == "02" }.ready)
+        assertTrue(logs.any { "attempt=1/$TRANSCRIBE_ATTEMPTS" in it })
+        repeat(TRANSCRIBE_ATTEMPTS - 1) {
+            store.update("ab", "01") { m -> m.chunkRetry["0"] = m.chunkRetry.getValue("0").copy(next = now - 1.minutes) }
+            pipeline.drain()
+        }
+        assertEquals(TRANSCRIBE_ATTEMPTS, broken)
+        val gaveUp = store.list("ab").single { it.id == "01" }
+        assertTrue(gaveUp.chunkRetry.getValue("0").failed)
+        assertEquals("", gaveUp.chunks["0"])
+        assertEquals(1, gaveUp.untranscribed)
+        assertTrue(gaveUp.ready)
+        assertTrue(logs.any { "gave_up" in it })
+        store.update("ab", "01") { m -> m.chunkRetry["0"] = m.chunkRetry.getValue("0").copy(next = now - 1.minutes) }
+        pipeline.drain()
+        assertEquals(TRANSCRIBE_ATTEMPTS, broken)
+    }
+
+    @Test
+    fun givenUpChunkRunsAgainWithANewEngine() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
+        store.update("ab", "01") {
+            it.chunks["0"] = ""
+            it.chunkEngine["0"] = "old"
+            it.chunkRetry["0"] = Retry(TRANSCRIBE_ATTEMPTS, "x", Clock.System.now(), failed = true)
+        }
+        assertEquals(1, store.rerunAll("new"))
+        val m = store.list("ab").single()
+        assertTrue(m.pending && m.chunkRetry.isEmpty() && m.untranscribed == 0)
+    }
+
+    @Test
+    fun retryWaitDoublesUpToOneHour() {
+        assertEquals(TRANSCRIBE_RETRY_FIRST, transcribeRetryWait(1))
+        assertEquals(TRANSCRIBE_RETRY_FIRST * 4, transcribeRetryWait(3))
+        assertEquals(TRANSCRIBE_RETRY_MAX, transcribeRetryWait(TRANSCRIBE_ATTEMPTS))
+        assertEquals(TRANSCRIBE_RETRY_MAX, transcribeRetryWait(100))
+    }
+
+    @Test
     fun ticksOnASplitConversationUseItsOwnIds() = runTest {
         val store = Store(root)
         val hub = Hub(store, Pipeline(store, { _, _ -> emptyList() }, unused, NO_SPEAKERS) {}, Weather(Path(root, "w.json"), null, {}), FirmwareShelf(Path(root, "fw")), {})

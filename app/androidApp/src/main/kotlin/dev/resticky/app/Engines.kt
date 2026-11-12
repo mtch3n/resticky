@@ -133,13 +133,11 @@ private fun mostlyChinese(text: String): Boolean {
     return cjk >= 2 && cjk * 2 >= text.count { it.isLetter() }
 }
 val SPEAKER_MODELS = listOf(Model.SpeakerSegmentation, Model.SpeakerEmbedding)
-val DIARIZE_WINDOW_MS = 20 * 60 * 1000L
 const val LISTEN_FILE = "listen.opus"
 
 enum class SummaryEngine(val label: String) {
     Nano("Gemini Nano"),
     Gemma("Gemma 4 E2B"),
-    Laptop("Wait for the laptop"),
 }
 
 enum class TranscribeMode(val label: String) {
@@ -149,7 +147,7 @@ enum class TranscribeMode(val label: String) {
 }
 
 val OPEN_SUMMARY = listOf(SummaryEngine.Nano, SummaryEngine.Gemma)
-val CLOSED_SUMMARY = listOf(SummaryEngine.Gemma, SummaryEngine.Laptop)
+val CLOSED_SUMMARY = listOf(SummaryEngine.Gemma)
 
 sealed interface ModelState {
     data object Missing : ModelState
@@ -179,8 +177,11 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
 
     val runs = MutableStateFlow<List<Run>>(emptyList())
     val speech = MutableStateFlow(Model.valueOf(prefs.getString("speech", DEFAULT_SPEECH.name)!!))
-    val summaryOpen = MutableStateFlow(SummaryEngine.valueOf(prefs.getString("summaryOpen", SummaryEngine.Nano.name)!!))
-    val summaryClosed = MutableStateFlow(SummaryEngine.valueOf(prefs.getString("summaryClosed", SummaryEngine.Gemma.name)!!))
+    val summaryOpen = MutableStateFlow(summaryPref("summaryOpen", SummaryEngine.Nano))
+    val summaryClosed = MutableStateFlow(summaryPref("summaryClosed", SummaryEngine.Gemma))
+
+    private fun summaryPref(key: String, default: SummaryEngine): SummaryEngine =
+        SummaryEngine.entries.firstOrNull { it.name == prefs.getString(key, null) } ?: default
 
     val transcribe = MutableStateFlow(TranscribeMode.valueOf(prefs.getString("transcribe", TranscribeMode.Now.name)!!))
 
@@ -509,7 +510,6 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
     private suspend fun summarizeWith(e: SummaryEngine, text: String, sc: SummaryContext): Summary = when (e) {
         SummaryEngine.Nano -> track("summary", "summary", e.label) { nano.summarize(text, sc).copy(engine = e.label) }
         SummaryEngine.Gemma -> track("summary", "summary", e.label) { gemma.summarize(text, sc).copy(engine = e.label) }
-        SummaryEngine.Laptop -> error("waiting for the laptop hub")
     }
 
     val summarizer = Summarizer { text, sc ->

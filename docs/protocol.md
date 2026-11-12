@@ -15,8 +15,9 @@ A hub can have a password (the token): 32 random bytes, written as 64 lowercase 
 
 - Phone hub: the app makes the password one time and keeps it in its preferences. App settings › Hub
   password shows the first 8 characters; tap it to copy the full password.
-- Laptop hub: `-token <hex>` (copy it from the phone). A laptop hub without `-token` is open, as before, and
-  logs a `WARN` at start.
+- Laptop hub: `-token <hex>` or `-token-file <path>` (a file with the 64 hex characters; copy them from the
+  phone). The laptop hub does not start without a password. `-insecure` starts it with no password (only for
+  local tests); it then logs a `WARN` at start.
 - Delivery to the Sticky: BLE frame 26 `hub_token` (see "Message types"). The phone sends it each time the BLE
   link becomes ready. The link is bonded and encrypted (LE Secure Connections). The Sticky keeps the password
   in NVS (namespace `hub`, key `token`) and replaces the old one. A new password makes the Sticky find and
@@ -45,7 +46,7 @@ with a bad ID gets `400`.
 |---|---|---|
 | `GET /api/hello` | Optional `nonce` (see "Hub password"). No `Authorization` header necessary. | `200`, `{"service":"resticky-hub","version":"<v>"}`, and `"proof":"<hex>"` when the hub has a password and the request has a `nonce`. |
 | `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound`, `home` and `night` (optional): see "Display". `boot_id` and `boot_unix_ms`: see "Clock anchor". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>","night":"off"|"HH:MM-HH:MM"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
-| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start, always uptime), `X-Duration-Ms`, `X-Boot-Id` (8 hex digits) and `X-Boot-Unix-Ms` (decimal, `0` = clock not known); see "Clock anchor". Body: audio frames (see below), at most 1 MB. | `200` only when the hub holds this exact chunk on disk (see "Chunk acknowledgement"), with the body `{"device":"<id>","session":"<id>","seq":<n>,"stored":"added"\|"repeat"\|"restored"\|"conflict"}`. `400` if a header is missing or bad. `500` if the hub cannot store the chunk; the device keeps the chunk and sends it again. |
+| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start, always uptime), `X-Duration-Ms`, `X-Boot-Id` (8 hex digits) and `X-Boot-Unix-Ms` (decimal, `0` = clock not known); see "Clock anchor". Body: audio frames (see below), at most 1 MB (1,048,576 bytes). | `200` only when the hub holds this exact chunk on disk (see "Chunk acknowledgement"), with the body `{"device":"<id>","session":"<id>","seq":<n>,"stored":"added"\|"repeat"\|"restored"\|"conflict"}`. `400` if a header is missing or bad, or if the body is not a list of whole packets (see "Audio frames"). `413` if the body is larger than 1 MB; the hub reads at most 1 MB + 1 byte and never stores or acknowledges a part of a chunk. `500` if the hub cannot store the chunk; the device keeps the chunk and sends it again. |
 | `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
 | `GET /api/todos?device=<id>` | — | `200`, `{"open":[todo],"done":[todo]}`. `done` has only the to-dos done since 00:00 local time today. |
 | `PUT /api/todos/{device}/{session}/{index}` | JSON `{"done":true\|false,"at":"<RFC 3339 time>"}` | `200`, `{"done":…,"at":…}` with the state that the hub keeps. `404` if the to-do does not exist. `400` if the body is bad. See "To-do changes". |
@@ -117,7 +118,10 @@ little-endian length, then the packet bytes. A length of 0 is a 20 ms frame with
 removed it (firmware 0.15.0 and later), or the encoder failed. A decoder treats an empty frame as a lost
 frame (`opus_decode` with no data gives 20 ms of packet-loss concealment, which fades to silence), and an
 Ogg writer writes a 1-byte packet with the TOC byte only (a code 0 packet with an empty frame). Both hub
-decoders (`opusFramesToOgg` in `app/shared` and `decodeOpus` in the Android app) do this already. A full
+decoders (`opusFramesToOgg` in `app/shared` and `decodeOpus` in the Android app) do this already.
+The hub refuses a chunk (HTTP `400`, BLE: no `ack`) when the body is not a list of whole packets: a length
+larger than 1275 (the Opus limit), or a last packet that goes past the end of the body. The hub does not
+compare the number of frames with `X-Duration-Ms`. A full
 chunk has 1500 frames (30 s). A chunk can be shorter when its audio buffer (72,000 bytes) is full. Then the
 device closes the chunk early and the next chunk continues the timeline with the next `seq` (firmware 0.15.0
 and later). `X-Duration-Ms` always gives the real length.
@@ -284,10 +288,10 @@ hub keeps the history and the device stores none:
 | `spool_corrupt` | count | Optional. Chunk files that the device moved aside because they are corrupt (see "Device outbox"). Must be 0. |
 | `ble_fast_s` | s | Optional, firmware 0.15.4 and later. Time since start with a BLE connection interval of 30 ms or less. |
 | `ble_tx_bytes` | bytes | Optional, firmware 0.15.4 and later. Bytes sent in BLE notifications since start. |
+| `shutdown_lost` | count | Optional. Chunks lost at power off (in RAM, not yet in the outbox). Must be 0. |
 | `temp_c` | °C | Chip temperature. The hub keeps 0.1 °C. |
 
-The hub stores only the 15 fields above `audio_keep_pm` in `health.bin`. To keep the new fields, the hub
-must add them to the record.
+The hub stores all the number fields above (not `spool`). A field that the device does not send is 0.
 
 ### Shutdown save
 
@@ -313,19 +317,26 @@ Sample (from `GET /api/health`; all fields are always there):
 `t` is the Unix time (seconds) when the hub got the check-in. `firmware` is the `firmware` field of the
 check-in (empty for samples from the older `health.bin` records).
 
-Storage: `<device>/health2.bin` in the data folder, fixed 132-byte records, little-endian, appended at each
+Storage: `<device>/health3.bin` in the data folder, fixed 168-byte records, little-endian, appended at each
 kept sample: `t` (i64), then 23 i32 values: `battery_pct`, `voltage_mv`, `current_ma`, `recording` (0 or 1),
 `outbox_chunks`, `dropped_chunks`, `wifi_rssi`, a health flag (0 = no `health`), then the 15 health fields
-in the order of the table, with `temp_c` × 10, then `firmware` (32 bytes UTF-8, padded with zero bytes).
-The hub also reads `<device>/health.bin` (the older 100-byte records with no `firmware`). At the first new
-sample it writes all samples into `health2.bin` and deletes `health.bin`. When the file has 11,520 records (7 days + 1 day), the hub
+`uptime_s` to `overflows` in the order of the table and `temp_c` × 10, then `firmware` (32 bytes UTF-8,
+padded with zero bytes), then 7 i32 values: `audio_keep_pm`, `early_chunks`, `lost_chunks`,
+`spool_write_errors`, `spool_corrupt`, `ble_fast_s`, `shutdown_lost`, then `ble_tx_bytes` (i64).
+The hub also reads the older files: `<device>/health.bin` (100-byte records with no `firmware`) and
+`<device>/health2.bin` (132-byte records, the first 132 bytes of the format above). Their new fields are 0. At
+the first new sample the hub writes all samples into `health3.bin` and deletes the older files. When the file has 11,520 records (7 days + 1 day), the hub
 writes it again (temporary file, then rename) with only the samples of the last 7 days, at most 10,080.
 Thus the file is at most about 1.15 MB, and `GET /api/health` never gives samples older than 7 days. A
 partial record at the end (a crash during a write) is removed when the hub opens the file.
 
 The phone app shows the history in Settings › Sticky › Health (6 h, 24 h or 7 d, at most 300 points in each
 chart). It also shows the `boot` text of the last check-in, and "Battery drain" for each firmware version in
-the range: the discharge rate in % per hour, the hours of data, and the hours from 100 % to 0 %. The rate
+the range: the discharge rate in % per hour, the hours of data, and the hours from 100 % to 0 %. When a loss
+counter (`lost_chunks`, `dropped_chunks`, `spool_write_errors`, `spool_corrupt`, `shutdown_lost`) went up in
+the last 7 days, the top of the screen shows one dark line, for example "Audio loss in the last 7 d: 3 lost,
+1 dropped", for each range. The increase is the sum of the rises between samples; after a restart (lower
+`uptime_s` or a lower counter) the new value counts in full. The rate
 uses only discharge stretches of 1 hour or more. A stretch stops at a gap of more than 30 minutes, at a
 sample with `current_ma` > 0 (charging), at a rise of `battery_pct`, and at a change of `firmware`.
 
@@ -416,8 +427,16 @@ A mark is a moment that the user marked on the Sticky with a double press while 
   (sherpa-onnx: pyannote segmentation 3.0 and 3D-Speaker CAM++ embeddings, fast clustering with threshold 1.1,
   `min_duration_on` 0.3 s, `min_duration_off` 0.5 s). Clusters whose mean embeddings (from turns of 1.5 s and
   longer) have a cosine above 0.95 are merged. Speakers are numbered by their first turn.
-- The phone diarizes at most 20 minutes of audio in one run; a longer session is done in 20-minute windows and
-  the windows are joined by the same embedding rule. The laptop does the whole session in one run.
+- The hub diarizes at most 10 minutes of audio in one run (`DIARIZE_WINDOW_MS`, phone and laptop); a longer
+  session is done in 10-minute windows and the windows are joined by the same embedding rule. sherpa-onnx has
+  no streaming diarization (`process` takes all samples), so the window sets the memory: one window is decoded
+  into one float array. Measured on the laptop (sherpa-onnx 2.0.1, real speech): 10 minutes: 69 MB Java heap
+  peak, 504 MB process peak; 20 minutes: 125 MB and 546 MB. The cost: a speaker who talks only in one window
+  is clustered with less audio, and two windows can give one person two numbers when the embeddings are not
+  close enough to merge.
+- The hub keeps the speaker result only if the session has the same chunks and texts as when the run started.
+  If a chunk came (or a chunk was transcribed again) during the run, the hub drops the result (log
+  `INFO speakers dropped ... reason=input_changed`) and runs again for the new input.
 - Each segment gets the speaker with the most overlap (`speaker`, from 0; no overlap: the speaker of the segment
   before). `meta.json` `diarized` is true after the run (also when it failed or the models are missing; the
   summary does not wait). A new chunk sets it to false.
@@ -492,7 +511,13 @@ from the device backlog does not close at its first chunk.
 - `started` is the capture time at the start of the session timeline, from the chunk with the lowest seq that
   the hub has: `anchor + start_ms(lowest) − timeline offset(lowest)`. When a chunk with a lower seq arrives,
   the hub calculates `started` again. Offsets inside a session use `start_ms` differences (all of one boot).
-- Each chunk is transcribed when it arrives. A closed session with no pending chunk gets a summary: a
+- Each chunk is transcribed when it arrives. When the transcription fails, the hub keeps the chunk pending and
+  stores the try in `meta.json` `chunk_retry`. It tries again after 30 s, then after 1, 2, 4, 8, 16 and 32
+  minutes (at most 1 hour). Other chunks, speakers and summaries continue in the meantime. After 8 failed tries
+  the chunk has no text (`""`) and its `chunk_retry` entry has `"failed":true`; the phone shows "1 part not
+  transcribed: the speech model failed" in the transcript. A new speech model runs such a chunk again. Log:
+  `WARN transcribe ... attempt=<n>/8 next=<time>` or `... gave_up`.
+- A closed session with no pending chunk gets a summary: a
   title (at most 6 words), 1 to 2 sentences, and the to-dos. A session with no words gets the title
   "No speech" and no summary.
 - Audio files (`.opus`, `.ogg`, `.wav`) are deleted 7 days after they were written. Text stays.
@@ -553,7 +578,7 @@ Default: `~/.local/share/resticky/data`.
 ```
 <device>/
   screen.png                  last screen frame
-  health.bin                  health history (see "Health")
+  health3.bin                 health history (see "Health")
   anchors.json                clock anchors: boot ID → {"unix_ms","estimated"} (see "Clock anchor")
   <session>/
     meta.json                 the session
@@ -592,6 +617,7 @@ Default: `~/.local/share/resticky/data`.
 | `diarized` | boolean | The speaker run is done (see "Speakers"). Left out when false. |
 | `speakers` | object | Speaker number (string) → name. Left out when empty. |
 | `photos` | array | See "Photos". Left out when empty. |
+| `chunk_retry` | object | sequence number (string) → `{"attempts","error","next","failed"}`: failed transcription tries, the last error, the RFC 3339 time of the next try, and `failed` (left out when false) after the last try (see "Session rules"). Left out when empty. |
 | `vad` | object | sequence number (string) → `{"speech","keep","keep_prev"}` from the `X-Vad-*` headers (see "Voice activity"). Left out when empty. Needs the hub change. |
 
 ## Bluetooth LE
@@ -709,7 +735,9 @@ The device ignores types that it does not know.
   Wi-Fi hub is reachable. Then it tries BLE again. The device ignores an `ack` for a chunk that it does not
   wait for.
 - The hub sends `ack` only when it holds this exact chunk on disk, with the same rules as HTTP `200` (see
-  "Chunk acknowledgement"). If the hub cannot store the chunk, it sends no `ack`.
+  "Chunk acknowledgement"). If the hub cannot store the chunk, it sends no `ack`. The hub also sends no `ack`
+  and stores nothing when the audio is larger than 1 MB or is not a list of whole packets (see "Audio
+  frames"); log `WARN ble bad chunk audio, no ack`.
 - The device sends `checkin` when the link becomes ready and then every 30 s.
 - The hub sends `time`, `weather`, `agenda` and `display` when the link becomes ready, and then each one
   again only when its JSON changed (a new forecast, a settings change, a calendar change, a new offset, a

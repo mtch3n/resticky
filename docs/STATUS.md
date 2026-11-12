@@ -16,7 +16,7 @@ low power and storage use that we can profile.
 | BLE test hub | `firmware/tools/ble_hub.py` | `uv run firmware/tools/ble_hub.py --out <folder>`. Registers a BlueZ agent (KeyboardOnly), pairs (type the passkey from the e-paper on stdin), stores chunks as `<device>/<session>/<seq>.opus`, sends acks, prints KB/s for each chunk. Forget the bond: `bluetoothctl remove AA:BB:CC:DD:EE:FF`. |
 | Laptop hub 0.7.0 (check-in logs the outbox, keeps the health history; transcript items have `place`) | `app/desktopApp` (Kotlin Multiplatform, JVM) | systemd user service `resticky-hub`, runs `~/.local/opt/resticky-hub/bin/resticky-hub` (installed with `./gradlew :desktopApp:installDist`, then copied). Port 8787, mDNS `_resticky._tcp`. Weather: fixed city only, set with `-city <name>` in the service `ExecStart` (no city: no forecast); settings and the last forecast in `~/.local/share/resticky/weather.json` (`-weather <file>`). |
 | Data | `~/.local/share/resticky/data` | Sessions, chunks, transcripts. Backup before the hub change: `data.backup-go-20261110`. |
-| Contract tests | `app/contract` | `app/contract/run.sh <hub binary>`; 21 tests. `run.sh` starts the hub with a fixed test `-token`. |
+| Contract tests | `app/contract` | `app/contract/run.sh <hub binary>`; 23 tests. `run.sh` first checks that the hub does not start without `-token`, then starts it with a fixed test `-token`. |
 | Test phone | Phone hotspot XL, 192.168.1.20 | Wireless adb (Android Wireless debugging, found by mDNS): `adb -s $(adb devices | awk '/_adb-tls-connect/{print $1; exit}') shell …`. No cable. |
 
 ## Firmware facts learned the hard way
@@ -85,8 +85,8 @@ low power and storage use that we can profile.
   - Hub password: the phone app makes a 64-hex password and sends it in the new BLE frame 26 `hub_token`.
     The Sticky keeps it in NVS, sends `Authorization: Bearer <token>` to the hub and checks the hub with an
     HMAC proof from `GET /api/hello?nonce=…` before it uses the hub. A hub with a password answers `401` to a
-    request without it. Laptop hub: `-token <hex>` (no `-token`: open, with a `WARN`). See "Hub password" in
-    `protocol.md`.
+    request without it. Laptop hub: `-token <hex>` or `-token-file <path>`; it does not start without one
+    (`-insecure` only for local tests). See "Hub password" in `protocol.md`.
   - Before the first build of 0.15.0 in a checkout, delete `firmware/sdkconfig.sticky`. The old file has
     `# CONFIG_BT_CTRL_MODEM_SLEEP is not set`, and `sdkconfig.defaults` does not change a set value.
 - Firmware 0.15.2 (2026-11-11, built, not flashed, not measured): two sleep modes. See "Sleep modes" in
@@ -160,8 +160,24 @@ low power and storage use that we can profile.
   preferences. Test on 2026-11-10: 12 calendars selected with adb, the agenda had 4 events.
 - Wi-Fi scan needs `NEARBY_WIFI_DEVICES` (declared `neverForLocation`); the list shows only 2.4 GHz networks.
 - Health (2026-11-10): firmware 0.11.x sends `health` in each check-in. The hub keeps one sample a minute for 7 days
-  in `<device>/health.bin` (see "Health" in `protocol.md`); the Health tile on the Hub page shows the charts. First
+  in `<device>/health3.bin` (see "Health" in `protocol.md`); the Health tile on the Hub page shows the charts. First
   sample on the Pixel from firmware 0.11.2 over BLE: 61 KB internal RAM free, 852 bytes BLE stack free, 34 °C.
+- Hub fixes (2026-11-12, built and unit-tested, not tested on a device):
+  - Chunks: a body over 1 MB gets `413` and is not stored (before, the hub cut it and answered `200`); a body
+    that is not whole Opus packets gets `400`. On BLE the same chunks get no `ack`. Contract test.
+  - Transcription: a failed chunk waits (30 s, doubling, at most 1 hour) and the other work goes on; after 8
+    tries the chunk has no text and the transcript shows "N parts not transcribed". State in `meta.json`
+    `chunk_retry`.
+  - Speakers: a result for an older input (a chunk came during the run) is dropped and the run repeats.
+  - Store: the sessions stay in memory (checked with the `meta.json` time and size, no read when unchanged);
+    the phone screens and the BLE lists update on a store change, not by polling.
+  - Speakers window 10 minutes (was 20 on the phone, the whole session on the laptop), because sherpa-onnx
+    has no streaming diarization. Laptop measurement: 69 MB Java heap peak for 10 minutes against 125 MB for 20.
+  - Health keeps `lost_chunks`, `early_chunks`, `spool_write_errors`, `spool_corrupt`, `audio_keep_pm`,
+    `ble_fast_s`, `ble_tx_bytes` and `shutdown_lost` (`health3.bin`), and the Health screen shows one line when
+    a loss counter went up in the last 7 days. The firmware does not send `ble_fast_s`, `ble_tx_bytes` and
+    `shutdown_lost` yet.
+  - The summary choice "Wait for the laptop" is removed (it always failed).
 - Places (2026-11-10): the Places tile on the Hub page names places on the phone; new live sessions get the place name (see
   "Places" in `protocol.md`). Needs precise location, and "Allow all the time" for tags while the app is closed.
   Not tested on the phone yet: the permission dialogs need the user.

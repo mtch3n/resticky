@@ -9,6 +9,8 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
@@ -28,6 +30,31 @@ class StoreTest {
     }
 
     private fun files(store: Store, id: String) = SystemFileSystem.list(store.dir("ab", id)).map { it.name }.toSet()
+
+    @Test
+    fun sessionsComeFromMemoryUntilAWriteOrAFileChange() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(0, 0))
+        val v = store.changes.value
+        val first = store.all().single()
+        assertSame(first, store.all().single())
+        assertSame(first, store.list("ab").single())
+        store.update("ab", "01") { it.title = "New" }
+        assertEquals(v + 1, store.changes.value)
+        assertEquals("", first.title)
+        val second = store.list("ab").single()
+        assertEquals("New", second.title)
+        assertNotSame(first, second)
+        val meta = Path(store.dir("ab", "01"), "meta.json")
+        val text = store.read(meta)!!.decodeToString().replace("\"New\"", "\"From outside\"")
+        store.write(meta, text.encodeToByteArray())
+        assertEquals("From outside", store.all().single().title)
+        store.write(Path(store.dir("ab", "02"), "meta.json"), """{"device":"ab","id":"02","started":"2026-11-10T10:00:00Z","last_chunk":"2026-11-10T10:00:00Z","duration_ms":0,"chunks":{}}""".encodeToByteArray())
+        assertEquals(setOf("01", "02"), store.list("ab").map { it.id }.toSet())
+        SystemFileSystem.delete(Path(store.dir("ab", "02"), "meta.json"))
+        SystemFileSystem.delete(store.dir("ab", "02"))
+        assertEquals(listOf("01"), store.all().map { it.id })
+    }
 
     @Test
     fun repeatedChunkKeepsTheFirstAudio() = runTest {

@@ -54,6 +54,18 @@ class BleTest {
     }
 
     @Test
+    fun chunkAudioMustBeWholePacketsAndAtMostOneMegabyte() {
+        assertTrue(chunkAudioOk(ByteArray(0)))
+        assertTrue(chunkAudioOk(byteArrayOf(0, 0, 2, 0, 9, 9)))
+        assertFalse(chunkAudioOk(byteArrayOf(0, 0, 3, 0, 9, 9)))
+        assertFalse(chunkAudioOk(byteArrayOf(0, 0, 0)))
+        assertFalse(chunkAudioOk(byteArrayOf(0xff.toByte(), 0x7f) + ByteArray(0x7fff)))
+        val full = ByteArray(MAX_CHUNK)
+        assertTrue(chunkAudioOk(full))
+        assertFalse(chunkAudioOk(full + byteArrayOf(0, 0)))
+    }
+
+    @Test
     fun ackFrameIsLittleEndian() {
         assertContentEquals(
             byteArrayOf(9, 0, 0, 0, 2, 0x78, 0x56, 0x34, 0x12, 7, 0, 0, 0),

@@ -91,6 +91,8 @@ private const val VAD_OFF = "off"
 private const val SEGMENTATION_MODEL = "pyannote-segmentation-3-0.onnx"
 private const val EMBEDDING_MODEL = "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx"
 
+private val SWITCHES = setOf("insecure")
+
 private val VIRTUAL = listOf("docker", "br-", "veth", "virbr", "lo")
 
 fun log(message: String) = println("${Instant.now()} $message")
@@ -103,6 +105,7 @@ private class Flags(args: Array<String>) {
         while (i < args.size) {
             val name = args[i].trimStart('-')
             if ('=' in name) values[name.substringBefore('=')] = name.substringAfter('=')
+            else if (name in SWITCHES) values[name] = "true"
             else values[name] = args.getOrElse(++i) { "" }
             i++
         }
@@ -305,9 +308,20 @@ private class Announcer(private val port: Int) {
     fun close() = live.values.forEach { runCatching { it.close() } }
 }
 
+private fun hubToken(flags: Flags): String? {
+    val file = flags.string("token-file", "")
+    val token = (if (file.isEmpty()) flags.string("token", "") else File(file).readText()).trim().lowercase().ifEmpty { null }
+    val insecure = flags.string("insecure", "false") == "true"
+    require(token != null || insecure) { "need -token <hex> or -token-file <path> (the hub password from the phone); -insecure runs with no password, only for local tests" }
+    require(token == null || TOKEN_PATTERN.matches(token)) { "the hub password must be 64 hex characters (the hub password from the phone)" }
+    if (token == null) log("WARN no hub password (-insecure): every device on the network can use this hub")
+    return token
+}
+
 fun main(args: Array<String>) {
     val home = System.getProperty("user.home")
     val flags = Flags(args)
+    val token = hubToken(flags)
     val port = flags.string("port", "8787").toInt()
     val data = flags.string("data", "$home/.local/share/resticky/data")
     val model = flags.string("model", "$home/.local/share/resticky/models/ggml-small.en-q8_0.bin")
@@ -333,9 +347,6 @@ fun main(args: Array<String>) {
     require(validNight(night)) { "-night must be off or HH:MM-HH:MM (minutes 00 or 30)" }
     val homeScreen = flags.string("home", HOME_APPS)
     require(homeScreen in HOME_SCREENS) { "-home must be one of ${HOME_SCREENS.joinToString("|")}" }
-    val token = flags.string("token", "").lowercase().ifEmpty { null }
-    require(token == null || TOKEN_PATTERN.matches(token)) { "-token must be 64 hex characters (the hub password from the phone)" }
-    if (token == null) log("WARN no hub password: every device on the network can use this hub; start with -token <hex>")
     val firmware = FirmwareShelf(IoPath(flags.string("firmware", "$home/.local/share/resticky/firmware")))
     val hub = Hub(store, pipeline, weather, firmware, ::log, token = token)
     hub.clockFace.value = clockFace

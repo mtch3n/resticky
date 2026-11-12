@@ -9,7 +9,10 @@ import kotlinx.io.files.Path
 import kotlinx.serialization.Serializable
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Clock
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -42,6 +45,12 @@ const val SHORT_NOTE = "Short note"
 const val MIN_SPEECH_UNITS = 25
 const val MIN_NOTE_UNITS = 5
 val RETRY_WAIT = 10.seconds
+const val TRANSCRIBE_ATTEMPTS = 8
+val TRANSCRIBE_RETRY_FIRST = 30.seconds
+val TRANSCRIBE_RETRY_MAX = 1.hours
+
+fun transcribeRetryWait(attempts: Int): Duration =
+    (TRANSCRIBE_RETRY_FIRST * (1L shl (attempts - 1).coerceIn(0, 20)).toDouble()).coerceAtMost(TRANSCRIBE_RETRY_MAX)
 
 data class SummaryContext(
     val place: String = "",
@@ -251,7 +260,7 @@ class Pipeline(
     private val transcriber: Transcriber,
     private val summarizer: Summarizer,
     private val diarizer: Diarizer,
-    private val diarizeWindowMs: Long = Long.MAX_VALUE,
+    private val diarizeWindowMs: Long = DIARIZE_WINDOW_MS,
     private val speechId: () -> String = { "" },
     private val vocabulary: Vocabulary? = null,
     private val calendarTerms: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
@@ -263,6 +272,7 @@ class Pipeline(
     private val running = Mutex()
     private val failedOnce = mutableSetOf<String>()
     private val waiting = mutableSetOf<String>()
+    private var nextRetry: Instant? = null
 
     fun kick() {
         wake.trySend(Unit)
@@ -270,8 +280,10 @@ class Pipeline(
 
     private suspend fun step(): Boolean {
         val all = store.all()
+        val now = Clock.System.now()
+        nextRetry = all.flatMap { m -> m.chunkRetry.filter { (seq, r) -> m.chunks[seq] == PENDING && r.next > now }.map { it.value.next } }.minOrNull()
         for (m in all) {
-            val seq = m.chunks.entries.firstOrNull { it.value == PENDING }?.key ?: continue
+            val seq = m.chunks.entries.firstOrNull { (seq, text) -> text == PENDING && m.chunkRetry[seq].let { it == null || it.next <= now } }?.key ?: continue
             val start = TimeSource.Monotonic.markNow()
             val prompt = vocabulary?.let { v ->
                 val from = m.started
@@ -281,8 +293,9 @@ class Pipeline(
             }.orEmpty()
             val raw = runCatching { cleanSegments(transcriber.transcribe(Path(store.dir(m.device, m.id), "$seq.opus"), prompt)) }
                 .getOrElse {
-                    log("WARN transcribe session=${m.id} seq=$seq err=${it.message}")
-                    return false
+                    if (it is CancellationException) throw it
+                    transcribeFailed(m, seq, it)
+                    return true
                 }
             val fixed = vocabulary?.let { applyRules(raw, it.rules()) }
             val segments = fixed?.value ?: raw
@@ -293,12 +306,12 @@ class Pipeline(
                 it.chunkEngine[seq] = speechId()
                 if (fixed == null) it.chunkRules.remove(seq) else it.chunkRules[seq] = fixed.count
                 if (segments.isEmpty()) it.segments.remove(seq) else it.segments[seq] = segments
+                it.chunkRetry.remove(seq)
             }
             return true
         }
-        val now = Clock.System.now()
         for (m in all) {
-            if (m.chunks.isEmpty() || !m.needsSpeakers || !m.closed(now) || "${m.device}/${m.id}" in waiting) continue
+            if (m.chunks.isEmpty() || m.pending || !m.needsSpeakers || !m.closed(now) || "${m.device}/${m.id}" in waiting) continue
             diarize(m)
             return true
         }
@@ -312,8 +325,26 @@ class Pipeline(
         return false
     }
 
+    private suspend fun transcribeFailed(m: Session, seq: String, e: Throwable) {
+        val retry = store.update(m.device, m.id) {
+            if (it.chunks[seq] != PENDING) return@update null
+            val attempts = (it.chunkRetry[seq]?.attempts ?: 0) + 1
+            val failed = attempts >= TRANSCRIBE_ATTEMPTS
+            Retry(attempts, e.message ?: "${e::class.simpleName}", Clock.System.now() + transcribeRetryWait(attempts), failed).also { r ->
+                it.chunkRetry[seq] = r
+                if (failed) {
+                    it.chunks[seq] = ""
+                    it.chunkEngine[seq] = speechId()
+                }
+            }
+        } ?: return
+        val then = if (retry.failed) "gave_up" else "next=${retry.next}"
+        log("WARN transcribe session=${m.id} seq=$seq attempt=${retry.attempts}/$TRANSCRIBE_ATTEMPTS $then err=${retry.error}")
+    }
+
     private suspend fun diarize(m: Session) {
         val key = "${m.device}/${m.id}"
+        val input = m.speakerInput()
         val frames = if (m.transcript().isBlank()) null else store.sessionFrames(m)
         val start = TimeSource.Monotonic.markNow()
         val found = frames?.let { f ->
@@ -326,14 +357,17 @@ class Pipeline(
             return
         }
         failedOnce -= key
-        store.update(m.device, m.id) {
+        val current = store.update(m.device, m.id) {
+            if (it.speakerInput() != input) return@update false
             it.diarized = true
             it.speakersFailed = frames != null && found == null
             if (found != null) {
                 it.assignSpeakers(found.turns)
                 it.labelVoices(found.voices, people?.all().orEmpty())
             }
+            true
         }
+        if (current != true) return log("INFO speakers dropped session=${m.id} reason=input_changed")
         if (found != null) {
             log("INFO diarized session=${m.id} speakers=${found.turns.map { it.speaker }.distinct().size} turns=${found.turns.size} took=${start.elapsedNow()}")
             learnVoices()
@@ -349,7 +383,7 @@ class Pipeline(
         book.discover(all)
         val now = book.all()
         var linked = 0
-        for (s in all) if (s.linkPeople(now)) {
+        for (s in all) if (s.clone().linkPeople(now)) {
             store.update(s.device, s.id) { it.linkPeople(now) }
             linked++
         }
@@ -428,7 +462,9 @@ class Pipeline(
     suspend fun run() {
         while (coroutineContext.isActive) {
             drain()
-            withTimeoutOrNull(if (waiting.isEmpty()) 1.minutes else RETRY_WAIT) { wake.receive() }
+            val idle = if (waiting.isEmpty()) 1.minutes else RETRY_WAIT
+            val retry = nextRetry?.let { (it - Clock.System.now()).coerceAtLeast(1.seconds) } ?: idle
+            withTimeoutOrNull(minOf(idle, retry)) { wake.receive() }
         }
     }
 }

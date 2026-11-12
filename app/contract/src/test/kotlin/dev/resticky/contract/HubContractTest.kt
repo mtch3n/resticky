@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Assumptions.assumeFalse
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -239,6 +240,21 @@ class HubContractTest {
         assertEquals(400, send("POST", "/api/chunks", opusFrames(1)).status)
         assertEquals(400, send("POST", "/api/chunks", opusFrames(1), mapOf("X-Device" to device, "X-Session" to "ZZ", "X-Seq" to "0", "X-Duration-Ms" to "20")).status)
         assertEquals(400, send("POST", "/api/chunks", opusFrames(1), mapOf("X-Device" to device, "X-Session" to "ab", "X-Seq" to "-1", "X-Duration-Ms" to "20")).status)
+    }
+
+    @Test
+    fun oversizedOrBrokenChunkIsRefusedAndNotStored() {
+        val s = "c0ffee03"
+        val headers = mapOf("X-Device" to device, "X-Session" to s, "X-Seq" to "0", "X-Final" to "0", "X-Start-Ms" to "0", "X-Duration-Ms" to "20")
+        val big = ByteArray((1 shl 20) + 2)
+        assertEquals(413, send("POST", "/api/chunks", big, headers).status)
+        val streamed = HttpRequest.newBuilder(URI.create("$base/api/chunks")).header("Authorization", "Bearer $token")
+            .apply { headers.forEach { (k, v) -> header(k, v) } }
+            .POST(BodyPublishers.ofInputStream { ByteArrayInputStream(big) }).build()
+        assertEquals(413, client.send(streamed, BodyHandlers.ofByteArray()).statusCode())
+        assertEquals(400, send("POST", "/api/chunks", byteArrayOf(9, 0, 1), headers).status)
+        assertFalse(data.exists("$device/$s/meta.json"))
+        assertEquals(200, send("POST", "/api/chunks", opusFrames(1), headers).status)
     }
 
     @Test

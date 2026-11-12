@@ -31,7 +31,7 @@ class HealthTest {
 
     private fun sample(t: Long, battery: Int = 50) = HealthSample(t, batteryPct = battery)
 
-    private fun fileSize() = SystemFileSystem.metadataOrNull(Path(root, device, "health2.bin"))?.size ?: 0L
+    private fun fileSize() = SystemFileSystem.metadataOrNull(Path(root, device, HEALTH_FILE))?.size ?: 0L
 
     @Test
     fun keepsOneSampleEachMinute() = runTest {
@@ -45,7 +45,10 @@ class HealthTest {
 
     @Test
     fun roundTripsAllFields() = runTest {
-        val h = Health(3600, 95000, 85000, 60000, 6_000_000, 5_500_000, 2100, 1800, 1500, 120, 340, 210, 9100, 2, 41.5f)
+        val h = Health(
+            3600, 95000, 85000, 60000, 6_000_000, 5_500_000, 2100, 1800, 1500, 120, 340, 210, 9100, 2, 41.5f,
+            audioKeepPm = 420, earlyChunks = 1, lostChunks = 2, spoolWriteErrors = 3, spoolCorrupt = 4, bleFastS = 50, shutdownLost = 5, bleTxBytes = 5_000_000_000,
+        )
         val s = HealthSample(start, 77, 4012, -31, true, 3, 1, -61, h, "0.14.9")
         HealthLog(root).add(device, s)
         assertEquals(s, HealthLog(root).read(device, 0).single())
@@ -69,6 +72,44 @@ class HealthTest {
         assertEquals(listOf("", "0.15.0"), log.read(device, 0).map { it.firmware })
         assertFalse(SystemFileSystem.exists(Path(root, device, "health.bin")))
         assertEquals(2L * HEALTH_RECORD, fileSize())
+    }
+
+    @Test
+    fun version2RecordsStillLoad() = runTest {
+        val v2 = Buffer().apply {
+            writeLongLe(start)
+            List(23) { listOf(70, 4000, -30, 1, 2, 1, -60, 1, 600)[it.coerceAtMost(8)] }.forEachIndexed { i, v -> writeIntLe(if (i > 8) 7 else v) }
+            write("0.15.3".encodeToByteArray().copyOf(HEALTH_FIRMWARE))
+        }
+        assertEquals(HEALTH_RECORD_V2.toLong(), v2.size)
+        SystemFileSystem.createDirectories(Path(root, device))
+        SystemFileSystem.sink(Path(root, device, "health2.bin")).use { it.write(v2, v2.size) }
+        assertEquals(listOf(device), HealthLog(root).devices())
+        val old = HealthLog(root).read(device, 0).single()
+        assertEquals(HealthSample(start, 70, 4000, -30, true, 2, 1, -60, Health(600, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0.7f), "0.15.3"), old)
+        val log = HealthLog(root)
+        log.add(device, HealthSample(start + 60, 69, health = Health(lostChunks = 1), firmware = "0.16.0"))
+        assertEquals(listOf(0, 1), log.read(device, 0).map { it.health?.lostChunks })
+        assertFalse(SystemFileSystem.exists(Path(root, device, "health2.bin")))
+        assertEquals(2L * HEALTH_RECORD, fileSize())
+    }
+
+    @Test
+    fun lossCountersThatGrowAreReported() {
+        fun at(min: Int, uptime: Int, lost: Int, dropped: Int = 0, corrupt: Int = 0) =
+            HealthSample(start + min * 60L, droppedChunks = dropped, health = Health(uptimeS = uptime, lostChunks = lost, spoolCorrupt = corrupt))
+        assertEquals(emptyList(), lossGrowth(listOf(at(0, 100, 2), at(1, 160, 2), HealthSample(start + 120), at(3, 280, 2))))
+        val grew = listOf(at(0, 100, 2), at(1, 160, 5, dropped = 1), at(2, 10, 1, dropped = 0), at(3, 70, 1, dropped = 0, corrupt = 1))
+        assertEquals(listOf("lost" to 4L, "dropped" to 1L, "corrupt" to 1L), lossGrowth(grew.shuffled(Random(1))))
+    }
+
+    @Test
+    fun checkinLossFieldsAreRead() {
+        val c = hubJson.decodeFromString<Checkin>(
+            """{"device":"ab","dropped_chunks":2,"health":{"uptime_s":61,"audio_keep_pm":300,"early_chunks":1,"lost_chunks":2,"spool":"ok","spool_write_errors":3,"spool_corrupt":4,"ble_fast_s":9,"ble_tx_bytes":123456,"shutdown_lost":1}}""",
+        )
+        assertEquals(Health(61, audioKeepPm = 300, earlyChunks = 1, lostChunks = 2, spoolWriteErrors = 3, spoolCorrupt = 4, bleFastS = 9, shutdownLost = 1, bleTxBytes = 123456), c.health)
+        assertEquals(2, HealthSample.of(c, start).droppedChunks)
     }
 
     private fun run(from: Long, minutes: Int, startPct: Int, pctPerHour: Int, fw: String) =
@@ -126,7 +167,7 @@ class HealthTest {
     @Test
     fun partialRecordIsCutOnLoad() = runTest {
         HealthLog(root).add(device, sample(start))
-        SystemFileSystem.sink(Path(root, device, "health2.bin"), append = true).use { it.write(Buffer().apply { write(ByteArray(7)) }, 7) }
+        SystemFileSystem.sink(Path(root, device, HEALTH_FILE), append = true).use { it.write(Buffer().apply { write(ByteArray(7)) }, 7) }
         val log = HealthLog(root)
         log.add(device, sample(start + 60))
         assertEquals(listOf(start, start + 60), log.read(device, 0).map { it.t })

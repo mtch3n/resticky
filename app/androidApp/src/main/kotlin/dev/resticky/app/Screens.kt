@@ -814,6 +814,7 @@ fun TranscriptScreen(
                         }
                     }
                     if (sessions.any { it.speakersFailed }) Text("Speakers not available", style = Type.small)
+                    sessions.sumOf { it.untranscribed }.takeIf { it > 0 }?.let { n -> Text("$n ${if (n == 1) "part" else "parts"} not transcribed: the speech model failed", style = Type.small) }
                     val named = sessions.flatMap { s -> s.speakers.entries.sortedBy { it.key.toInt() }.map { Triple(s, it.key.toInt(), it.value) } }.distinctBy { it.third }
                     if (named.isNotEmpty()) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1047,7 +1048,6 @@ fun ModelsScreen(
                             else -> "Built in"
                         }
                         SummaryEngine.Gemma -> modelSubtitle(Model.Gemma4E2B, state.models[Model.Gemma4E2B], state.speeds[e.label], "")
-                        SummaryEngine.Laptop -> "Codex gpt-6-luna · after hub sync"
                     }
                     val missing = e == SummaryEngine.Gemma && state.models[Model.Gemma4E2B].let { it == ModelState.Missing || it is ModelState.Failed }
                     val nanoMissing = e == SummaryEngine.Nano && state.nano == FeatureStatus.DOWNLOADABLE

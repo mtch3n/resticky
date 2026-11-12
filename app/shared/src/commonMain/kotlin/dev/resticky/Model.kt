@@ -104,8 +104,11 @@ class Session(
     var boot: String = "",
     @SerialName("guess_anchor_ms") var guessAnchorMs: Long? = null,
     @SerialName("time_estimated") var timeEstimated: Boolean = false,
+    @SerialName("chunk_retry") val chunkRetry: MutableMap<String, Retry> = mutableMapOf(),
 ) {
     val pending: Boolean get() = chunks.values.any { it == PENDING }
+
+    val untranscribed: Int get() = chunkRetry.values.count { it.failed }
 
     private fun seqs(): List<String> = chunks.keys.sortedBy { it.toInt() }
 
@@ -204,6 +207,11 @@ class Session(
         return new.size
     }
 }
+
+fun Session.clone(): Session = hubJson.decodeFromString(hubJson.encodeToString(this))
+
+@Serializable
+data class Retry(val attempts: Int, val error: String, val next: Time, val failed: Boolean = false)
 
 @Serializable
 data class Segment(
