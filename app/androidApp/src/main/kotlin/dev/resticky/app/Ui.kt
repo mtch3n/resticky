@@ -228,17 +228,17 @@ fun FilledButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
 }
 
 @Composable
-fun Field(label: String, value: String, onChange: (String) -> Unit, secret: Boolean = false, onDone: (() -> Unit)? = null) {
+fun Field(label: String, value: String, onChange: (String) -> Unit, secret: Boolean = false, singleLine: Boolean = true, onDone: (() -> Unit)? = null) {
     Card {
         Text(label, style = Type.small)
         Gap(6.dp)
         BasicTextField(
             value,
             onChange,
-            singleLine = true,
+            singleLine = singleLine,
             textStyle = style(20, FontWeight.SemiBold),
             visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else KeyboardType.Text, imeAction = ImeAction.Done),
+            keyboardOptions = KeyboardOptions(keyboardType = if (secret) KeyboardType.Password else KeyboardType.Text, imeAction = if (singleLine) ImeAction.Done else ImeAction.Default),
             keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
             modifier = Modifier.fillMaxWidth(),
         )

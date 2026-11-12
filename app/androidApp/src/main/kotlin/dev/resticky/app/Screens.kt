@@ -54,6 +54,11 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.rememberUpdatedState
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
 import dev.resticky.CLEANED
 import dev.resticky.Fix
 import dev.resticky.ruleRegex
@@ -296,8 +301,6 @@ private class Shot(val session: Session, val photo: Photo, val at: Long)
 
 private fun Conversation.at(s: Session, ms: Long): Long = (s.wallAt(ms) - start).inWholeMilliseconds
 
-private fun Conversation.end(): Instant = parts.last().let { it.session.wallAt(it.toMs) }
-
 private fun Conversation.sessions(): List<Session> = parts.map { it.session }.distinctBy { it.id }
 
 private fun Conversation.shots(): List<Shot> = parts.flatMap { p -> p.session.photos.filter { p.covers(it.offsetMs) }.map { Shot(p.session, it, at(p.session, it.offsetMs)) } }
@@ -320,9 +323,20 @@ private fun conversationSubtitle(v: ConversationView): String {
 }
 
 @Composable
-fun TranscriptsScreen(conversations: List<ConversationView>, open: (ConversationView) -> Unit) = Page("Transcripts") {
+fun TranscriptsScreen(conversations: List<ConversationView>, open: (ConversationView) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val shown = conversations.filter { it.conversation.matches(query) }
+    Page("Transcripts") { transcriptList(conversations, shown, query, { query = it }, open) }
+}
+
+private fun LazyListScope.transcriptList(conversations: List<ConversationView>, shown: List<ConversationView>, query: String, search: (String) -> Unit, open: (ConversationView) -> Unit) {
     if (conversations.isEmpty()) item { CardList { ListRow("No transcripts yet", "Sessions show here after the Sticky records", first = true) } }
-    conversations.groupBy { it.conversation.start.date() }.entries.forEachIndexed { g, (day, list) ->
+    else {
+        item { Field("Search", query, search) }
+        gap()
+    }
+    if (conversations.isNotEmpty() && shown.isEmpty()) item { CardList { ListRow("No matches", first = true) } }
+    shown.groupBy { it.conversation.start.date() }.entries.forEachIndexed { g, (day, list) ->
         if (g > 0) gap()
         item { Section(dayLabel(day)) }
         gap()
@@ -685,9 +699,12 @@ fun TranscriptScreen(
     started: () -> Unit,
     correct: (String, String, Pair<String, Long>?) -> Unit,
     undo: (Session, Fix) -> Unit,
+    setNotes: (String) -> Unit,
+    regenerate: () -> Unit,
     onTodo: (String, Int, Boolean) -> Unit,
 ) {
     val v = view ?: return Page("Transcript", back) {}
+    val context = LocalContext.current
     val c = v.conversation
     val r = v.recap
     val sessions = remember(c) { c.sessions() }
@@ -735,6 +752,13 @@ fun TranscriptScreen(
     }
     val lineRow = remember(rows) { IntArray(said.size).also { a -> rows.forEachIndexed { k, x -> if (x is Int) a[x] = k } } }
     val list = rememberLazyListState()
+    var notes by remember(c.key) { mutableStateOf(c.notes()) }
+    val saved by rememberUpdatedState(c.notes())
+    LaunchedEffect(notes) {
+        if (notes == saved) return@LaunchedEffect
+        delay(800)
+        setNotes(notes)
+    }
     LaunchedEffect(startAt) {
         val at = startAt ?: return@LaunchedEffect
         go(at.session, at.ms, true)
@@ -756,7 +780,17 @@ fun TranscriptScreen(
         if (item == null || item.offset < 0 || item.offset + item.size > end - end / 4) list.animateScrollToItem((row - 2).coerceAtLeast(1))
     }
     Column(Modifier.fillMaxSize()) {
-        TopBar(r.title.ifEmpty { if (v.live) "Live session" else "Untitled session" }, back)
+        TopBar(r.title.ifEmpty { if (v.live) "Live session" else "Untitled session" }, back) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box(Modifier.clip(CircleShape).clickable {
+                    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(r.title, c.markdown(zone)))
+                }.padding(horizontal = 8.dp, vertical = 6.dp)) { Text("Copy", style = Type.button.copy(fontSize = 14.sp)) }
+                Box(Modifier.clip(CircleShape).clickable {
+                    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, r.title).putExtra(Intent.EXTRA_TEXT, c.markdown(zone))
+                    context.startActivity(Intent.createChooser(send, null))
+                }.padding(horizontal = 8.dp, vertical = 6.dp)) { Text("Share", style = Type.button.copy(fontSize = 14.sp)) }
+            }
+        }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = MAIN) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -780,6 +814,8 @@ fun TranscriptScreen(
                             style = Type.body,
                         )
                     }
+                    Field("Notes", notes, { notes = it }, singleLine = false)
+                    if (!v.live) OutlineButton("Regenerate summary", onClick = regenerate)
                     if (r.todos.isNotEmpty()) {
                         Section("To-dos · ${r.todos.size}")
                         CardList {

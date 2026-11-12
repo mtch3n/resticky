@@ -1,5 +1,10 @@
 package dev.resticky
 
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.format
+import kotlinx.datetime.format.char
+import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -88,12 +93,28 @@ class Part(val session: Session, val fromMs: Long, val toMs: Long) {
 
 class Spoken(val text: String, val session: String, val atMs: Long)
 
+private class Said(val part: Part, val speaker: String?, val lines: MutableList<Line> = mutableListOf()) {
+    val atMs: Long get() = lines.first().atMs
+
+    fun spoken(): List<Spoken> = listOfNotNull(speaker?.let { Spoken("$it:", part.session.id, atMs) }) +
+        lines.flatMap { l -> if (l.words.isEmpty()) listOf(Spoken(l.text, part.session.id, l.atMs)) else l.words.map { Spoken(it.text, part.session.id, it.startMs) } }
+}
+
+private val dayTime = LocalDateTime.Format { year(); char('-'); monthNumber(); char('-'); day(); char(' '); hour(); char(':'); minute() }
+private val hourMinute = LocalDateTime.Format { hour(); char(':'); minute() }
+private val fileTime = LocalDateTime.Format { year(); char('-'); monthNumber(); char('-'); day(); char(' '); hour(); minute() }
+private val UNSAFE = Regex("""[\\/:*?"<>|\p{Cntrl}\s]+""")
+
 class Conversation(val parts: List<Part>) {
     val head: Part get() = parts.first()
     val device: String get() = head.session.device
     val key: String get() = "${head.session.id}@${head.fromMs}"
     val start: Instant get() = head.session.wallAt(head.fromMs)
     val approximate: Boolean get() = parts.any { it.session.timeEstimated }
+
+    fun end(): Instant = parts.last().let { it.session.wallAt(it.toMs) }
+
+    fun notes(): String = head.session.notes["${head.fromMs}"].orEmpty()
 
     fun partial(now: Instant): Boolean = parts.any { it.session.partial(now) }
 
@@ -111,23 +132,23 @@ class Conversation(val parts: List<Part>) {
 
     fun transcript(): String = parts.flatMap { it.lines() }.joinToString(" ") { it.text }
 
-    private fun turns(named: Boolean): List<List<Spoken>> {
-        val out = mutableListOf<MutableList<Spoken>>()
+    private fun turns(named: Boolean): List<Said> {
+        val out = mutableListOf<Said>()
         var last: Pair<Session, Int>? = null
         val labelled = parts.map { it.session }.filter { it.hasSpeakers }.map { it.id }.toSet()
         for (p in parts) for (l in p.lines()) {
             val who = p.session to l.speaker
             if (who != last) {
-                out += mutableListOf<Spoken>()
-                if (l.speaker >= 0 || p.session.id in labelled) out.last() += Spoken(if (named) p.session.speakerName(l.speaker) + ":" else speakerLetter(l.speaker) + ":", p.session.id, l.atMs)
+                val name = if (named) p.session.speakerName(l.speaker) else speakerLetter(l.speaker)
+                out += Said(p, if (l.speaker >= 0 || p.session.id in labelled) name else null)
                 last = who
             }
-            out.last() += if (l.words.isEmpty()) listOf(Spoken(l.text, p.session.id, l.atMs)) else l.words.map { Spoken(it.text, p.session.id, it.startMs) }
+            out.last().lines += l
         }
         return out
     }
 
-    private fun labelled(named: Boolean): String = turns(named).joinToString("\n") { t -> t.joinToString(" ") { it.text } }
+    private fun labelled(named: Boolean): String = turns(named).joinToString("\n") { t -> t.spoken().joinToString(" ") { it.text } }
 
     fun labelledTranscript(): String = labelled(true)
 
@@ -150,21 +171,51 @@ class Conversation(val parts: List<Part>) {
 
     fun photos(): Int = parts.sumOf { p -> p.session.photos.count { p.covers(it.offsetMs) } }
 
-    fun context(): SummaryContext = SummaryContext(placeContext(head.session.place), moments(), photoTexts())
+    fun context(): SummaryContext = SummaryContext(placeContext(head.session.place), moments(), photoTexts(), notes = notes())
 
     fun input(): String {
         val c = context()
         val text = parts.joinToString(";") { "${it.session.id}:${it.fromMs}-${it.toMs}" } + "\n" + labelled(false) + "\n" +
-            c.place + "\n" + c.moments.joinToString("\n") + "\n" + c.photos.joinToString("\n")
+            c.place + "\n" + c.moments.joinToString("\n") + "\n" + c.photos.joinToString("\n") + if (c.notes.isEmpty()) "" else "\n" + c.notes
         var h = -0x340d631b7bdddcdbL
         for (ch in text) h = (h xor ch.code.toLong()) * 0x100000001b3L
         return h.toULong().toString(16)
     }
 
+    fun matches(query: String): Boolean {
+        val q = query.trim()
+        if (q.isEmpty()) return true
+        val r = recap()
+        val names = parts.flatMap { it.session.speakers.values }
+        return (listOf(r.title, r.summary, transcript(), notes()) + r.todos + names).any { it.contains(q, ignoreCase = true) }
+    }
+
+    fun markdown(zone: TimeZone): String {
+        val r = recap()
+        val from = start.toLocalDateTime(zone)
+        val to = end().toLocalDateTime(zone)
+        val out = StringBuilder("# ${r.title.ifEmpty { "Untitled session" }}\n\n")
+        out.append((if (approximate) "~" else "") + from.format(dayTime) + "–" + to.format(if (to.date == from.date) hourMinute else dayTime) + "\n")
+        head.session.place.takeIf { it.isNotEmpty() && it != PENDING }?.let { out.append("\nPlace: $it\n") }
+        notes().takeIf { it.isNotBlank() }?.let { out.append("\n## Notes\n\n${it.trim()}\n") }
+        if (r.summary.isNotEmpty()) out.append("\n## Summary\n\n${r.summary}\n")
+        if (r.todos.isNotEmpty()) out.append("\n## To-dos\n\n" + r.todos.mapIndexed { i, t -> "- [${if ("$i" in r.done) "x" else " "}] $t" }.joinToString("\n") + "\n")
+        val said = turns(true)
+        if (said.isNotEmpty()) out.append("\n## Transcript\n\n" + said.joinToString("\n\n") { t ->
+            val time = timeLabel(offset(t.part, t.atMs))
+            val text = t.lines.joinToString(" ") { it.text.trim() }
+            if (t.speaker == null) "$time $text" else "$time **${t.speaker}:** $text"
+        } + "\n")
+        return out.toString()
+    }
+
+    fun fileName(zone: TimeZone): String =
+        start.toLocalDateTime(zone).format(fileTime) + " " + recap().title.replace(UNSAFE, " ").trim().take(80).ifEmpty { "Untitled session" } + ".md"
+
     fun quote(text: String): Quote {
         val words = mutableListOf<String>()
         val where = mutableListOf<Spoken>()
-        for (s in turns(true).flatten()) for (w in tokens(s.text)) {
+        for (s in turns(true).flatMap { it.spoken() }) for (w in tokens(s.text)) {
             words += w
             where += s
         }

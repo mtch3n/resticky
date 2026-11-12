@@ -154,7 +154,7 @@ private fun App(model: HubViewModel, pair: () -> Unit) {
                 is Detail.Transcript -> {
                     val view = conversations.find { it.device == d.device && it.key == d.key }
                     val prefs by model.player.collectAsState()
-                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, people, { view?.let { model.attendees(it.conversation) }.orEmpty() }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }, { from, to, here -> view?.let { model.correct(it.conversation, from, to, here) } }, model::undoFix) { session, i, done ->
+                    TranscriptScreen(view, back, model::sessionAudio, model::denoiserModel, prefs, model::setPlayer, { s, speaker, name -> model.renameSpeaker(s.device, s.id, speaker, name) }, people, { view?.let { model.attendees(it.conversation) }.orEmpty() }, model::photoFile, model::showOnSticky, d.startAt, { stack[stack.lastIndex] = d.copy(startAt = null) }, { from, to, here -> view?.let { model.correct(it.conversation, from, to, here) } }, model::undoFix, { text -> view?.let { model.setNotes(it.conversation, text) } }, { view?.let { model.regenerate(it.conversation) } }) { session, i, done ->
                         model.setTodo(d.device, session, i, done)
                     }
                 }
