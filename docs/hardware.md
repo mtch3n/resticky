@@ -37,6 +37,7 @@ Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/gre
 | RTC | Yes | Time at boot, set after SNTP |
 | Buzzer | Yes (0.13.0) | Click and mark feedback: Feedback setting Off, Beep or Buzz (low pulses that imitate vibration, 0.14.6) |
 | Wi-Fi, BLE (2M PHY) | Yes | 0.15.0: BLE controller modem sleep (mode 1) with the main crystal as the low-power clock. The board has no 32 kHz crystal on the ESP32-S3 (the 32 kHz crystal of the PCF8563 RTC is not connected to it), and the internal RC oscillator is not accurate enough for a connection. Wi-Fi stops while a phone hub is linked (BLE-only mode, see `protocol.md`). |
+| Flash | Yes | Two 4 MB app slots for OTA. 0.15.6 uses 3.14 MB of a slot; the Chinese font `cjk_18` is 344 KB of it. |
 | **SHT40 temperature and humidity** | **No** | Room climate for Clock/Weather/Health |
 | **microSD** | **No** | Large spool (plan layer 8) |
 | GPIO7 interrupt (IMU, gauge) | Partly | Double tap is polled. Wake on double tap from deep sleep (IMU INT1 latched): 0.15.0 clears the latch before sleep and puts GPIO7 into the ext1 mask only when the line is high. The gauge interrupt is not configured. |

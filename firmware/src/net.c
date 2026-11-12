@@ -563,10 +563,18 @@ static int pick(const cJSON *j, const char *const *names, int count, int fallbac
 
 static int num(const cJSON *o, const char *key) { return cJSON_GetNumberValue(cJSON_GetObjectItem(o, key)); }
 
+static void copy_text(char *dst, const char *src, size_t n)
+{
+    if (strlcpy(dst, src ?: "", n) < n) return;
+    size_t end = n - 1;
+    while (end > 0 && ((unsigned char)src[end] & 0xC0) == 0x80) end--;
+    dst[end] = '\0';
+}
+
 static void parse_weather(const cJSON *j, net_weather_t *w)
 {
     memset(w, 0, sizeof *w);
-    strlcpy(w->place, cJSON_GetStringValue(cJSON_GetObjectItem(j, "place")) ?: "", sizeof w->place);
+    copy_text(w->place, cJSON_GetStringValue(cJSON_GetObjectItem(j, "place")), sizeof w->place);
     const char *mode = cJSON_GetStringValue(cJSON_GetObjectItem(j, "mode")), *units = cJSON_GetStringValue(cJSON_GetObjectItem(j, "units"));
     w->from_phone = mode && !strcmp(mode, "phone");
     w->fahrenheit = units && !strcmp(units, "f");
@@ -603,7 +611,7 @@ static void parse_agenda(const cJSON *j, net_agenda_t *a)
         const cJSON *e = cJSON_GetArrayItem(ev, i);
         a->ev[i].day = num(e, "day");
         strlcpy(a->ev[i].start, cJSON_GetStringValue(cJSON_GetObjectItem(e, "start")) ?: "", sizeof a->ev[i].start);
-        strlcpy(a->ev[i].title, cJSON_GetStringValue(cJSON_GetObjectItem(e, "title")) ?: "", sizeof a->ev[i].title);
+        copy_text(a->ev[i].title, cJSON_GetStringValue(cJSON_GetObjectItem(e, "title")), sizeof a->ev[i].title);
     }
 }
 
@@ -750,10 +758,10 @@ static void apply_transcripts(const cJSON *arr)
         if (next->count >= NET_MAX_ITEMS) break;
         net_item_t *d = &next->items[next->count++];
         cJSON *v;
-        if ((v = cJSON_GetObjectItem(it, "title")) && cJSON_IsString(v)) strlcpy(d->title, v->valuestring, sizeof d->title);
+        if ((v = cJSON_GetObjectItem(it, "title")) && cJSON_IsString(v)) copy_text(d->title, v->valuestring, sizeof d->title);
         if ((v = cJSON_GetObjectItem(it, "when")) && cJSON_IsString(v)) strlcpy(d->when, v->valuestring, sizeof d->when);
-        if ((v = cJSON_GetObjectItem(it, "summary")) && cJSON_IsString(v)) strlcpy(d->summary, v->valuestring, sizeof d->summary);
-        if ((v = cJSON_GetObjectItem(it, "text")) && cJSON_IsString(v)) strlcpy(d->text, v->valuestring, sizeof d->text);
+        if ((v = cJSON_GetObjectItem(it, "summary")) && cJSON_IsString(v)) copy_text(d->summary, v->valuestring, sizeof d->summary);
+        if ((v = cJSON_GetObjectItem(it, "text")) && cJSON_IsString(v)) copy_text(d->text, v->valuestring, sizeof d->text);
         if ((v = cJSON_GetObjectItem(it, "todos")) && cJSON_IsArray(v)) d->todos = cJSON_GetArraySize(v);
         d->marks = cJSON_GetNumberValue(cJSON_GetObjectItem(it, "marks"));
         d->ready = cJSON_IsTrue(cJSON_GetObjectItem(it, "ready"));
@@ -787,8 +795,8 @@ static void add_todos(net_state_t *next, const cJSON *list, bool done)
         net_todo_t *t = &next->todos[next->todo_count++];
         cJSON *v;
         if ((v = cJSON_GetObjectItem(it, "id")) && cJSON_IsString(v)) strlcpy(t->id, v->valuestring, sizeof t->id);
-        if ((v = cJSON_GetObjectItem(it, "text")) && cJSON_IsString(v)) strlcpy(t->text, v->valuestring, sizeof t->text);
-        if ((v = cJSON_GetObjectItem(it, "from")) && cJSON_IsString(v)) strlcpy(t->from, v->valuestring, sizeof t->from);
+        if ((v = cJSON_GetObjectItem(it, "text")) && cJSON_IsString(v)) copy_text(t->text, v->valuestring, sizeof t->text);
+        if ((v = cJSON_GetObjectItem(it, "from")) && cJSON_IsString(v)) copy_text(t->from, v->valuestring, sizeof t->from);
         t->done = done;
     }
 }

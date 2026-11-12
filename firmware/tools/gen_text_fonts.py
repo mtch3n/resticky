@@ -12,7 +12,24 @@ CODEPOINTS = (
     + list(range(0xA0, 0x100))
     + [0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2039, 0x203A, 0x2190, 0x2192, 0x2605, 0x2606]
 )
+CANTONESE = "嘅咗喺冇啲嘢佢哋嗰噉咁乜嚟睇啱搵揾攰嬲㗎喎囉啩咩噃嘞吖呢啫唔諗谂冚甴曱氹孖嚿餸揸撳揿擘掟㩒嘥冧瞓攞咪郁唞嘈啋嗮晒靚靓叻呃咋咧嘛噏嚡㷫煲焗啖嗱喇吓嚇嘩哇噢啦掂惗抌揼冼鍾嘜嗌嚤囖噚琴邊边點点嘟嗎吔啜啪嚫埋噶嘍喐粵粤佬嘢蚊毫仔妹嫲爹啤嚹揦捩㧬"
+
+
+def common_cjk():
+    cps = set(range(0x3000, 0x3040)) | set(range(0xFF01, 0xFF5F)) | {ord(c) for c in CANTONESE}
+    for cp in range(0x4E00, 0xA000):
+        for codec, lo, hi in (("gb2312", 0xB0A1, 0xD7FE), ("big5", 0xA440, 0xC67E)):
+            try:
+                b = chr(cp).encode(codec)
+            except UnicodeEncodeError:
+                continue
+            if lo <= (b[0] << 8 | b[1]) <= hi:
+                cps.add(cp)
+    return sorted(cps)
+
+
 FONTS = [
+    ("cjk_18", "NotoSansCJK-Medium.ttc", 18, common_cjk(), None, 2),
     ("text_16", "Montserrat-SemiBold.ttf", 16),
     ("label_16", "Montserrat-Bold.ttf", 16),
     ("body_18", "Montserrat-Medium.ttf", 18),
@@ -55,9 +72,10 @@ def pack(bits):
     return out
 
 
-def generate(name, ttf, size, codepoints=CODEPOINTS, weight=None):
-    codepoints = sorted(codepoints)
-    face = freetype.Face(str(ttf))
+def generate(name, ttf, size, codepoints=CODEPOINTS, weight=None, index=0):
+    fallback = codepoints is CODEPOINTS
+    face = freetype.Face(str(ttf), index)
+    codepoints = sorted(cp for cp in codepoints if face.get_char_index(cp))
     if weight:
         face.set_var_design_coords((weight,))
     face.set_pixel_sizes(0, size)
@@ -78,8 +96,9 @@ def generate(name, ttf, size, codepoints=CODEPOINTS, weight=None):
     start = codepoints[0]
     offsets = ", ".join(hex(cp - start) for cp in codepoints)
     data = ",".join(f"0x{b:02x}" for b in bitmap) or "0x00"
+    extern = "\nextern const lv_font_t cjk_18;\n" if fallback else ""
     return f"""#include "lvgl.h"
-
+{extern}
 static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {{{data}}};
 
 static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {{
@@ -115,16 +134,17 @@ const lv_font_t {name} = {{
     .underline_position = 0,
     .underline_thickness = 0,
     .dsc = &font_dsc,
-    .fallback = NULL,
+    .fallback = {"&cjk_18" if fallback else "NULL"},
     .user_data = NULL,
 }};
 """
 
 
 def main():
-    ttf_dir, hand_dir, out_dir = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    ttf_dir, hand_dir, cjk_dir, out_dir = (Path(a) for a in sys.argv[1:5])
+    dirs = {"Caveat": hand_dir, "NotoSansCJK": cjk_dir}
     for name, ttf, size, *cps in FONTS:
-        (out_dir / f"{name}.c").write_text(generate(name, (hand_dir if ttf.startswith("Caveat") else ttf_dir) / ttf, size, *cps))
+        (out_dir / f"{name}.c").write_text(generate(name, dirs.get(ttf.split(".")[0].split("-")[0], ttf_dir) / ttf, size, *cps))
         print(name, size, ttf)
 
 
