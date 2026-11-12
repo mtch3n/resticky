@@ -47,7 +47,7 @@
 #define BLE_PAUSE_MS 60000
 #define OTA_MIN_BATTERY 20
 #define HUB_RECHECK_MS (5 * 60 * 1000)
-#define CHECKIN_LEN 768
+#define CHECKIN_LEN 1280
 #define LISTS_MAX (40 * 1024)
 #define WIFI_OFF_AFTER_MS 60000
 #define WIFI_BACK_AFTER_MS 60000
@@ -271,8 +271,7 @@ static int http(const char *method, const char *path, const char *ctype, const c
     if (auth[0]) esp_http_client_set_header(c, "Authorization", auth);
     for (int i = 0; headers && headers[i]; i += 2) esp_http_client_set_header(c, headers[i], headers[i + 1]);
     int status = -1;
-    if (esp_http_client_open(c, len) == ESP_OK) {
-        if (len) esp_http_client_write(c, body, len);
+    if (esp_http_client_open(c, len) == ESP_OK && (!len || esp_http_client_write(c, body, len) == (int)len)) {
         esp_http_client_fetch_headers(c);
         status = esp_http_client_get_status_code(c);
         int got = resp ? esp_http_client_read_response(c, resp, resp_cap - 1) : 0;
@@ -435,20 +434,23 @@ void net_set_boot(const char *text) { strlcpy(boot_text, text, sizeof boot_text)
 
 static const char *health_json(void)
 {
-    static char out[512];
+    static char out[768];
     audio_load_t a;
     audio_get_load(&a);
+    spool_stats_t sp;
+    spool_stats(&sp);
     TaskHandle_t nimble = xTaskGetHandle("nimble_host"), net = xTaskGetHandle("net"), mainh = xTaskGetHandle("main");
     snprintf(out, sizeof out,
              "{\"uptime_s\":%lld,\"heap_free\":%u,\"heap_min\":%u,\"heap_largest\":%u,\"psram_free\":%u,\"psram_min\":%u,"
              "\"stack_main\":%u,\"stack_net\":%u,\"stack_ble\":%u,\"cpu_filter_pm\":%d,\"cpu_opus_pm\":%d,\"cpu_vad_pm\":%d,"
-             "\"opus_max_us\":%d,\"overflows\":%lu,\"audio_keep_pm\":%d,\"early_chunks\":%lu,\"lost_chunks\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
+             "\"opus_max_us\":%d,\"overflows\":%lu,\"audio_keep_pm\":%d,\"early_chunks\":%lu,\"lost_chunks\":%lu,\"spool\":\"%s\",\"spool_write_errors\":%lu,\"spool_corrupt\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
              esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
              mainh ? (unsigned)uxTaskGetStackHighWaterMark(mainh) : 0, net ? (unsigned)uxTaskGetStackHighWaterMark(net) : 0,
              nimble ? (unsigned)uxTaskGetStackHighWaterMark(nimble) : 0, a.filter_pm, a.opus_pm, a.vad_pm, a.opus_max_us,
-             (unsigned long)a.overflows, a.keep_pm, (unsigned long)a.early_chunks, (unsigned long)a.lost_chunks, sensors_chip_celsius(),
+             (unsigned long)a.overflows, a.keep_pm, (unsigned long)a.early_chunks, (unsigned long)a.lost_chunks, sp.state,
+             (unsigned long)sp.write_errors, (unsigned long)sp.corrupt, sensors_chip_celsius(),
              boot_text, climate_part());
     return out;
 }
@@ -855,16 +857,23 @@ static void send_screen(void)
     if (st != 200) ESP_LOGW(TAG, "screen upload: %d", st);
 }
 
-static void spool_fresh(void)
+static bool spool_fresh(void)
 {
     xSemaphoreTake(fresh_lock, portMAX_DELAY);
     audio_chunk_t *c;
-    while (xQueueReceive(chunks, &c, 0) == pdTRUE) {
-        if (spool_put(c)) ota_note_audio();
+    bool stored = true;
+    while (xQueuePeek(chunks, &c, 0) == pdTRUE) {
+        if (!spool_put(c)) {
+            stored = false;
+            break;
+        }
+        xQueueReceive(chunks, &c, 0);
+        ota_note_audio();
         free(c->data);
         free(c);
     }
     xSemaphoreGive(fresh_lock);
+    return stored;
 }
 
 static void park_if_wanted(void)
@@ -1312,7 +1321,7 @@ static void net_task(void *arg)
             continue;
         }
         ota_tick();
-        spool_fresh();
+        bool stored = spool_fresh();
         apply_lists();
         wifi_policy();
         bool ble = ble_ready() && esp_log_timestamp() >= ble_pause_until;
@@ -1331,7 +1340,8 @@ static void net_task(void *arg)
             }
         }
         audio_chunk_t *fresh;
-        if (!busy) xQueuePeek(chunks, &fresh, pdMS_TO_TICKS(1000));
+        if (!stored) vTaskDelay(pdMS_TO_TICKS(1000));
+        else if (!busy) xQueuePeek(chunks, &fresh, pdMS_TO_TICKS(1000));
     }
 }
 
@@ -1347,7 +1357,12 @@ void net_init(void)
     parked = xSemaphoreCreateBinary();
     chunks = xQueueCreate(8, sizeof(audio_chunk_t *));
     ota_items = xQueueCreateStatic(OTA_SLOTS, sizeof(ota_item_t), ota_item_store, &ota_item_queue);
-    spool_init();
+    if (!spool_init()) {
+        spool_stats_t sp;
+        spool_stats(&sp);
+        strlcat(boot_text, " spool=", sizeof boot_text);
+        strlcat(boot_text, sp.state, sizeof boot_text);
+    }
     todo_changes = xQueueCreate(8, sizeof(todo_change_t));
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);

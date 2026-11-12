@@ -45,7 +45,7 @@ with a bad ID gets `400`.
 |---|---|---|
 | `GET /api/hello` | Optional `nonce` (see "Hub password"). No `Authorization` header necessary. | `200`, `{"service":"resticky-hub","version":"<v>"}`, and `"proof":"<hex>"` when the hub has a password and the request has a `nonce`. |
 | `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound`, `home` and `night` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>","night":"off"|"HH:MM-HH:MM"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
-| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` after the chunk is on disk. `400` if a header is missing or bad. A chunk that has the same device, session and sequence as a stored chunk replaces the file but does not add its duration again. |
+| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` only when the hub holds this exact chunk on disk (see "Chunk acknowledgement"). `400` if a header is missing or bad. `500` if the hub cannot store the chunk; the device keeps the chunk and sends it again. |
 | `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
 | `GET /api/todos?device=<id>` | — | `200`, `{"open":[todo],"done":[todo]}`. `done` has only the to-dos done since 00:00 local time today. |
 | `PUT /api/todos/{device}/{session}/{index}` | JSON `{"done":true\|false,"at":"<RFC 3339 time>"}` | `200`, `{"done":…,"at":…}` with the state that the hub keeps. `404` if the to-do does not exist. `400` if the body is bad. See "To-do changes". |
@@ -274,6 +274,9 @@ hub keeps the history and the device stores none:
 | `audio_keep_pm` | per mille | Optional, firmware 0.15.0 and later. Part of the frames in the last 60 s that the speech gate encoded. |
 | `early_chunks` | count | Optional, firmware 0.15.0 and later. Chunks closed early in the last 60 s because the audio buffer was full. |
 | `lost_chunks` | count | Optional, firmware 0.15.0 and later. Chunks lost since start (no memory for a chunk, or the upload queue was full). Must be 0. |
+| `spool` | text | Optional. State of the flash outbox at start: `ok`, `formatted` (the partition was blank and the device formatted it), `mount failed` or `format failed` (see "Device outbox"). |
+| `spool_write_errors` | count | Optional. Failed writes of a chunk to the flash outbox since start. Each try counts. Must be 0. |
+| `spool_corrupt` | count | Optional. Chunk files that the device moved aside because they are corrupt (see "Device outbox"). Must be 0. |
 | `temp_c` | °C | Chip temperature. The hub keeps 0.1 °C. |
 
 The hub stores only the 15 fields above `audio_keep_pm` in `health.bin`. To keep the three new fields, the hub
@@ -438,6 +441,45 @@ A mark is a moment that the user marked on the Sticky with a double press while 
   "No speech" and no summary.
 - Audio files (`.opus`, `.ogg`, `.wav`) are deleted 7 days after they were written. Text stays.
 
+## Device outbox
+
+The device keeps each chunk in the flash outbox (LittleFS on the `spool` partition) until a hub acknowledges
+it (see "Chunk acknowledgement").
+
+- A new chunk goes from the upload queue in RAM (8 chunks) to the outbox. If the write fails, the chunk stays
+  in the queue and the device tries again after 1 s (`spool_write_errors` counts each failed try). The device
+  drops a new chunk only when the queue is full (`lost_chunks`).
+- When the outbox has less than 256 KB free, the device first deletes the files that it moved aside, then
+  the oldest chunks (`dropped_chunks`).
+- The device deletes a chunk only after HTTP `200` for that chunk or an `ack` with the same session and seq.
+- When the device cannot read a chunk because it has no memory, or the file system gives an error, it keeps
+  the chunk and tries again later. When the file is corrupt (wrong magic, or the length in the header is
+  more than the file), the device renames it to `<id>.bad`, counts it in `spool_corrupt`, and sends the next
+  chunk. A `.bad` file stays until the outbox is full.
+- Mount rule: when the partition does not mount, the device tries 3 times. Then it formats the partition only
+  if its first two 4 KB blocks (the LittleFS superblocks) are blank (all `0xFF`, a new device). Otherwise it
+  does not format, runs with no outbox (chunks stay in RAM and new chunks are lost when the queue is full),
+  and reports `spool=mount failed` in `boot` and `spool` in "Health". To erase such a partition, flash the
+  device with an erase.
+
+## Chunk acknowledgement
+
+The hub acknowledges a chunk (HTTP `200`, BLE `ack`) only when it holds this exact chunk durably. Then the
+device deletes its copy. "Durably" means: the hub wrote the file to a temporary name, flushed it to the disk
+(`fsync`), renamed it, and flushed the folders. The hub compares the chunk with the stored data for the same
+device, session and seq:
+
+| Stored | Hub action | Answer |
+|---|---|---|
+| No chunk with this seq | Writes `<seq>.opus` durably, adds the duration, writes `meta.json` durably. | ack |
+| `<seq>.opus` with the same bytes | Nothing. | ack |
+| The seq is in `meta.json`, but `<seq>.opus` is missing | Writes `<seq>.opus` durably. The duration and the text do not change. Log: `WARN chunk restored`. | ack |
+| `<seq>.opus` with different bytes (conflict) | Keeps `<seq>.opus`. Writes the new bytes durably to `<seq>.conflict-<hash>.opus` (`<hash>` = the first 8 bytes of the SHA-256 of the new bytes, in lowercase hex), if that file does not have these bytes already. Log: `WARN chunk conflict ... quarantine=<name>`. The duration and the text do not change. | ack |
+| Any write fails | Nothing more. | no ack (HTTP `500`) |
+
+The hub never replaces a stored chunk. A conflict copy is not transcribed; it stays for a person to examine. The
+audio retention deletes it with the other audio of the session.
+
 ## Data folder
 
 Default: `~/.local/share/resticky/data`.
@@ -449,6 +491,7 @@ Default: `~/.local/share/resticky/data`.
   <session>/
     meta.json                 the session
     <seq>.opus                the chunk as received
+    <seq>.conflict-<hash>.opus  a different chunk with the same seq (see "Chunk acknowledgement")
     <seq>.ogg                 the chunk in an Ogg container (made for the transcription)
     photos/<unix ms>.jpg      photos (phone only)
     listen.opus               optional enhanced listening copy (phone only)
@@ -589,8 +632,8 @@ The device ignores types that it does not know.
   After a missing `ack` the device does not send chunks on BLE for 60 s; in that time it uses Wi-Fi if a
   Wi-Fi hub is reachable. Then it tries BLE again. The device ignores an `ack` for a chunk that it does not
   wait for.
-- The hub sends `ack` only after the chunk is on disk. A chunk that the hub already has (same device,
-  session and seq) replaces the file, the same as on HTTP.
+- The hub sends `ack` only when it holds this exact chunk on disk, with the same rules as HTTP `200` (see
+  "Chunk acknowledgement"). If the hub cannot store the chunk, it sends no `ack`.
 - The device sends `checkin` when the link becomes ready and then every 30 s.
 - The hub sends `time`, `weather`, `agenda` and `display` when the link becomes ready, and then each one
   again only when its JSON changed (a new forecast, a settings change, a calendar change, a new offset, a

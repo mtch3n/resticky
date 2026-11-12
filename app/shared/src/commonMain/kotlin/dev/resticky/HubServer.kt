@@ -187,7 +187,8 @@ class Hub(
         val now = Clock.System.now()
         val age = chunkAge(devicesLock.withLock { devices[device] }, startMs, now)
         val added = store.addChunk(device, session, seq, final, durationMs, data, startMs, age?.takeIf { startMs > 0 }?.let { now - it })
-        if (added == Added.CONFLICT) log("WARN chunk conflict link=$link device=$device session=$session seq=$seq bytes=${data.size} kept=first")
+        if (added == Added.CONFLICT) log("WARN chunk conflict link=$link device=$device session=$session seq=$seq bytes=${data.size} kept=first quarantine=${conflictName(seq, data)}")
+        else if (added == Added.RESTORED) log("WARN chunk restored link=$link device=$device session=$session seq=$seq bytes=${data.size} reason=file_missing")
         else log("INFO chunk link=$link device=$device session=$session seq=$seq bytes=${data.size} duration_ms=$durationMs final=$final added=${added.name.lowercase()}")
         if (added == Added.SESSION) {
             if (age == null || age <= PLACE_MAX_AGE) newSession(device, session) else log("INFO session from backlog session=$session age=$age")

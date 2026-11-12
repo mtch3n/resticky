@@ -7,6 +7,9 @@ typedef struct {
     uint32_t chunks;
     uint32_t bytes;
     uint32_t dropped;
+    uint32_t write_errors;
+    uint32_t corrupt;
+    const char *state;
 } spool_stats_t;
 
 bool spool_init(void);

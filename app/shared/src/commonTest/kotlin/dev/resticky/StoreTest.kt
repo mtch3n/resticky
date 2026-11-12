@@ -39,7 +39,36 @@ class StoreTest {
         assertEquals("text", m.chunks["0"])
         assertTrue(m.ready && !m.final)
         assertEquals(30_000, m.durationMs)
-        assertEquals(setOf("0.opus", "meta.json"), files(store, "01"))
+        assertEquals(setOf("0.opus", "meta.json", conflictName(0, byteArrayOf(9, 9, 9))), files(store, "01"))
+    }
+
+    @Test
+    fun conflictingChunkIsKeptAsACopy() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(1, 2))
+        assertEquals(Added.CONFLICT, store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(9, 9, 9)))
+        assertEquals(Added.CONFLICT, store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(9, 9, 9)))
+        assertEquals(Added.CONFLICT, store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(7)))
+        val dir = store.dir("ab", "01")
+        assertContentEquals(byteArrayOf(1, 2), store.read(Path(dir, "0.opus")))
+        assertContentEquals(byteArrayOf(9, 9, 9), store.read(Path(dir, conflictName(0, byteArrayOf(9, 9, 9)))))
+        assertContentEquals(byteArrayOf(7), store.read(Path(dir, conflictName(0, byteArrayOf(7)))))
+        assertEquals(4, files(store, "01").size)
+        assertEquals(30_000, store.list("ab").single().durationMs)
+    }
+
+    @Test
+    fun repeatedChunkWithTheFileMissingIsStoredAgain() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(1, 2))
+        store.update("ab", "01") { it.chunks["0"] = "text" }
+        SystemFileSystem.delete(Path(store.dir("ab", "01"), "0.opus"))
+        assertEquals(Added.RESTORED, store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(1, 2)))
+        assertContentEquals(byteArrayOf(1, 2), store.read(Path(store.dir("ab", "01"), "0.opus")))
+        val m = store.list("ab").single()
+        assertEquals("text", m.chunks["0"])
+        assertEquals(30_000, m.durationMs)
+        assertEquals(Added.REPEAT, store.addChunk("ab", "01", 0, false, 30_000, byteArrayOf(1, 2)))
     }
 
     @Test

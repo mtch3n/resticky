@@ -233,6 +233,18 @@ class HubContractTest {
         assertEquals(200, chunk(s, 0, frames = 70).status)
         assertEquals(1000, meta(s).getValue("chunk_ms").jsonObject.getValue("0").jsonPrimitive.int)
         assertEquals(2000, meta(s).getValue("duration_ms").jsonPrimitive.int)
+        val hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(opusFrames(70)).copyOf(8))
+        assertTrue(data.exists("$device/$s/0.conflict-$hash.opus"))
+    }
+
+    @Test
+    fun repeatedChunkWithTheFileMissingIsStoredAgain() {
+        val s = "c0ffee02"
+        assertEquals(200, chunk(s, 0).status)
+        data.delete("$device/$s/0.opus")
+        assertEquals(200, chunk(s, 0).status)
+        assertTrue(data.exists("$device/$s/0.opus"))
+        assertEquals(1000, meta(s).getValue("duration_ms").jsonPrimitive.int)
     }
 
     @Test
