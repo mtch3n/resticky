@@ -106,6 +106,7 @@ class Session(
     @SerialName("time_estimated") var timeEstimated: Boolean = false,
     @SerialName("chunk_retry") val chunkRetry: MutableMap<String, Retry> = mutableMapOf(),
     @SerialName("summary_retry") val summaryRetry: MutableMap<String, Retry> = mutableMapOf(),
+    val notes: MutableMap<String, String> = mutableMapOf(),
 ) {
     val pending: Boolean get() = chunks.values.any { it == PENDING }
 
@@ -197,6 +198,15 @@ class Session(
         todoChanges.putAll(r.todoChanges)
         ready = r.ready
         input = r.input
+    }
+
+    fun setNotes(fromMs: Long, text: String) {
+        if (text.isBlank()) notes.remove("$fromMs") else notes["$fromMs"] = text
+    }
+
+    fun regenerate(fromMs: Long) {
+        putRecap(fromMs, recap(fromMs).copy(ready = false))
+        summaryRetry.remove("$fromMs")
     }
 
     fun recaps(): List<Pair<Long, Recap>> = listOf(0L to recap(0)) + splits.keys.map { it.toLong() to splits.getValue(it) }

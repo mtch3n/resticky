@@ -42,7 +42,9 @@ import dev.resticky.HUB_VERSION
 import dev.resticky.WEATHER_INTERVAL
 import dev.resticky.WEATHER_INTERVALS
 import dev.resticky.FirmwareShelf
+import dev.resticky.Exporter
 import dev.resticky.Hub
+import dev.resticky.conversations
 import dev.resticky.Pipeline
 import dev.resticky.SUMMARY_SCHEMA
 import dev.resticky.WEATHER_SKETCH
@@ -65,6 +67,7 @@ import io.ktor.server.engine.embeddedServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import java.io.File
@@ -367,6 +370,18 @@ fun main(args: Array<String>) {
     }
     scope.launch { pipeline.run() }
     scope.launch { weather.run() }
+    val export = flags.string("export", "").ifBlank { null }
+    if (export != null) {
+        val exporter = Exporter(IoPath(export))
+        scope.launch(Dispatchers.IO) {
+            store.changes.collectLatest {
+                delay(1.seconds)
+                runCatching { exporter.export(conversations(store.all())) }
+                    .onSuccess { n -> if (n > 0) log("INFO exported files=$n dir=$export") }
+                    .onFailure { log("WARN export failed dir=$export error=${it.message}") }
+            }
+        }
+    }
 
     scope.launch {
         while (true) {
@@ -374,7 +389,7 @@ fun main(args: Array<String>) {
             store.deleteOldAudio(Clock.System.now() - AUDIO_KEEP)
         }
     }
-    log("INFO resticky hub listening port=$port data=$data model=$model vad=$vad segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen night=$night weather_interval=$weatherInterval")
+    log("INFO resticky hub listening port=$port data=$data model=$model vad=$vad segmentation=$segmentation embedding=$embedding mdns=${announcer != null} city=${city ?: "none"} clock_face=$clockFace weather_style=$weatherStyle hour_format=$hourFormat sound=$sound home=$homeScreen night=$night weather_interval=$weatherInterval export=${export ?: "none"}")
     embeddedServer(CIO, port = port) {
         hub.module(this)
     }.start(wait = true)

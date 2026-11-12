@@ -323,6 +323,15 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
         app.pipeline.kick()
     }
 
+    fun setNotes(c: Conversation, text: String) = viewModelScope.launch {
+        app.store.update(c.head.session.device, c.head.session.id) { it.setNotes(c.head.fromMs, text) }
+    }
+
+    fun regenerate(c: Conversation) = viewModelScope.launch {
+        app.store.update(c.head.session.device, c.head.session.id) { it.regenerate(c.head.fromMs) }
+        app.pipeline.kick()
+    }
+
     fun setHub(on: Boolean) {
         app.hubOn = on
     }

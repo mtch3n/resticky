@@ -531,6 +531,24 @@ from the device backlog does not close at its first chunk.
 - When the model output stops inside `speakers` or `corrections` (the output token limit), the hub keeps the
   title, the summary and the to-dos, and uses no speaker names and no corrections from that output.
 - Audio files (`.opus`, `.ogg`, `.wav`) are deleted 7 days after they were written. Text stays.
+- Notes (phone only): the user can write notes for a conversation in the transcript screen. The hub stores
+  them in `meta.json` `notes` of the first session of the conversation. The summary prompt gets the notes as
+  a section with high priority ("The user wrote these notes during the meeting; give them weight"). The notes
+  are part of the conversation input. Thus a change of the notes makes the summary again.
+- "Regenerate summary" (phone only) sets `ready` of the conversation recap to false, removes its
+  `summary_retry` entry and starts the pipeline. The pipeline then makes the summary again.
+
+## Markdown export
+
+A conversation as Markdown has: the title, the date and the time range, the place, the notes, the summary,
+the to-dos (a checkbox list; `[x]` is done) and the transcript (one paragraph for each speaker turn: the time
+from the conversation start, the speaker name and the text).
+
+- Phone: "Copy" puts the Markdown on the clipboard. "Share" sends it as plain text to the Android share sheet.
+- Laptop hub: with `-export <dir>`, the hub writes `<dir>/<yyyy-MM-dd HHmm> <title>.md` (local time of the
+  conversation start) for each conversation that has a summary. When the summary changes, the hub writes the
+  file again. When the title changes, the hub deletes the old file. There is one file for each conversation.
+  The hub does not export "No speech". Log: `INFO exported files=<n>`.
 
 ## Device outbox
 
@@ -629,6 +647,7 @@ Default: `~/.local/share/resticky/data`.
 | `photos` | array | See "Photos". Left out when empty. |
 | `chunk_retry` | object | sequence number (string) → `{"attempts","error","next","failed"}`: failed transcription tries, the last error, the RFC 3339 time of the next try, and `failed` (left out when false) after the last try (see "Session rules"). Left out when empty. |
 | `summary_retry` | object | conversation start offset in ms (string) → `{"attempts","error","next","failed","input"}`: failed summary tries for the conversation that starts at that offset, and the conversation input of the tries (see "Session rules"). Left out when empty. |
+| `notes` | object | conversation start offset in ms (string) → the notes of the user for the conversation that starts at that offset (see "Session rules"). Left out when empty. |
 | `vad` | object | sequence number (string) → `{"speech","keep","keep_prev"}` from the `X-Vad-*` headers (see "Voice activity"). Left out when empty. Needs the hub change. |
 
 ## Bluetooth LE

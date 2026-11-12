@@ -233,6 +233,29 @@ class PipelineTest {
     }
 
     @Test
+    fun notesAndRegenerateRunTheSummaryAgain() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
+        val notes = mutableListOf<String>()
+        val pipeline = Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, c -> notes += c.notes; Summary("T${notes.size}", "S") }, NO_SPEAKERS) {}
+        pipeline.drain()
+        pipeline.drain()
+        assertEquals(listOf(""), notes)
+        store.update("ab", "01") { it.setNotes(0, "Budget is the main point") }
+        pipeline.drain()
+        assertEquals(listOf("", "Budget is the main point"), notes)
+        store.update("ab", "01") {
+            it.summaryRetry["0"] = Retry(1, "cut off", Clock.System.now() + 1.minutes)
+            it.regenerate(0)
+        }
+        pipeline.drain()
+        val m = store.list("ab").single()
+        assertEquals(3, notes.size)
+        assertEquals("T3", m.title)
+        assertTrue(m.ready && m.summaryRetry.isEmpty())
+    }
+
+    @Test
     fun givenUpChunkRunsAgainWithANewEngine() = runTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))

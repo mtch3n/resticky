@@ -59,6 +59,7 @@ data class SummaryContext(
     val photos: List<String> = emptyList(),
     val attendees: List<String> = emptyList(),
     val candidates: List<String> = emptyList(),
+    val notes: String = "",
 )
 
 fun summaryPrompt(c: SummaryContext): String = "This is a transcript of a conversation recorded by a desk device. It can mix English, Mandarin and Cantonese. " +
@@ -77,6 +78,7 @@ fun summaryPrompt(c: SummaryContext): String = "This is a transcript of a conver
     (if (c.candidates.isEmpty()) "Return an empty corrections array."
     else "Only add a correction when speech recognition wrote one of these names or terms wrongly and from sounds like it: ${c.candidates.joinToString(", ")}. Else return an empty array.") +
     (if (c.place.isEmpty()) "" else " The recording was made at the place that the user calls \"${c.place}\"; use it only as context.") +
+    (if (c.notes.isBlank()) "" else "\n\nThe user wrote these notes during the meeting; give them weight in the title, the summary and the todos:\n" + c.notes.trim()) +
     (if (c.moments.isEmpty()) "" else "\n\nThe user marked important moments on the device. Give them weight in the title, the summary and the todos. " +
         "Each line is the time of the mark and the text of the 2 minutes before it:\n" + c.moments.joinToString("\n") { "- $it" }) +
     (if (c.photos.isEmpty()) "" else "\n\nThe user took photos during the conversation. Each line is the photo time and the text in the photo:\n" +
