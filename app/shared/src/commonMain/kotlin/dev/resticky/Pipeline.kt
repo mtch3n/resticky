@@ -280,6 +280,7 @@ class Pipeline(
     private val calendarTerms: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
     private val attendees: suspend (Instant, Instant) -> List<String> = { _, _ -> emptyList() },
     private val people: People? = null,
+    private val summarizeNow: () -> Boolean = { true },
     private val log: (String) -> Unit,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -329,6 +330,7 @@ class Pipeline(
             diarize(m)
             return true
         }
+        if (!summarizeNow()) return false
         val list = conversations(all)
         for (c in list) {
             val sessions = c.parts.map { it.session }.distinct()

@@ -2,6 +2,7 @@ package dev.resticky.app
 
 import android.app.Application
 import android.content.Intent
+import android.os.BatteryManager
 import android.util.Log
 import dev.resticky.CLOCK_DIAL
 import dev.resticky.CLOCK_FACES
@@ -152,7 +153,8 @@ class HubApp : Application() {
         vocabulary = Vocabulary(Path(File(filesDir, "vocabulary.json").path))
         pipeline = Pipeline(
             store, engines.transcriber, engines.summarizer, engines.diarizer, speechId = engines::speechId, people = people,
-            vocabulary = vocabulary, calendarTerms = { from, to -> calendars.titles(from, to) }, attendees = { from, to -> calendars.attendees(from, to) }, log = ::log,
+            vocabulary = vocabulary, calendarTerms = { from, to -> calendars.titles(from, to) }, attendees = { from, to -> calendars.attendees(from, to) },
+            summarizeNow = { getSystemService(BatteryManager::class.java).isCharging }, log = ::log,
         )
         locator = Locator(this)
         places = PlaceStore(this)
