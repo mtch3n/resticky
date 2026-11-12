@@ -100,7 +100,7 @@ private fun caseChunks(case: File): List<ByteArray> {
     }
     val audio = case.listFiles().orEmpty().firstOrNull { it.isFile && it.nameWithoutExtension == "audio" }
         ?: error("$case has no <seq>.opus chunks and no audio.* file")
-    return frameWindows(encodeAudio(audio), CHUNK_MS).map { it.second }
+    return frameWindows(sequenceOf(encodeAudio(audio)), CHUNK_MS).map { it.second }.toList()
 }
 
 private fun copied(from: String, to: File): IoPath {
@@ -183,8 +183,7 @@ private fun agyPrompt(minutes: Long, draft: List<RefSegment>) =
         draft.joinToString("\n") { "${it.startMs} ${it.endMs} ${it.speaker} | ${it.text}" }
 
 private fun agyDraft(case: File, draft: List<RefSegment>): List<RefSegment> {
-    val frames = caseChunks(case).fold(ByteArray(0)) { a, b -> a + b }
-    return frameWindows(frames, AGY_BLOCK_MS).flatMap { (offset, block) ->
+    return frameWindows(caseChunks(case).asSequence(), AGY_BLOCK_MS).toList().flatMap { (offset, block) ->
         val dir = Files.createTempDirectory("resticky-agy").toFile()
         try {
             File(dir, "block.ogg").writeBytes(opusFramesToOgg(block))
