@@ -97,24 +97,42 @@ private val VIRTUAL = listOf("docker", "br-", "veth", "virbr", "lo")
 
 fun log(message: String) = println("${Instant.now()} $message")
 
-private class Flags(args: Array<String>) {
+internal class Flags(args: List<String>, switches: Set<String> = SWITCHES) {
     private val values = mutableMapOf<String, String>()
+    val positional = mutableListOf<String>()
 
     init {
         var i = 0
         while (i < args.size) {
             val name = args[i].trimStart('-')
-            if ('=' in name) values[name.substringBefore('=')] = name.substringAfter('=')
-            else if (name in SWITCHES) values[name] = "true"
+            if (!args[i].startsWith("-")) positional += args[i]
+            else if ('=' in name) values[name.substringBefore('=')] = name.substringAfter('=')
+            else if (name in switches) values[name] = "true"
             else values[name] = args.getOrElse(++i) { "" }
             i++
         }
     }
 
     fun string(name: String, default: String) = values[name] ?: default
+
+    fun on(name: String) = values[name] == "true"
 }
 
-private fun run(dir: File?, vararg command: String, input: String? = null, merge: Boolean = true): String {
+internal class Engines(flags: Flags) {
+    private val models = "${System.getProperty("user.home")}/.local/share/resticky/models"
+    val model = flags.string("model", "$models/ggml-small.en-q8_0.bin")
+    val vad = flags.string("vad", "$models/$VAD_MODEL")
+    val segmentation = flags.string("segmentation", "$models/$SEGMENTATION_MODEL")
+    val embedding = flags.string("embedding", "$models/$EMBEDDING_MODEL")
+
+    fun transcriber() = whisper(model, SpeechDetector(vad))
+
+    fun diarizer() = speakers(segmentation, embedding)
+
+    fun speechId() = "${File(model).name}/$PIPELINE_VERSION"
+}
+
+internal fun run(dir: File?, vararg command: String, input: String? = null, merge: Boolean = true): String {
     val pb = ProcessBuilder(*command).directory(dir)
     if (merge) pb.redirectErrorStream(true) else pb.redirectError(ProcessBuilder.Redirect.DISCARD)
     val p = pb.start()
@@ -126,7 +144,7 @@ private fun run(dir: File?, vararg command: String, input: String? = null, merge
     return out
 }
 
-private class SpeechDetector(private val model: String) {
+internal class SpeechDetector(private val model: String) {
     private val vad by lazy {
         check(File(model).isFile) { "speech detector missing: $model" }
         Vad(
@@ -179,7 +197,7 @@ private fun previousTail(opus: File): FloatArray {
     return samples.copyOfRange(maxOf(0, samples.size - (CONTEXT_MS * RATE / 1000).toInt()), samples.size)
 }
 
-private fun whisper(model: String, detector: SpeechDetector) = Transcriber { opus, prompt ->
+internal fun whisper(model: String, detector: SpeechDetector) = Transcriber { opus, prompt ->
     runInterruptible(Dispatchers.IO) {
         val file = File(opus.toString())
         val frames = file.readBytes()
@@ -217,7 +235,7 @@ private fun pcm(frames: ByteArray): FloatArray {
     }
 }
 
-private fun speakers(segmentation: String, embedding: String) = Diarizer { frames ->
+internal fun speakers(segmentation: String, embedding: String) = Diarizer { frames ->
     runInterruptible(Dispatchers.IO) {
         check(File(segmentation).isFile && File(embedding).isFile) { "speaker models missing: $segmentation $embedding" }
         val samples = pcm(frames)
@@ -311,7 +329,7 @@ private class Announcer(private val port: Int) {
 private fun hubToken(flags: Flags): String? {
     val file = flags.string("token-file", "")
     val token = (if (file.isEmpty()) flags.string("token", "") else File(file).readText()).trim().lowercase().ifEmpty { null }
-    val insecure = flags.string("insecure", "false") == "true"
+    val insecure = flags.on("insecure")
     require(token != null || insecure) { "need -token <hex> or -token-file <path> (the hub password from the phone); -insecure runs with no password, only for local tests" }
     require(token == null || TOKEN_PATTERN.matches(token)) { "the hub password must be 64 hex characters (the hub password from the phone)" }
     if (token == null) log("WARN no hub password (-insecure): every device on the network can use this hub")
@@ -319,18 +337,20 @@ private fun hubToken(flags: Flags): String? {
 }
 
 fun main(args: Array<String>) {
+    if (args.firstOrNull() == "eval") return evalMain(args.drop(1))
     val home = System.getProperty("user.home")
-    val flags = Flags(args)
+    val flags = Flags(args.toList())
     val token = hubToken(flags)
     val port = flags.string("port", "8787").toInt()
     val data = flags.string("data", "$home/.local/share/resticky/data")
-    val model = flags.string("model", "$home/.local/share/resticky/models/ggml-small.en-q8_0.bin")
+    val engines = Engines(flags)
+    val model = engines.model
     val store = Store(IoPath(data))
-    val segmentation = flags.string("segmentation", "$home/.local/share/resticky/models/$SEGMENTATION_MODEL")
-    val embedding = flags.string("embedding", "$home/.local/share/resticky/models/$EMBEDDING_MODEL")
-    val vad = flags.string("vad", "$home/.local/share/resticky/models/$VAD_MODEL")
+    val segmentation = engines.segmentation
+    val embedding = engines.embedding
+    val vad = engines.vad
     val people = People(IoPath(File(data).resolveSibling("people.json").path))
-    val pipeline = Pipeline(store, whisper(model, SpeechDetector(vad)), codex, speakers(segmentation, embedding), speechId = { "${File(model).name}/$PIPELINE_VERSION" }, people = people, vocabulary = Vocabulary(IoPath(File(File(data).absoluteFile.parentFile, "vocabulary.json").path)), log = ::log)
+    val pipeline = Pipeline(store, engines.transcriber(), codex, engines.diarizer(), speechId = engines::speechId, people = people, vocabulary = Vocabulary(IoPath(File(File(data).absoluteFile.parentFile, "vocabulary.json").path)), log = ::log)
     val city = flags.string("city", "").ifBlank { null }
     val weatherInterval = flags.string("weather-interval", "$WEATHER_INTERVAL").toInt()
     require(weatherInterval in WEATHER_INTERVALS) { "-weather-interval must be one of ${WEATHER_INTERVALS.joinToString("|")}" }

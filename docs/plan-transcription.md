@@ -169,6 +169,93 @@ The script does not calculate `der` and `cpwer` for a file that has a speaker `S
 4. Read the time for each 30 s chunk in the phone log (`run job=speech … seconds=`). The `speech` log line
    shows the windows and the engine for each window (`routes=whisper:en,sensevoice:yue`).
 
+## Accuracy harness for the laptop hub (`resticky-hub eval`)
+
+The laptop hub binary has an `eval` command. It runs the same pipeline as the hub (speech detector, Whisper,
+speaker run, speaker assignment, vocabulary and people matching). Then it compares the result with a reference
+that a person corrected. Use it to measure a change to transcription, speakers or names. The summary step does
+not run: the command does not call the summary model.
+
+### Test cases
+
+Keep the test cases outside the repo. The default folder is `~/.local/share/resticky/eval/<case>/`. Each case
+folder has:
+
+- The audio. Use one of these:
+  - Hub chunk files `<seq>.opus`, as the hub stores them (copy them from a session folder). The command uses
+    the chunks from the lowest to the highest sequence number. A missing chunk becomes 30 s of silence, the
+    same as on the hub. This gives the hub exactly the audio that it got from the Sticky.
+  - One file `audio.<ext>` (for example `audio.ogg`), any format that `ffmpeg` can read. The command encodes it
+    like the Sticky (Opus, 16 kHz, mono, 16 kbps, 20 ms packets) and cuts it into 30 s chunks.
+- `reference.json`, the correct transcript:
+
+  ```json
+  {"segments": [
+    {"start_ms": 0, "end_ms": 4200, "speaker": "You", "text": "Can you send the slides today?"},
+    {"start_ms": 4300, "end_ms": 6100, "speaker": "Speaker B", "text": "我哋聽日 send the slides 啦"}
+  ]}
+  ```
+
+  - `start_ms` and `end_ms` are milliseconds from the start of the first chunk (or of `audio.<ext>`).
+  - `speaker` is a label. Use the same label for the same person in the full case. Write `You` for the owner of
+    the Sticky. Other labels can be names or `Speaker B`; only `You` has a special meaning.
+  - `text` is what the person says. Write English words in Latin letters. Write Mandarin and Cantonese in Chinese
+    characters, with colloquial Cantonese characters (嘅, 喺, 咗). Do not translate. Write numbers and fillers as
+    the person says them. Use the same Chinese script (Traditional or Simplified) as the engine, because the
+    command does not convert the script.
+  - Do not add segments for noise or music.
+
+Do not put real meeting audio or text in the repo.
+
+### Make a draft reference
+
+```
+cd app && ./gradlew -q :desktopApp:installDist
+app/desktopApp/build/install/resticky-hub/bin/resticky-hub eval draft ~/.local/share/resticky/eval/<case>
+```
+
+The command runs the pipeline and writes `reference.json` from its result (speaker labels as the hub shows them,
+for example `Speaker A` or `You`). Then correct the text and the speakers by hand. The command does not write
+over a `reference.json` that exists.
+
+Add `-agy` to get a better draft from Gemini through the `agy` CLI. This sends the audio to Google with your
+login. The command cuts the audio into 10-minute blocks and sends each block with the pipeline draft
+(`gemini-3.8-flash-low`, about 45 s for each block). Gemini keeps the speaker labels of the pipeline draft. Check
+the speakers at the block boundaries.
+
+### Score
+
+```
+app/desktopApp/build/install/resticky-hub/bin/resticky-hub eval [<case or folder of cases>...] [-compare <old.json>] [-out <file.json>]
+```
+
+- Without a folder, the command scores all cases in `~/.local/share/resticky/eval/`. A folder without
+  `reference.json` is a folder of cases.
+- The command prints one table for each case and a total. The total adds the counts of all cases.
+- It writes the results as JSON to `~/.local/share/resticky/eval/runs/<date>-<time>.json` (or `-out`).
+- `-compare <old.json>` adds the old value and the change (in percentage points) to each row.
+- The engine options are the same as for the hub: `-model`, `-vad`, `-segmentation`, `-embedding`. The people
+  file (`-people`, default `~/.local/share/resticky/people.json`) and the vocabulary (`-vocabulary`, default
+  `~/.local/share/resticky/vocabulary.json`) are copied. The command does not change them.
+
+| Metric | What it measures |
+|---|---|
+| `wer` | Word errors (substitutions, deletions, insertions) on the English and other non-Chinese words, divided by the reference words. |
+| `cer` | Character errors on the Chinese characters, divided by the reference characters. |
+| `mer` | All errors divided by all reference tokens (words and Chinese characters). |
+| `speaker_error` | The part of the reference speech time that has the wrong hub speaker or no hub speaker. The command first maps each reference speaker to at most one hub speaker, so that the matched time is the largest. 100 ms steps. |
+| `missed_speech` | The part of the reference speech time that has no hub segment. It is also in `speaker_error`. |
+| `you_rate` | The part of the `You` speech time where the hub shows `You`. Only when the reference has `You`. |
+| `false_you` | The part of the other speech time where the hub shows `You`. |
+
+The command aligns the full reference text with the full hub text, both in time order. It uses one alignment for
+words and Chinese characters. A substitution or a deletion counts in the class of the reference token. An
+insertion counts in the class of the inserted token. Normalization on both sides: NFKC (full-width to
+half-width), lowercase, no punctuation. Each Chinese character is one token.
+
+The older Python tools in `tools/eval/` (above) score the `meta.json` of a phone or hub and use the `.ref.txt`
+format.
+
 ## Speech windows (phone and laptop)
 
 - The transcriber decodes the chunk and the last 2 s of the previous chunk (`<seq-1>.opus`) as left context.

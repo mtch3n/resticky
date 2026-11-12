@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
     application
 }
 
@@ -14,6 +15,11 @@ dependencies {
     implementation(libs.sherpa.onnx.jvm)
     runtimeOnly(libs.sherpa.onnx.native.linux)
     runtimeOnly(libs.slf4j.simple)
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 application {
