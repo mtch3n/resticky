@@ -95,7 +95,7 @@ private class SummaryDraft(
     val corrections: List<Correction> = emptyList(),
 )
 
-private fun isCjk(c: Char) = c in '\u3400'..'\u9fff' || c in '\uf900'..'\ufaff'
+fun isCjk(c: Char) = c in '\u3400'..'\u9fff' || c in '\uf900'..'\ufaff'
 
 internal fun normalized(text: String): String =
     text.lowercase().map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("").split(' ').filter { it.isNotEmpty() }.joinToString(" ")
@@ -365,7 +365,7 @@ class Pipeline(
     private suspend fun diarize(m: Session) {
         val key = "${m.device}/${m.id}"
         val input = m.speakerInput()
-        val frames = if (m.transcript().isBlank()) null else store.sessionFrames(m)
+        val frames = if (m.transcript().isBlank()) null else store.sessionChunks(m)
         val start = TimeSource.Monotonic.markNow()
         val found = frames?.let { f ->
             runCatching { diarizeSession(f, diarizer, diarizeWindowMs) }

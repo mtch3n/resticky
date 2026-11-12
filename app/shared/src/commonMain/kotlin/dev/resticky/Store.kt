@@ -70,13 +70,17 @@ class Store(val root: Path) {
     fun read(path: Path): ByteArray? =
         if (SystemFileSystem.exists(path)) SystemFileSystem.source(path).buffered().use { it.readByteArray() } else null
 
-    fun sessionFrames(s: Session): ByteArray? {
+    fun sessionChunks(s: Session): Sequence<ByteArray>? {
         val last = s.chunks.keys.maxOfOrNull { it.toInt() } ?: return null
-        val files = (0..last).map { read(Path(dir(s.device, s.id), "$it.opus")) }
-        if (files.all { it == null }) return null
+        val files = (0..last).map { Path(dir(s.device, s.id), "$it.opus") }
+        if (files.none { SystemFileSystem.exists(it) }) return null
+        return files.asSequence().mapIndexed { seq, file -> read(file) ?: ByteArray(((s.chunkMs["$seq"] ?: CHUNK_MS) / 20 * 2).toInt()) }
+    }
+
+    fun sessionFrames(s: Session): ByteArray? = sessionChunks(s)?.let { chunks ->
         val out = kotlinx.io.Buffer()
-        files.forEachIndexed { seq, data -> out.write(data ?: ByteArray(((s.chunkMs["$seq"] ?: CHUNK_MS) / 20 * 2).toInt())) }
-        return out.readByteArray()
+        chunks.forEach { out.write(it) }
+        out.readByteArray()
     }
 
     suspend fun addChunk(

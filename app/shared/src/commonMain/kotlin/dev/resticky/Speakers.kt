@@ -1,5 +1,7 @@
 package dev.resticky
 
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -209,36 +211,36 @@ fun Segment.splitBySpeaker(speakers: List<Int>): List<Segment> {
 
 const val DIARIZE_WINDOW_MS = 10 * 60 * 1000L
 
-fun frameWindows(frames: ByteArray, windowMs: Long): List<Pair<Long, ByteArray>> {
+fun frameWindows(chunks: Sequence<ByteArray>, windowMs: Long): Sequence<Pair<Long, ByteArray>> = sequence {
     val maxFrames = (windowMs / FRAME_MS).coerceAtLeast(1)
-    val out = mutableListOf<Pair<Long, ByteArray>>()
-    var start = 0
+    val out = Buffer()
     var startFrame = 0L
     var count = 0L
-    var i = 0
-    while (i + 2 <= frames.size) {
-        val n = (frames[i].toInt() and 0xff) or ((frames[i + 1].toInt() and 0xff) shl 8)
-        if (i + 2 + n > frames.size) break
-        i += 2 + n
-        count++
-        if (count == maxFrames) {
-            out += startFrame * FRAME_MS to frames.copyOfRange(start, i)
-            start = i
-            startFrame += count
-            count = 0
+    for (data in chunks) {
+        var i = 0
+        while (i + 2 <= data.size) {
+            val n = (data[i].toInt() and 0xff) or ((data[i + 1].toInt() and 0xff) shl 8)
+            if (i + 2 + n > data.size) break
+            out.write(data, i, i + 2 + n)
+            i += 2 + n
+            count++
+            if (count == maxFrames) {
+                yield(startFrame * FRAME_MS to out.readByteArray())
+                startFrame += count
+                count = 0
+            }
         }
     }
-    if (count > 0) out += startFrame * FRAME_MS to frames.copyOfRange(start, i)
-    return out
+    if (count > 0) yield(startFrame * FRAME_MS to out.readByteArray())
 }
 
 fun Session.speakerInput(): String =
     chunks.keys.sortedBy { it.toInt() }.joinToString("\n") { "$it:${chunkMs[it]}:${chunks.getValue(it)}" }
 
-suspend fun diarizeSession(frames: ByteArray, diarizer: Diarizer, windowMs: Long): Diarization {
+suspend fun diarizeSession(chunks: Sequence<ByteArray>, diarizer: Diarizer, windowMs: Long): Diarization {
     val turns = mutableListOf<Turn>()
     val voices = mutableListOf<Voice>()
-    frameWindows(frames, windowMs).forEachIndexed { w, (offset, part) ->
+    frameWindows(chunks, windowMs).forEachIndexed { w, (offset, part) ->
         val d = diarizer.diarize(part)
         turns += d.turns.map { Turn(it.startMs + offset, it.endMs + offset, w * 1000 + it.speaker, it.voice) }
         voices += d.voices.map { Voice(w * 1000 + it.speaker, it.embedding, it.weightMs) }

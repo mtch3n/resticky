@@ -181,9 +181,20 @@ The script does not calculate `der` and `cpwer` for a file that has a speaker `S
 - Right edge: the transcriber does not wait for the next chunk. Thus a word that crosses the end of the chunk can
   be cut. The next chunk then has the full word, because its middle is after the chunk boundary. Thus the
   transcript can show a part of a word and then the full word.
-- Auto (English + Chinese), the phone default: SenseVoice reads each window and gives the language. A window in
-  English without Chinese characters goes to Whisper small.en. Other windows (zh, yue, mixed) keep the SenseVoice
-  text. Until the SenseVoice model is on the phone, all windows go to Whisper.
+- Auto (English + Chinese), the phone default, chooses the engine for each phrase, not for each window:
+  - The Silero speech parts of the window become phrases. A pause of less than 0.3 s does not split a phrase.
+    A phrase is 2 to 8 s. A phrase can be longer when the speech has no pause. A cut is always in the middle of a
+    pause, thus never in a word (`phrases` in `Phrases.kt`).
+  - SenseVoice reads each phrase and gives a language tag and the text. A phrase is Chinese when the Chinese
+    characters are 50 % or more of the speech units (Chinese characters and English words), or 30 % or more when
+    the tag is `zh` or `yue` (`isChinese`). The tag alone is not sufficient, because SenseVoice can tag English as
+    `yue`.
+  - A Chinese phrase keeps the SenseVoice text. Consecutive English phrases go to Whisper small.en as one part,
+    with the vocabulary prompt. The times of each phrase and part go back to the window times.
+  - The `speech` log shows one route for each run of phrases (`routes=whisper:en+sensevoice:yue+whisper:en`).
+  - Until the SenseVoice model is on the phone, all windows go to Whisper.
+  - The engine ID of Auto is `Auto (English + Chinese) per phrase/<PIPELINE_VERSION>` (`chunk_engine`). Old chunks
+    do not run again automatically. Only the rerun command (`--es pipeline rerun`) runs them again.
 
 ## Vocabulary (phone and laptop)
 

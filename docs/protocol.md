@@ -430,7 +430,9 @@ A mark is a moment that the user marked on the Sticky with a double press while 
 - The hub diarizes at most 10 minutes of audio in one run (`DIARIZE_WINDOW_MS`, phone and laptop); a longer
   session is done in 10-minute windows and the windows are joined by the same embedding rule. sherpa-onnx has
   no streaming diarization (`process` takes all samples), so the window sets the memory: one window is decoded
-  into one float array. Measured on the laptop (sherpa-onnx 2.0.1, real speech): 10 minutes: 69 MB Java heap
+  into one float array. The hub reads the chunk files of the session one at a time and makes one window of
+  Opus packets before it reads the next file (`Store.sessionChunks`, `frameWindows`). Thus the hub never keeps
+  the packets or the samples of the full session in memory. Measured on the laptop (sherpa-onnx 2.0.1, real speech): 10 minutes: 69 MB Java heap
   peak, 504 MB process peak; 20 minutes: 125 MB and 546 MB. The cost: a speaker who talks only in one window
   is clustered with less audio, and two windows can give one person two numbers when the embeddings are not
   close enough to merge.
