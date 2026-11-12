@@ -2,6 +2,7 @@ package dev.resticky.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -82,6 +83,8 @@ data class BleState(
 )
 
 @SuppressLint("MissingPermission")
+private val CAR_CLASSES = setOf(BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO, BluetoothClass.Device.AUDIO_VIDEO_HANDSFREE)
+
 class BleHub(private val context: Context, private val hub: Hub, private val scope: CoroutineScope, private val sticky: () -> String?) {
     private val adapter = context.getSystemService(BluetoothManager::class.java).adapter
     private val main = Handler(Looper.getMainLooper())
@@ -102,6 +105,28 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
     private var watchers = emptyList<Job>()
     @Volatile private var linked: String? = null
     @Volatile private var photo = false
+    private val cars = mutableSetOf<String>()
+
+    private val carReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
+            if (device.bluetoothClass?.deviceClass !in CAR_CLASSES) return
+            val before = cars.isNotEmpty()
+            if (intent.action == BluetoothDevice.ACTION_ACL_CONNECTED) cars += device.address else cars -= device.address
+            if (before == cars.isNotEmpty()) return
+            if (cars.isNotEmpty()) {
+                log("INFO ble paused reason=car")
+                gatt?.close()
+                gatt = null
+                reader.clear()
+                resetOutbox()
+                state.update { it.copy(status = LinkStatus.Off, passkeyWanted = false, mtu = 0, phy2m = false) }
+            } else {
+                log("INFO ble resumed reason=car_gone")
+                link()
+            }
+        }
+    }
 
     private val bondReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
@@ -241,8 +266,9 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
                 .onFailure { log("WARN ble bad checkin ${it.message}") }
             FRAME_OTA_STATUS -> runCatching { hubJson.decodeFromString<OtaStatus>(frame.payload.decodeToString()) }
                 .onSuccess {
+                    val before = otaStatus.value
                     otaStatus.value = it
-                    log("INFO ble ota_status state=${it.state} percent=${it.percent}")
+                    if (before?.state != it.state || before.percent / 10 != it.percent / 10) log("INFO ble ota_status state=${it.state} percent=${it.percent}")
                 }
                 .onFailure { log("WARN ble bad ota_status ${it.message}") }
             FRAME_WEATHER_SET -> runCatching { hubJson.decodeFromString<WeatherChange>(frame.payload.decodeToString()) }
@@ -397,7 +423,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
     private fun link() {
         val address = sticky()
         state.update { it.copy(address = address) }
-        if (!running || gatt != null || address == null) return
+        if (!running || gatt != null || address == null || cars.isNotEmpty()) return
         val device = adapter.getRemoteDevice(address)
         connect(device, device.bondState == BluetoothDevice.BOND_BONDED)
     }
@@ -426,6 +452,10 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             priority = IntentFilter.SYSTEM_HIGH_PRIORITY - 1
         }
         context.registerReceiver(bondReceiver, filter, Context.RECEIVER_EXPORTED)
+        context.registerReceiver(carReceiver, IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }, Context.RECEIVER_EXPORTED)
         link()
     }
 
@@ -435,6 +465,8 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
         watchers.forEach { it.cancel() }
         main.removeCallbacksAndMessages(null)
         context.unregisterReceiver(bondReceiver)
+        context.unregisterReceiver(carReceiver)
+        cars.clear()
         gatt?.close()
         gatt = null
         reader.clear()
