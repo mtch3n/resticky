@@ -295,5 +295,6 @@ low power and storage use that we can profile.
    the new `meta.json` fields.
 4. Firmware push from the phone: test 0.14.6 and later end to end.
 5. BLE power on battery: idle advertising, connected idle, transferring, BLE off.
-6. Transcription evaluation set (see `plan-transcription.md`).
+6. Transcription evaluation set: record and correct the cases. The laptop harness `resticky-hub eval` is ready (see
+   `plan-transcription.md`).
 7. Open decision: iOS builds (Mac over SSH or macOS CI, Apple Developer account).
