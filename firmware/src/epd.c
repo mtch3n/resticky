@@ -1,3 +1,4 @@
+#define EPD_SPI_HZ (10 * 1000 * 1000)
 #include "epd.h"
 #include "board.h"
 #include "driver/gpio.h"
@@ -75,7 +76,7 @@ bool epd_init(void)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO));
     spi_device_interface_config_t dev = {
-        .clock_speed_hz = 10 * 1000 * 1000,
+        .clock_speed_hz = EPD_SPI_HZ,
         .mode = 0,
         .spics_io_num = PIN_EPD_CS,
         .queue_size = 1,

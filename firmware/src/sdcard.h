@@ -11,4 +11,5 @@ typedef struct {
 
 void sdcard_init(void);
 void sdcard_info(sdcard_info_t *out);
+bool sdcard_present(void);
 bool sdcard_format(void);

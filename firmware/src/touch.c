@@ -113,13 +113,28 @@ void touch_sleep(void)
 void touch_wake(void)
 {
     if (!ready) return;
-    gpio_set_direction(PIN_TP_INT, GPIO_MODE_OUTPUT);
-    gpio_set_level(PIN_TP_INT, 1);
-    vTaskDelay(pdMS_TO_TICKS(5));
-    gpio_set_direction(PIN_TP_INT, GPIO_MODE_INPUT);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    bool ok = i2c_master_probe(bus, addr, 20) == ESP_OK;
-    if (!ok) reset_with_int(addr_level);
+    reset_with_int(addr_level);
+    uint8_t cmd = 0xFF;
+    bool ok = reg_read(0x8040, &cmd, 1);
     pressed = false;
-    ESP_LOGI(TAG, "wake: %s", ok ? "ok" : "no answer, reset");
+    ESP_LOGI(TAG, "wake: reset, %s, command 0x%02x", ok ? "answers" : "no answer", cmd);
+}
+
+void touch_debug(void)
+{
+    uint8_t cfg = 0, cmd = 0, last = 0xFF;
+    int int_last = -1;
+    reg_read(0x8047, &cfg, 1);
+    reg_read(0x8040, &cmd, 1);
+    ESP_LOGI(TAG, "debug: ready %d addr 0x%02x config version 0x%02x command 0x%02x int %d", ready, addr, cfg, cmd, gpio_get_level(PIN_TP_INT));
+    for (int i = 0; i < 300; i++) {
+        uint8_t status = 0;
+        bool ok = reg_read(0x814E, &status, 1);
+        int level = gpio_get_level(PIN_TP_INT);
+        if (!ok || status != last || level != int_last) ESP_LOGI(TAG, "debug: read %d status 0x%02x int %d", ok, status, level);
+        last = status;
+        int_last = level;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    ESP_LOGI(TAG, "debug: done");
 }

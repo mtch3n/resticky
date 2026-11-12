@@ -1533,6 +1533,7 @@ static void flip_clicked(lv_event_t *e)
 }
 
 static void show_sd(void);
+static void show_sd_present(void);
 
 static void show_settings(void);
 
@@ -1560,7 +1561,7 @@ static void build_homepick(void)
 static void build_settings(void)
 {
     lv_obj_t *s = screen(&v_settings, "Settings", &v_launcher);
-    v_settings.on_show = show_sd;
+    v_settings.on_show = show_sd_present;
     rec_value = nav_row(s, TOP - 8, ICON_MIC, "Recording", &v_rec);
     wifi_value = nav_row(s, TOP - 8 + ROW_H, ICON_WIFI, "Wi-Fi", &v_wifi);
     hub_value = nav_row(s, TOP - 8 + 2 * ROW_H, ICON_DEVICE, "Hub", &v_hub);
@@ -1783,6 +1784,13 @@ static void show_sd(void)
     set_hidden(sd_format, !i.present);
     if (i.mounted) lv_label_set_text_fmt(sd_value, "%s \xC2\xB7 %s free", total, free_);
     else lv_label_set_text(sd_value, i.present ? "Not readable" : "No card");
+    force_full = true;
+}
+
+static void show_sd_present(void)
+{
+    if (!sdcard_present()) lv_label_set_text(sd_value, "No card");
+    else if (!strcmp(lv_label_get_text(sd_value), "No card") || !lv_label_get_text(sd_value)[0]) lv_label_set_text(sd_value, "Card");
 }
 
 static void format_clicked(lv_event_t *e)

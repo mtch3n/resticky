@@ -3,6 +3,7 @@
 #include "buzzer.h"
 #include <sys/time.h>
 #include "ui.h"
+#include "touch.h"
 #include "lvgl.h"
 #include "ble.h"
 #include "cJSON.h"
@@ -115,6 +116,8 @@ static void console_task(void *arg)
         if (!strncmp(line, "wifi ", 5) && sep) {
             *sep = 0;
             wifi_add(line + 5, sep + 1);
+        } else if (!strcmp(line, "touch")) {
+            touch_debug();
         } else if (!strcmp(line, "update")) {
             net_install_update();
         } else if (!strncmp(line, "wifi-forget ", 12)) {

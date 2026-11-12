@@ -318,8 +318,8 @@ void app_main(void)
     ota_init();
     sensors_init();
     clock_init();
-    if (!epd_init()) ESP_LOGE(TAG, "display init failed");
     sdcard_init();
+    if (!epd_init()) ESP_LOGE(TAG, "display init failed");
     touch_init();
     buttons_init();
     buzzer_init(PIN_BUZZER);
