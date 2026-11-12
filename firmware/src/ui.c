@@ -128,7 +128,7 @@ RTC_DATA_ATTR static int history_len;
 RTC_DATA_ATTR static time_t history_at;
 
 static view_t v_launcher, v_recorder, v_todo, v_transcripts, v_clock, v_weather, v_wsettings, v_stats, v_settings, v_rec, v_wifi, v_hub,
-    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick, v_update, v_night, v_item;
+    v_buttons, v_choose, v_device, v_pair, v_off, v_map, v_sd, v_homepick, v_update, v_night, v_item, v_deep;
 static view_t *current_view;
 static pager_t todo_pager, list_pager, stats_pager;
 
@@ -258,7 +258,7 @@ static void show_view(view_t *v)
 {
     current_view = v;
     if (v->on_show) v->on_show();
-    set_hidden(status, v == &v_off || v == &v_update);
+    set_hidden(status, v == &v_off || v == &v_update || v == &v_deep);
     set_hidden(status_title, !v->title);
     set_hidden(status_home, !v->title || v == &v_pair);
     if (v->title) lv_label_set_text(status_title, v->title);
@@ -1996,11 +1996,31 @@ void ui_show_sleep(bool deep)
     lv_refr_now(NULL);
 }
 
+static lv_obj_t *deep_title, *deep_sub;
+
+static void build_deep(void)
+{
+    lv_obj_t *s = screen(&v_deep, NULL, NULL);
+    image(s, &art_deep_sleep, 0, 0);
+    deep_title = centered(s, &hand_56, 512);
+    deep_sub = centered(s, &hand_40, 590);
+}
+
 void ui_show_deep_sleep(int wake_minute)
 {
     ESP_LOGI(TAG, "deep sleep screen, wake minute %d", wake_minute);
-    lv_obj_invalidate(lv_screen_active());
-    ui_show_sleep(true);
+    sleeping = true;
+    if (wake_minute >= 0) {
+        lv_label_set_text(deep_title, "good night");
+        lv_label_set_text_fmt(deep_sub, "wakes at %02d:%02d", wake_minute / 60, wake_minute % 60);
+    }
+    else {
+        lv_label_set_text(deep_title, "sleeping");
+        lv_label_set_text(deep_sub, "press any key to wake");
+    }
+    show_view(&v_deep);
+    force_full = true;
+    lv_refr_now(NULL);
 }
 
 void ui_wake(void)
@@ -2064,6 +2084,7 @@ void ui_init(const ui_actions_t *a)
     build_device();
     build_night();
     build_item();
+    build_deep();
     build_update();
     build_map();
     build_sd();
