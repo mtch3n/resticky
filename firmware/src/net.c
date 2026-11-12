@@ -87,7 +87,8 @@ static struct { int battery_pct, voltage_mv, current_ma; bool recording, usb; } 
 static ota_info_t latest;
 static volatile bool install_now;
 static SemaphoreHandle_t fresh_lock, parked;
-static volatile bool park_wanted;
+static volatile bool park_wanted, is_parked;
+static TaskHandle_t net_handle;
 EXT_RAM_BSS_ATTR static char lists_buf[LISTS_MAX];
 static size_t lists_len;
 static bool lists_pending, lists_seen;
@@ -868,8 +869,11 @@ static void park_if_wanted(void)
     if (!park_wanted) return;
     spool_fresh();
     ESP_LOGI(TAG, "parked, outbox on flash");
+    is_parked = true;
     xSemaphoreGive(parked);
-    for (;;) vTaskDelay(portMAX_DELAY);
+    while (park_wanted) ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    is_parked = false;
+    ESP_LOGI(TAG, "unparked");
 }
 
 static void restart_now(void)
@@ -1358,7 +1362,7 @@ void net_init(void)
 
     uart_driver_install(UART_NUM_0, 512, 0, 0, NULL, 0);
     if (xTaskCreate(console_task, "console", 4096, NULL, 3, NULL) != pdPASS) ESP_LOGE(TAG, "console task not created");
-    if (xTaskCreatePinnedToCore(net_task, "net", 12 * 1024, NULL, 5, NULL, 0) != pdPASS) ESP_LOGE(TAG, "net task not created");
+    if (xTaskCreatePinnedToCore(net_task, "net", 12 * 1024, NULL, 5, &net_handle, 0) != pdPASS) ESP_LOGE(TAG, "net task not created");
     wifi_start();
 }
 
@@ -1440,9 +1444,24 @@ void net_install_update(void)
 
 bool net_park(uint32_t timeout_ms)
 {
+    xSemaphoreTake(parked, 0);
     park_wanted = true;
-    bool ok = xSemaphoreTake(parked, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    bool ok = is_parked || xSemaphoreTake(parked, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
     spool_fresh();
     ESP_LOGI(TAG, "park: %s", ok ? "net task stopped" : "net task busy, outbox written by the caller");
     return ok;
+}
+
+bool net_sleep(uint32_t timeout_ms)
+{
+    bool ok = net_park(timeout_ms);
+    if (!wifi_off) wifi_stop();
+    return ok;
+}
+
+void net_wake(void)
+{
+    if (!wifi_off) wifi_resume();
+    park_wanted = false;
+    if (net_handle) xTaskNotifyGive(net_handle);
 }

@@ -118,5 +118,7 @@ void net_set_climate(bool ok, int room_c10, int humidity);
 void net_lists_frame(const char *json, size_t len);
 void net_need_wifi(void);
 bool net_park(uint32_t timeout_ms);
+bool net_sleep(uint32_t timeout_ms);
+void net_wake(void);
 void net_set_hub_token(const char *hex);
 

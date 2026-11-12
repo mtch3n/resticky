@@ -29,6 +29,11 @@ void buttons_init(void)
     for (int b = 0; b < BTN_COUNT; b++) keys[b].armed = gpio_get_level(PINS[b]) == 1;
 }
 
+void buttons_disarm(void)
+{
+    for (int b = 0; b < BTN_COUNT; b++) keys[b] = (key_t){0};
+}
+
 void buttons_poll(button_cb cb)
 {
     int64_t now = esp_timer_get_time() / 1000;
@@ -37,6 +42,7 @@ void buttons_poll(button_cb cb)
         bool down = gpio_get_level(PINS[b]) == 0;
         if (!k->armed) {
             k->armed = !down;
+            k->down = false;
             continue;
         }
         if (down && !k->down) {

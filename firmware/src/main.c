@@ -34,7 +34,7 @@
 
 static const char *TAG = "main";
 
-typedef enum { OFF_MUTE = 1, OFF_FACE_DOWN = 2, OFF_UPDATE = 4, OFF_POWER = 8 } off_reason_t;
+typedef enum { OFF_MUTE = 1, OFF_FACE_DOWN = 2, OFF_UPDATE = 4, OFF_POWER = 8, OFF_SLEEP = 16 } off_reason_t;
 
 static unsigned off_reasons;
 static bool recording;
@@ -97,8 +97,12 @@ static void restart(void)
 }
 
 #define SLEEP_GUARD_US (45 * 1000000LL)
+#define LIGHT_CHECK_S (10 * 60)
+#define NIGHT_AWAKE_MS (5 * 60 * 1000)
 
 static volatile int sleep_step;
+static esp_timer_handle_t sleep_guard;
+static uint32_t last_button_ms;
 
 static void sleep_mark(int step)
 {
@@ -117,13 +121,18 @@ static void sleep_hung(void *arg)
     esp_system_abort(why);
 }
 
-static void sleep_for(uint32_t seconds)
+static void guard_start(void)
 {
-    esp_timer_handle_t guard;
-    esp_timer_create(&(esp_timer_create_args_t){.callback = sleep_hung, .name = "sleep_guard"}, &guard);
-    esp_timer_start_once(guard, SLEEP_GUARD_US);
+    if (!sleep_guard) esp_timer_create(&(esp_timer_create_args_t){.callback = sleep_hung, .name = "sleep_guard"}, &sleep_guard);
+    esp_timer_stop(sleep_guard);
+    esp_timer_start_once(sleep_guard, SLEEP_GUARD_US);
+}
+
+static void sleep_for(uint32_t seconds, int wake_minute)
+{
+    guard_start();
     sleep_mark(1);
-    ui_show_sleep();
+    ui_show_deep_sleep(wake_minute);
     sleep_mark(2);
     quiesce();
     sleep_mark(3);
@@ -135,16 +144,6 @@ static void sleep_for(uint32_t seconds)
     sleep_mark(6);
     board_sleep(seconds, BUTTON_RELEASE_MS);
 }
-
-static void go_sleep(void)
-{
-    ESP_LOGI(TAG, "manual sleep");
-    sleep_for(0);
-}
-
-#define NIGHT_AWAKE_MS (5 * 60 * 1000)
-
-static uint32_t last_button_ms;
 
 static int night_left_s(const settings_t *s)
 {
@@ -159,6 +158,55 @@ static int night_left_s(const settings_t *s)
     return left * 60 - t.tm_sec + 30;
 }
 
+static void go_deep_sleep(void)
+{
+    ESP_LOGI(TAG, "deep sleep");
+    sleep_for(0, -1);
+}
+
+static void go_light_sleep(void)
+{
+    ESP_LOGI(TAG, "light sleep");
+    guard_start();
+    sleep_mark(11);
+    ui_show_sleep(false);
+    sleep_mark(12);
+    set_off(OFF_SLEEP, true);
+    audio_stop(AUDIO_STOP_MS);
+    sleep_mark(13);
+    net_sleep(NET_PARK_MS);
+    sleep_mark(14);
+    ble_stop();
+    sleep_mark(15);
+    touch_sleep();
+    sleep_mark(16);
+    esp_timer_stop(sleep_guard);
+    int64_t start = esp_timer_get_time();
+    int checks = 0;
+    while (board_light_sleep(LIGHT_CHECK_S, BUTTON_RELEASE_MS)) {
+        checks++;
+        int left = night_left_s(&settings);
+        if (left) {
+            ESP_LOGI(TAG, "light sleep: night started after %lld s, deep sleep for %d s", (esp_timer_get_time() - start) / 1000000, left);
+            sleep_for(left, settings.night_end);
+        }
+    }
+    ESP_LOGI(TAG, "light sleep: woke after %lld s (%d night checks)", (esp_timer_get_time() - start) / 1000000, checks);
+    guard_start();
+    sleep_mark(17);
+    buttons_disarm();
+    last_button_ms = esp_log_timestamp();
+    touch_wake();
+    sleep_mark(18);
+    if (!ble_resume()) ESP_LOGE(TAG, "bluetooth not started after light sleep");
+    sleep_mark(19);
+    net_wake();
+    set_off(OFF_SLEEP, false);
+    ui_wake();
+    esp_timer_stop(sleep_guard);
+    sleep_mark(0);
+}
+
 static void night_check(void)
 {
     int left = night_left_s(&settings);
@@ -166,7 +214,7 @@ static void night_check(void)
     uint32_t since_button = esp_log_timestamp() - last_button_ms;
     if (!left || update_pause || idle < NIGHT_AWAKE_MS || since_button < NIGHT_AWAKE_MS || esp_log_timestamp() < NIGHT_AWAKE_MS) return;
     ESP_LOGI(TAG, "night: sleep for %d s", left);
-    sleep_for(left);
+    sleep_for(left, settings.night_end);
 }
 
 static void power_off(void)
@@ -201,7 +249,8 @@ static void do_action(action_t action)
         if (ok) buzzer_mark();
         ui_show_mark(ok);
     }
-    else if (action == ACT_SLEEP) go_sleep();
+    else if (action == ACT_SLEEP) go_light_sleep();
+    else if (action == ACT_DEEP_SLEEP) go_deep_sleep();
     else if (action == ACT_MUTE) toggle_recording();
     else ui_key(action);
 }
@@ -274,7 +323,7 @@ void app_main(void)
     touch_init();
     buttons_init();
     buzzer_init(PIN_BUZZER);
-    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates, net_cancel_update, net_need_wifi});
+    ui_init(&(ui_actions_t){toggle_recording, restart, power_off, net_set_todo, apply_settings, net_test_hub, net_forget_wifi, net_install_update, net_check_updates, net_cancel_update, net_need_wifi, go_deep_sleep});
     settings_load(&settings);
     off_reasons = settings.muted ? OFF_MUTE : 0;
     recording = !off_reasons;

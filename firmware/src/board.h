@@ -1,4 +1,5 @@
 #pragma once
+#include <stdbool.h>
 #include <stdint.h>
 
 #define PIN_PWR_HOLD 45
@@ -24,7 +25,14 @@
 #define PIN_SD_DETECT 11
 #define PIN_SD_MISO 12
 #define PIN_SD_CS 8
+#define PIN_MIC_EN 38
+#define PIN_TP_SDA 3
+#define PIN_TP_SCL 2
+#define PIN_TP_INT 21
+#define PIN_TP_RST 41
+#define PIN_TP_EN 42
 
 void board_power_latch(void);
 void board_power_off(void);
 void board_sleep(uint32_t wake_after_s, uint32_t release_wait_ms);
+bool board_light_sleep(uint32_t wake_after_s, uint32_t release_wait_ms);

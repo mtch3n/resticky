@@ -1,6 +1,7 @@
 #include "board.h"
 #include "driver/gpio.h"
 #include "driver/rtc_io.h"
+#include "driver/uart.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
@@ -11,6 +12,12 @@
 static const char *TAG = "board";
 static const int WAKE_PINS[] = {PIN_BTN_POWER, PIN_BTN_UP, PIN_BTN_DOWN, PIN_MOTION_INT};
 #define WAKE_COUNT (sizeof WAKE_PINS / sizeof WAKE_PINS[0])
+static const int KEY_PINS[] = {PIN_BTN_POWER, PIN_BTN_UP, PIN_BTN_DOWN};
+#define KEY_COUNT (sizeof KEY_PINS / sizeof KEY_PINS[0])
+static const int DRIVEN_PINS[] = {PIN_PWR_HOLD, PIN_PWR_LOCK, PIN_CHG_EN_N, PIN_EPD_PWR, PIN_EPD_RST, PIN_EPD_CS, PIN_EPD_DC,
+                                  PIN_SD_PWR_EN, PIN_SD_CS, PIN_TP_EN, PIN_TP_RST, PIN_MIC_EN, PIN_BUZZER};
+#define DRIVEN_COUNT (sizeof DRIVEN_PINS / sizeof DRIVEN_PINS[0])
+#define KEY_SETTLE_MS 50
 
 void board_power_latch(void)
 {
@@ -66,4 +73,32 @@ void board_sleep(uint32_t wake_after_s, uint32_t release_wait_ms)
 
     if (wake_after_s) esp_sleep_enable_timer_wakeup((uint64_t)wake_after_s * 1000000);
     esp_deep_sleep_start();
+}
+
+bool board_light_sleep(uint32_t wake_after_s, uint32_t release_wait_ms)
+{
+    int64_t until = esp_timer_get_time() + release_wait_ms * 1000LL;
+    while (keys_down() && esp_timer_get_time() < until) vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(KEY_SETTLE_MS));
+    for (int i = 0; i < DRIVEN_COUNT; i++) gpio_sleep_sel_dis(DRIVEN_PINS[i]);
+    unsigned mask = 0;
+    for (int i = 0; i < KEY_COUNT; i++) {
+        if (!gpio_get_level(KEY_PINS[i])) continue;
+        gpio_wakeup_enable(KEY_PINS[i], GPIO_INTR_LOW_LEVEL);
+        mask |= 1u << KEY_PINS[i];
+    }
+    if (mask) esp_sleep_enable_gpio_wakeup();
+    else ESP_LOGW(TAG, "light sleep: all keys low, timer wake only");
+    esp_sleep_enable_timer_wakeup((uint64_t)wake_after_s * 1000000);
+    uart_wait_tx_idle_polling(CONFIG_ESP_CONSOLE_UART_NUM);
+    esp_err_t err = esp_light_sleep_start();
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    for (int i = 0; i < KEY_COUNT; i++)
+        if (mask & 1u << KEY_PINS[i]) gpio_wakeup_disable(KEY_PINS[i]);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+    if (mask) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+    bool timer = err == ESP_OK && cause == ESP_SLEEP_WAKEUP_TIMER;
+    ESP_LOGI(TAG, "light sleep: %s, cause %d, key mask 0x%x, power %d up %d down %d", esp_err_to_name(err), cause, mask,
+             gpio_get_level(PIN_BTN_POWER), gpio_get_level(PIN_BTN_UP), gpio_get_level(PIN_BTN_DOWN));
+    return timer;
 }

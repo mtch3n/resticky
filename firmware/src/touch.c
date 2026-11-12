@@ -1,18 +1,17 @@
 #include "touch.h"
+#include "board.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define PIN_TP_SDA 3
-#define PIN_TP_SCL 2
-#define PIN_TP_INT 21
-#define PIN_TP_RST 41
-#define PIN_TP_EN 42
 
 static const char *TAG = "touch";
+static i2c_master_bus_handle_t bus;
 static i2c_master_dev_handle_t tp;
+static uint8_t addr;
+static int addr_level;
 static bool ready;
 static int last_x, last_y;
 static bool pressed;
@@ -58,11 +57,10 @@ bool touch_init(void)
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
     };
-    i2c_master_bus_handle_t bus;
     ESP_ERROR_CHECK(i2c_new_master_bus(&cfg, &bus));
 
-    uint8_t addr = 0;
     for (int level = 0; level < 2 && !addr; level++) {
+        addr_level = level;
         reset_with_int(level);
         if (i2c_master_probe(bus, 0x5D, 20) == ESP_OK) addr = 0x5D;
         else if (i2c_master_probe(bus, 0x14, 20) == ESP_OK) addr = 0x14;
@@ -102,4 +100,26 @@ bool touch_read(int *x, int *y)
     *x = last_x;
     *y = last_y;
     return pressed;
+}
+
+void touch_sleep(void)
+{
+    if (!ready) return;
+    uint8_t w[3] = {0x80, 0x40, 0x05};
+    bool ok = i2c_master_transmit(tp, w, 3, 20) == ESP_OK;
+    ESP_LOGI(TAG, "sleep: %s", ok ? "ok" : "no answer");
+}
+
+void touch_wake(void)
+{
+    if (!ready) return;
+    gpio_set_direction(PIN_TP_INT, GPIO_MODE_OUTPUT);
+    gpio_set_level(PIN_TP_INT, 1);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    gpio_set_direction(PIN_TP_INT, GPIO_MODE_INPUT);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    bool ok = i2c_master_probe(bus, addr, 20) == ESP_OK;
+    if (!ok) reset_with_int(addr_level);
+    pressed = false;
+    ESP_LOGI(TAG, "wake: %s", ok ? "ok" : "no answer, reset");
 }

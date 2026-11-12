@@ -6,3 +6,4 @@ typedef void (*button_cb)(button_t button, button_event_t event);
 
 void buttons_init(void);
 void buttons_poll(button_cb cb);
+void buttons_disarm(void);
