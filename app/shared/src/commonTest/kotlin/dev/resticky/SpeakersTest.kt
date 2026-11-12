@@ -207,6 +207,24 @@ class SpeakersTest {
     }
 
     @Test
+    fun speakersFromAnOlderInputAreDropped() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))
+        var calls = 0
+        val logs = mutableListOf<String>()
+        val pipeline = Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, {
+            if (calls++ == 0) store.addChunk("ab", "01", 1, true, 1000, byteArrayOf(0, 0, 0, 0, 0, 0))
+            Diarization(listOf(Turn(0, 2000, 0)), emptyList())
+        }) { logs += it }
+        pipeline.drain()
+        val m = store.list("ab").single()
+        assertEquals(2, calls)
+        assertTrue(m.diarized && m.ready)
+        assertEquals(0, m.segments.getValue("1").single().speaker)
+        assertTrue(logs.any { "speakers dropped" in it })
+    }
+
+    @Test
     fun diarizationThatWorksOnTheRetryIsNotFlagged() = runTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 1000, byteArrayOf(0, 0, 0, 0))

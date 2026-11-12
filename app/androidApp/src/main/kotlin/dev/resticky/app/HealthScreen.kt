@@ -40,7 +40,7 @@ class Chart(val title: String, val unit: String, val decimals: Int, val series: 
     val max: Float? get() = series.mapNotNull { it.max }.maxOrNull()
 }
 
-class HealthView(val hours: Int, val from: Long, val to: Long, val charts: List<Chart>, val drain: List<Drain>, val boot: String) {
+class HealthView(val hours: Int, val from: Long, val to: Long, val charts: List<Chart>, val drain: List<Drain>, val boot: String, val loss: List<Pair<String, Long>> = emptyList()) {
     val empty: Boolean get() = charts.all { c -> c.series.all { it.points.isEmpty() } }
 }
 
@@ -165,6 +165,11 @@ private fun DrainCard(drain: List<Drain>) = Card(padding = PaddingValues(0.dp)) 
 }
 
 @Composable
+private fun LossCard(loss: List<Pair<String, Long>>) = Card(dark = true) {
+    Text("Audio loss in the last 7 d: " + loss.joinToString(", ") { (name, n) -> "$n $name" }, style = Type.heading.copy(color = Ink.white))
+}
+
+@Composable
 private fun BootCard(boot: String) = Card {
     Text("Last boot", style = Type.heading)
     Gap(6.dp)
@@ -179,6 +184,10 @@ fun HealthScreen(view: HealthView?, hours: Int, back: () -> Unit, select: (Int) 
         }
     }
     val label = HEALTH_RANGES.firstOrNull { it.first == hours }?.second ?: "$hours h"
+    if (view != null && view.loss.isNotEmpty()) {
+        gap()
+        item(key = "loss") { LossCard(view.loss) }
+    }
     when {
         view == null -> {}
         view.empty -> {

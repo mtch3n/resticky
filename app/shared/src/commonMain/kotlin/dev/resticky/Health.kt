@@ -20,11 +20,13 @@ const val HEALTH_MAX = 10_080
 const val HEALTH_SLACK = 1_440
 const val HEALTH_MAX_HOURS = 168
 const val HEALTH_RECORD_V1 = 100
-const val HEALTH_RECORD = 132
+const val HEALTH_RECORD_V2 = 132
+const val HEALTH_RECORD = 168
 const val HEALTH_FIRMWARE = 32
-private const val HEALTH_FILE = "health2.bin"
-private const val HEALTH_FILE_V1 = "health.bin"
+const val HEALTH_FILE = "health3.bin"
+private val HEALTH_OLD = listOf("health.bin" to HEALTH_RECORD_V1, "health2.bin" to HEALTH_RECORD_V2)
 private const val HEALTH_INTS = 23
+private const val HEALTH_LOSS_INTS = 7
 private const val DRAIN_GAP_S = 30 * 60L
 private const val DRAIN_MIN_S = 3600L
 
@@ -48,6 +50,14 @@ data class Health(
     val overflows: Int = 0,
     @SerialName("temp_c") val tempC: Float = 0f,
     val boot: String = "",
+    @SerialName("audio_keep_pm") val audioKeepPm: Int = 0,
+    @SerialName("early_chunks") val earlyChunks: Int = 0,
+    @SerialName("lost_chunks") val lostChunks: Int = 0,
+    @SerialName("spool_write_errors") val spoolWriteErrors: Int = 0,
+    @SerialName("spool_corrupt") val spoolCorrupt: Int = 0,
+    @SerialName("ble_fast_s") val bleFastS: Int = 0,
+    @SerialName("shutdown_lost") val shutdownLost: Int = 0,
+    @SerialName("ble_tx_bytes") val bleTxBytes: Long = 0,
 )
 
 @Serializable
@@ -84,15 +94,21 @@ private fun Buffer.writeSample(s: HealthSample) {
     ).forEach { writeIntLe(it) }
     val fw = s.firmware.encodeToByteArray().copyOf(HEALTH_FIRMWARE)
     write(fw)
+    listOf(h.audioKeepPm, h.earlyChunks, h.lostChunks, h.spoolWriteErrors, h.spoolCorrupt, h.bleFastS, h.shutdownLost).forEach { writeIntLe(it) }
+    writeLongLe(h.bleTxBytes)
 }
 
-private fun Buffer.readSample(v1: Boolean): HealthSample {
+private fun Buffer.readSample(record: Int): HealthSample {
     val t = readLongLe()
     val v = IntArray(HEALTH_INTS) { readIntLe() }
+    val firmware = if (record == HEALTH_RECORD_V1) "" else readByteArray(HEALTH_FIRMWARE).decodeToString().trimEnd('\u0000')
+    val loss = if (record == HEALTH_RECORD) IntArray(HEALTH_LOSS_INTS) { readIntLe() } else IntArray(HEALTH_LOSS_INTS)
+    val txBytes = if (record == HEALTH_RECORD) readLongLe() else 0L
     val health = if (v[7] == 0) null else Health(
         v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15], v[16], v[17], v[18], v[19], v[20], v[21], v[22] / 10f,
+        audioKeepPm = loss[0], earlyChunks = loss[1], lostChunks = loss[2], spoolWriteErrors = loss[3], spoolCorrupt = loss[4],
+        bleFastS = loss[5], shutdownLost = loss[6], bleTxBytes = txBytes,
     )
-    val firmware = if (v1) "" else readByteArray(HEALTH_FIRMWARE).decodeToString().trimEnd('\u0000')
     return HealthSample(t, v[0], v[1], v[2], v[3] != 0, v[4], v[5], v[6], health, firmware)
 }
 
@@ -103,17 +119,18 @@ class HealthLog(private val root: Path) {
 
     private fun path(device: String) = Path(root, device, HEALTH_FILE)
 
-    private fun pathV1(device: String) = Path(root, device, HEALTH_FILE_V1)
-
     private fun readFile(p: Path, record: Int): List<HealthSample> {
         if (!SystemFileSystem.exists(p)) return emptyList()
         val buf = Buffer()
         SystemFileSystem.source(p).use { src -> while (src.readAtMostTo(buf, 1L shl 16) >= 0) Unit }
         val n = (buf.size / record).toInt()
-        return List(n) { buf.readSample(record == HEALTH_RECORD_V1) }
+        return List(n) { buf.readSample(record) }
     }
 
-    private fun load(device: String): List<HealthSample> = readFile(pathV1(device), HEALTH_RECORD_V1) + readFile(path(device), HEALTH_RECORD)
+    private fun old(device: String) = HEALTH_OLD.map { (name, record) -> Path(root, device, name) to record }
+
+    private fun load(device: String): List<HealthSample> =
+        (old(device) + (path(device) to HEALTH_RECORD)).flatMap { (p, record) -> readFile(p, record) }.sortedBy { it.t }
 
     private fun rewrite(device: String, samples: List<HealthSample>) {
         val p = path(device)
@@ -133,9 +150,10 @@ class HealthLog(private val root: Path) {
             val p = path(device)
             val size = SystemFileSystem.metadataOrNull(p)?.size ?: 0L
             val samples = load(device)
-            if (size % HEALTH_RECORD != 0L || SystemFileSystem.exists(pathV1(device))) {
+            val older = old(device).map { it.first }.filter { SystemFileSystem.exists(it) }
+            if (size % HEALTH_RECORD != 0L || older.isNotEmpty()) {
                 rewrite(device, samples)
-                SystemFileSystem.delete(pathV1(device), mustExist = false)
+                older.forEach { SystemFileSystem.delete(it) }
             }
             counts[device] = samples.size
             samples.lastOrNull()?.let { minutes[device] = it.t.floorDiv(60L) }
@@ -158,7 +176,7 @@ class HealthLog(private val root: Path) {
 
     suspend fun devices(): List<String> = mutex.withLock {
         if (!SystemFileSystem.exists(root)) return@withLock emptyList()
-        SystemFileSystem.list(root).filter { SystemFileSystem.exists(Path(it, HEALTH_FILE)) || SystemFileSystem.exists(Path(it, HEALTH_FILE_V1)) }.map { it.name }
+        SystemFileSystem.list(root).filter { d -> (HEALTH_OLD.map { it.first } + HEALTH_FILE).any { SystemFileSystem.exists(Path(d, it)) } }.map { it.name }
     }
 }
 
@@ -198,5 +216,27 @@ fun drainRates(samples: List<HealthSample>): List<Drain> {
         val seconds = mine.sumOf { it.last().t - it.first().t }
         val drop = mine.sumOf { it.first().batteryPct - it.last().batteryPct }
         Drain(fw, if (seconds > 0) drop * 3600f / seconds else null, seconds / 3600f)
+    }
+}
+
+private val LOSS_COUNTERS: List<Pair<String, (HealthSample) -> Long?>> = listOf(
+    "lost" to { it.health?.lostChunks?.toLong() },
+    "dropped" to { it.droppedChunks.toLong() },
+    "write errors" to { it.health?.spoolWriteErrors?.toLong() },
+    "corrupt" to { it.health?.spoolCorrupt?.toLong() },
+    "lost at power off" to { it.health?.shutdownLost?.toLong() },
+)
+
+fun lossGrowth(samples: List<HealthSample>): List<Pair<String, Long>> {
+    val sorted = samples.sortedBy { it.t }
+    return LOSS_COUNTERS.mapNotNull { (name, value) ->
+        var grew = 0L
+        sorted.zipWithNext { p, c ->
+            val pv = value(p) ?: return@zipWithNext
+            val cv = value(c) ?: return@zipWithNext
+            val restarted = (c.health?.uptimeS ?: 0) < (p.health?.uptimeS ?: 0) || cv < pv
+            grew += if (restarted) cv else cv - pv
+        }
+        if (grew > 0) name to grew else null
     }
 }

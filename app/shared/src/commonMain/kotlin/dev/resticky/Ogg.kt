@@ -7,6 +7,20 @@ private const val SAMPLES_PER_FRAME = 960L
 private const val PRE_SKIP = 312
 private const val SERIAL = 0x52535459
 private const val SILENT_TOC = 0x48
+private const val OPUS_MAX_PACKET = 1275
+const val MAX_CHUNK = 1 shl 20
+
+fun opusFramesOk(frames: ByteArray): Boolean {
+    var i = 0
+    while (i + 2 <= frames.size) {
+        val n = (frames[i].toInt() and 0xff) or ((frames[i + 1].toInt() and 0xff) shl 8)
+        if (n > OPUS_MAX_PACKET) return false
+        i += 2 + n
+    }
+    return i == frames.size
+}
+
+fun chunkAudioOk(audio: ByteArray): Boolean = audio.size <= MAX_CHUNK && opusFramesOk(audio)
 
 private val crcTable = IntArray(256) { i ->
     var r = i shl 24

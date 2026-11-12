@@ -207,6 +207,8 @@ fun Segment.splitBySpeaker(speakers: List<Int>): List<Segment> {
     }
 }
 
+const val DIARIZE_WINDOW_MS = 10 * 60 * 1000L
+
 fun frameWindows(frames: ByteArray, windowMs: Long): List<Pair<Long, ByteArray>> {
     val maxFrames = (windowMs / FRAME_MS).coerceAtLeast(1)
     val out = mutableListOf<Pair<Long, ByteArray>>()
@@ -229,6 +231,9 @@ fun frameWindows(frames: ByteArray, windowMs: Long): List<Pair<Long, ByteArray>>
     if (count > 0) out += startFrame * FRAME_MS to frames.copyOfRange(start, i)
     return out
 }
+
+fun Session.speakerInput(): String =
+    chunks.keys.sortedBy { it.toInt() }.joinToString("\n") { "$it:${chunkMs[it]}:${chunks.getValue(it)}" }
 
 suspend fun diarizeSession(frames: ByteArray, diarizer: Diarizer, windowMs: Long): Diarization {
     val turns = mutableListOf<Turn>()

@@ -151,7 +151,7 @@ class HubApp : Application() {
         engines = Engines(this) { onScreen }
         vocabulary = Vocabulary(Path(File(filesDir, "vocabulary.json").path))
         pipeline = Pipeline(
-            store, engines.transcriber, engines.summarizer, engines.diarizer, DIARIZE_WINDOW_MS, speechId = engines::speechId, people = people,
+            store, engines.transcriber, engines.summarizer, engines.diarizer, speechId = engines::speechId, people = people,
             vocabulary = vocabulary, calendarTerms = { from, to -> calendars.titles(from, to) }, attendees = { from, to -> calendars.attendees(from, to) }, log = ::log,
         )
         locator = Locator(this)
