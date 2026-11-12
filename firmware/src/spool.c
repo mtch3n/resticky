@@ -7,6 +7,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <dirent.h>
+#include <stddef.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +16,8 @@
 #include <unistd.h>
 
 #define BASE "/spool"
-#define MAGIC 0x52535031
+#define MAGIC_V1 0x52535031
+#define MAGIC 0x52535032
 #define RESERVE_BYTES (256 * 1024)
 #define MOUNT_TRIES 3
 #define SUPERBLOCK_BYTES (2 * 4096)
@@ -28,7 +30,12 @@ typedef struct {
     int64_t start_ms;
     uint32_t duration_ms;
     uint32_t len;
+    int64_t boot_unix_ms;
+    uint32_t boot_id;
+    uint32_t zero;
 } header_t;
+
+#define HEADER_V1 offsetof(header_t, boot_unix_ms)
 
 static const char *TAG = "spool";
 static SemaphoreHandle_t lock;
@@ -168,7 +175,7 @@ bool spool_init(void)
 
 bool spool_put(const audio_chunk_t *c)
 {
-    header_t h = {MAGIC, c->session, c->seq, c->final, c->start_ms, c->duration_ms, c->len};
+    header_t h = {MAGIC, c->session, c->seq, c->final, c->start_ms, c->duration_ms, c->len, c->boot_unix_ms, c->boot_id, 0};
     xSemaphoreTake(lock, portMAX_DELAY);
     if (bad_files && full()) purge_bad();
     while (full() && head < tail) drop_oldest();
@@ -196,9 +203,12 @@ bool spool_put(const audio_chunk_t *c)
 
 typedef enum { READ_OK, READ_GONE, READ_LATER, READ_CORRUPT } read_result_t;
 
+static size_t header_size(const header_t *h) { return h->magic == MAGIC ? sizeof *h : HEADER_V1; }
+
 static bool header_fits(const header_t *h, off_t size)
 {
-    return h->magic == MAGIC && size >= (off_t)sizeof *h && h->len <= (size_t)size - sizeof *h;
+    size_t n = header_size(h);
+    return (h->magic == MAGIC || h->magic == MAGIC_V1) && size >= (off_t)n && h->len <= (size_t)size - n;
 }
 
 static read_result_t read_chunk(const char *path, audio_chunk_t **out, off_t *size)
@@ -208,10 +218,12 @@ static read_result_t read_chunk(const char *path, audio_chunk_t **out, off_t *si
     *size = st.st_size;
     FILE *f = fopen(path, "rb");
     if (!f) return READ_LATER;
-    header_t h;
+    header_t h = {0};
     read_result_t r = READ_CORRUPT;
     audio_chunk_t *c = NULL;
-    if (fread(&h, sizeof h, 1, f) != 1 || !header_fits(&h, st.st_size)) goto done;
+    if (fread(&h, HEADER_V1, 1, f) != 1 || (h.magic == MAGIC && fread((uint8_t *)&h + HEADER_V1, sizeof h - HEADER_V1, 1, f) != 1) ||
+        !header_fits(&h, st.st_size))
+        goto done;
     c = heap_caps_calloc(1, sizeof *c, MALLOC_CAP_SPIRAM);
     if (c) c->data = heap_caps_malloc(h.len ? h.len : 1, MALLOC_CAP_SPIRAM);
     if (!c || !c->data) {
@@ -220,8 +232,8 @@ static read_result_t read_chunk(const char *path, audio_chunk_t **out, off_t *si
     }
     if (fread(c->data, 1, h.len, f) != h.len) goto done;
     *c = (audio_chunk_t){.session = h.session, .seq = h.seq, .final = h.final, .start_ms = h.start_ms,
-                         .duration_ms = h.duration_ms, .len = h.len, .data = c->data};
-    size_t extra = st.st_size - sizeof h - h.len;
+                         .duration_ms = h.duration_ms, .boot_id = h.boot_id, .boot_unix_ms = h.boot_unix_ms, .len = h.len, .data = c->data};
+    size_t extra = st.st_size - header_size(&h) - h.len;
     c->has_vad = extra >= sizeof c->vad;
     c->has_level = extra >= sizeof c->vad + sizeof c->level;
     if ((c->has_vad && fread(&c->vad, sizeof c->vad, 1, f) != 1) || (c->has_level && fread(&c->level, sizeof c->level, 1, f) != 1)) goto done;

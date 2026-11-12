@@ -209,8 +209,10 @@ low power and storage use that we can profile.
   fields when the conversation starts at 0 ms, else in `splits` (key: the start in ms).
 - A to-do ID is `<session>-<minute × 100 + index>`. The minute is the start of the conversation in the session, so
   the IDs of old data do not change.
-- A session closes 3 minutes after the capture end (`started` + chunk starts from `X-Start-Ms`), not after the last
-  arrival. `started` comes from the chunk age when the hub knows it.
+- Sessions are `open`, `provisional` (not complete, no arrival for 20 minutes) or `final` (final chunk and no
+  seq gap, or no arrival for 24 hours). The times are arrival times. A late chunk opens a session again, and the
+  pipeline does its work again. `started` follows the chunk with the lowest seq, with the clock anchor
+  (`boot_id`, `boot_unix_ms`) of its boot; with no anchor the time is an estimate (`~`). See `protocol.md`.
 - Each summary keeps the hash of its input (`input`). A summary for older input is not saved. A summary with no
   hash (old data) stays valid only for a conversation that is one whole session.
 - After a new summary, the hub copies the done state of a to-do with the same normalized text.

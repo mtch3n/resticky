@@ -57,9 +57,10 @@ class Store(val root: Path) {
 
     suspend fun addChunk(
         device: String, id: String, seq: Int, final: Boolean, durationMs: Long, data: ByteArray,
-        startMs: Long = 0, capturedAt: Instant? = null,
+        startMs: Long = 0, capturedAt: Instant? = null, boot: String = "", bootUnixMs: Long = 0,
     ): Added = mutex.withLock {
         val now = Clock.System.now()
+        if (boot.isNotEmpty() && bootUnixMs > 0) putAnchor(device, boot, Anchor(bootUnixMs), skip = id)
         val m = load(device, id) ?: Session(device, id, now, now, 0, chunks = mutableMapOf())
         val file = Path(dir(device, id), "$seq.opus")
         if ("$seq" in m.chunks) {
@@ -74,20 +75,53 @@ class Store(val root: Path) {
             return@withLock Added.CONFLICT
         }
         val first = m.chunks.isEmpty()
-        if (first) m.started = capturedAt ?: (now - durationMs.milliseconds)
+        val guess = capturedAt ?: (now - durationMs.milliseconds)
+        if (first) {
+            m.started = guess
+            m.timeEstimated = true
+        }
         write(file, data, durable = true)
         m.chunks["$seq"] = PENDING
         m.durationMs += durationMs
         m.chunkMs["$seq"] = durationMs
-        if (startMs > 0) m.chunkStart["$seq"] = startMs
+        if (startMs > 0) {
+            m.chunkStart["$seq"] = startMs
+            if (m.guessAnchorMs == null) m.guessAnchorMs = guess.toEpochMilliseconds() - startMs
+        }
+        if (m.boot.isEmpty()) m.boot = boot
+        m.retime(anchorOf(device, m.boot))
         m.diarized = false
         m.speakersFailed = false
         m.lastChunk = now
+        if (final) m.finalSeq = seq
         m.final = m.final || final
         m.ready = false
         save(m, durable = true)
         if (first) Added.SESSION else Added.CHUNK
     }
+
+    private fun anchorsPath(device: String) = Path(root, device, "anchors.json")
+
+    private fun anchors(device: String): Map<String, Anchor> =
+        read(anchorsPath(device))?.let { runCatching { hubJson.decodeFromString<Map<String, Anchor>>(it.decodeToString()) }.getOrNull() }.orEmpty()
+
+    private fun anchorOf(device: String, boot: String): Anchor? = if (boot.isEmpty()) null else anchors(device)[boot]
+
+    private fun putAnchor(device: String, boot: String, a: Anchor, skip: String? = null): Boolean {
+        val all = anchors(device)
+        val old = all[boot]
+        if (old == a || old != null && !old.estimated && a.estimated || old != null && old.estimated && a.estimated) return false
+        write(anchorsPath(device), hubJson.encodeToString(all + (boot to a)).encodeToByteArray(), durable = true)
+        for (s in listUnlocked(device)) if (s.boot == boot && s.id != skip) {
+            s.retime(a)
+            save(s, durable = true)
+        }
+        return true
+    }
+
+    suspend fun setAnchor(device: String, boot: String, a: Anchor): Boolean = mutex.withLock { putAnchor(device, boot, a) }
+
+    suspend fun anchor(device: String, boot: String): Anchor? = mutex.withLock { anchorOf(device, boot) }
 
     suspend fun addMarks(device: String, id: String, offsets: List<Long>): Int = mutex.withLock {
         val now = Clock.System.now()

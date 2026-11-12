@@ -26,6 +26,7 @@ import dev.resticky.applyRule
 import dev.resticky.Fix
 import dev.resticky.undoFix
 import dev.resticky.closed
+import dev.resticky.SESSION_IDLE
 import dev.resticky.conversations
 import dev.resticky.Session
 import dev.resticky.TodoList
@@ -115,7 +116,7 @@ class HubViewModel(application: Application) : AndroidViewModel(application) {
             conversations(sessions).map { c ->
                 val tail = c.parts.last()
                 val ready = c.ready()
-                ConversationView(c, c.recap(), ready, !ready && tail.toMs == tail.session.endMs() && !tail.session.closed(now))
+                ConversationView(c, c.recap(), ready, !ready && tail.toMs == tail.session.endMs() && !tail.session.closed(now) && now - tail.session.wallAt(tail.toMs) < SESSION_IDLE)
             }.filterNot { it.ready && it.recap.title == NO_SPEECH }
         }
     }

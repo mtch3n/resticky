@@ -1,10 +1,13 @@
 package dev.resticky
 
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 val CONVERSATION_GAP = 10.minutes
+val PROVISIONAL_IDLE = 20.minutes
+val FINAL_IDLE = 1.days
 const val SILENCE_SPLIT_MS = 300_000L
 const val TODO_SLOTS = 100
 private const val MINUTE_MS = 60_000L
@@ -19,7 +22,31 @@ fun Session.captureMs(timelineMs: Long): Long {
 
 fun Session.wallAt(timelineMs: Long): Instant = started + captureMs(timelineMs).milliseconds
 
-fun Session.closed(now: Instant): Boolean = final || now - wallAt(endMs()) > SESSION_IDLE
+enum class SessionState { OPEN, PROVISIONAL, FINAL }
+
+fun Session.gaps(): List<Int> {
+    val last = finalSeq ?: chunks.keys.maxOfOrNull { it.toInt() } ?: return emptyList()
+    return (0..last).filter { "$it" !in chunks }
+}
+
+fun Session.complete(): Boolean = final && chunks.isNotEmpty() && gaps().isEmpty()
+
+fun Session.state(now: Instant): SessionState = when {
+    complete() || now - lastChunk >= FINAL_IDLE -> SessionState.FINAL
+    now - lastChunk >= PROVISIONAL_IDLE -> SessionState.PROVISIONAL
+    else -> SessionState.OPEN
+}
+
+fun Session.closed(now: Instant): Boolean = state(now) != SessionState.OPEN
+
+fun Session.partial(now: Instant): Boolean = closed(now) && !complete()
+
+fun Session.retime(anchor: Anchor?) {
+    val low = chunkStart.keys.minByOrNull { it.toInt() } ?: return
+    val base = anchor?.unixMs ?: guessAnchorMs ?: return
+    started = Instant.fromEpochMilliseconds(base + chunkStart.getValue(low) - offsets().getValue(low))
+    timeEstimated = anchor == null || anchor.estimated
+}
 
 val Session.needsSpeakers: Boolean get() = !diarized && !ready
 
@@ -66,6 +93,9 @@ class Conversation(val parts: List<Part>) {
     val device: String get() = head.session.device
     val key: String get() = "${head.session.id}@${head.fromMs}"
     val start: Instant get() = head.session.wallAt(head.fromMs)
+    val approximate: Boolean get() = parts.any { it.session.timeEstimated }
+
+    fun partial(now: Instant): Boolean = parts.any { it.session.partial(now) }
 
     fun recap(): Recap = head.session.recap(head.fromMs)
 

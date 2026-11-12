@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "board.h"
+#include "clock.h"
 #include "driver/gpio.h"
 #include "driver/i2s_pdm.h"
 #include "encoder/impl/esp_opus_enc.h"
@@ -130,6 +131,8 @@ static audio_chunk_t *chunk_new(uint32_t session, uint32_t seq)
     c->session = session;
     c->seq = seq;
     c->start_ms = esp_timer_get_time() / 1000;
+    c->boot_id = clock_boot_id();
+    c->boot_unix_ms = clock_boot_unix_ms();
     c->has_vad = vad_ok;
     return c;
 }

@@ -13,7 +13,7 @@ class BleTest {
     }
 
     private fun chunkPayload(audio: ByteArray): ByteArray {
-        val h = ByteArray(31)
+        val h = ByteArray(43)
         byteArrayOf(0xa1.toByte(), 0xb2.toByte(), 0xc3.toByte(), 0xd4.toByte(), 0xe5.toByte(), 0xf6.toByte()).copyInto(h)
         byteArrayOf(0x78, 0x56, 0x34, 0x12).copyInto(h, 6)
         h[10] = 7
@@ -23,6 +23,8 @@ class BleTest {
         h[23] = 0x30
         h[24] = 0x75
         h[27] = audio.size.toByte()
+        byteArrayOf(0x0d, 0xf0.toByte(), 0xad.toByte(), 0x8b.toByte()).copyInto(h, 31)
+        1_794_000_000_000L.let { v -> for (i in 0 until 8) h[35 + i] = (v shr (8 * i)).toByte() }
         return h + audio
     }
 
@@ -40,6 +42,8 @@ class BleTest {
         assertTrue(chunk.final)
         assertEquals(30000, chunk.startMs)
         assertEquals(30000, chunk.durationMs)
+        assertEquals("8badf00d", chunk.boot)
+        assertEquals(1_794_000_000_000L, chunk.bootUnixMs)
         assertContentEquals(byteArrayOf(1, 2, 3), chunk.audio)
     }
 

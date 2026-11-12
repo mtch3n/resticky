@@ -47,7 +47,9 @@ fun whenLabel(t: Instant): String {
     return if (local.date == Clock.System.now().toLocalDateTime(tz).date) local.format(clock) else local.format(dated)
 }
 
-fun transcriptItems(sessions: List<Session>): List<TranscriptItem> = conversations(sessions)
+fun startLabel(c: Conversation): String = (if (c.approximate) "~" else "") + whenLabel(c.start)
+
+fun transcriptItems(sessions: List<Session>, now: Instant = Clock.System.now()): List<TranscriptItem> = conversations(sessions)
     .map { it to it.ready() }
     .filterNot { (c, ready) -> ready && c.recap().title == NO_SPEECH }
     .take(MAX_ITEMS)
@@ -57,7 +59,7 @@ fun transcriptItems(sessions: List<Session>): List<TranscriptItem> = conversatio
         val cps = text.codePointList()
         val tail = if (cps.size > TEXT_TAIL) "..." + cps.takeLast(TEXT_TAIL).joinToString("") { it.codePointString() } else text
         val place = c.head.session.place
-        TranscriptItem(whenLabel(c.start), r.title, r.summary, r.todos, ready, tail, if (place == PENDING) "" else place, c.marks(), c.photos())
+        TranscriptItem(startLabel(c), r.title, r.summary, r.todos, ready, tail, if (place == PENDING) "" else place, c.marks(), c.photos(), !c.partial(now))
     }
 
 internal fun String.codePointList(): List<Int> {
@@ -88,7 +90,7 @@ fun todoList(sessions: List<Session>): TodoList {
     for (c in conversations(sessions)) {
         val r = c.recap()
         r.todos.forEachIndexed { i, text ->
-            val item = TodoItem(c.todoId(i), text, "${r.title} · ${whenLabel(c.start)}")
+            val item = TodoItem(c.todoId(i), text, "${r.title} · ${startLabel(c)}")
             val at = r.done["$i"]
             if (at == null) open += item else if (at > today) done += item
         }
@@ -175,6 +177,14 @@ class Hub(
             c.night?.takeIf(::validNight)?.let { if (nightSetting.report(it)) log("INFO night from device device=${c.device} night=$it") }
             c.home?.takeIf { it in HOME_SCREENS }?.let { if (homeSetting.report(it)) log("INFO home from device device=${c.device} home=$it") }
         }
+        val boot = bootKey(c.bootId)
+        val anchor = when {
+            boot.isEmpty() -> null
+            c.bootUnixMs > 0 -> Anchor(c.bootUnixMs)
+            c.health != null && c.health.uptimeS > 0 -> Anchor(now.toEpochMilliseconds() - c.health.uptimeS * 1000L, estimated = true)
+            else -> null
+        }
+        if (anchor != null && store.setAnchor(c.device, boot, anchor)) log("INFO clock anchor device=${c.device} boot=$boot unix_ms=${anchor.unixMs} estimated=${anchor.estimated}")
         runCatching { healthLog.add(c.device, HealthSample.of(c, now.epochSeconds)) }.onFailure { log("WARN health store device=${c.device} ${it.message}") }
         var added = 0
         c.marks.filter { ID_PATTERN.matches(it.session) && it.offsetMs >= 0 }.groupBy { it.session }.forEach { (session, marks) ->
@@ -183,17 +193,22 @@ class Hub(
         log("INFO checkin link=$link device=${c.device} firmware=${c.firmware} battery_pct=${c.batteryPct} current_ma=${c.currentMa} recording=${c.recording} outbox=${c.outboxChunks} dropped=${c.droppedChunks} wifi_saved=${c.wifiSaved.size} marks=${c.marks.size} new_marks=$added")
     }
 
-    suspend fun receiveChunk(device: String, session: String, seq: Int, final: Boolean, startMs: Long, durationMs: Long, data: ByteArray, link: String) {
+    suspend fun receiveChunk(
+        device: String, session: String, seq: Int, final: Boolean, startMs: Long, durationMs: Long, data: ByteArray, link: String,
+        boot: String = "", bootUnixMs: Long = 0,
+    ): Added {
         val now = Clock.System.now()
-        val age = chunkAge(devicesLock.withLock { devices[device] }, startMs, now)
-        val added = store.addChunk(device, session, seq, final, durationMs, data, startMs, age?.takeIf { startMs > 0 }?.let { now - it })
+        val anchor = if (bootUnixMs > 0) bootUnixMs else store.anchor(device, boot)?.unixMs
+        val age = chunkAge(anchor, startMs, now)
+        val added = store.addChunk(device, session, seq, final, durationMs, data, startMs, age?.let { now - it }, boot, bootUnixMs)
         if (added == Added.CONFLICT) log("WARN chunk conflict link=$link device=$device session=$session seq=$seq bytes=${data.size} kept=first quarantine=${conflictName(seq, data)}")
         else if (added == Added.RESTORED) log("WARN chunk restored link=$link device=$device session=$session seq=$seq bytes=${data.size} reason=file_missing")
-        else log("INFO chunk link=$link device=$device session=$session seq=$seq bytes=${data.size} duration_ms=$durationMs final=$final added=${added.name.lowercase()}")
+        else log("INFO chunk link=$link device=$device session=$session seq=$seq bytes=${data.size} duration_ms=$durationMs final=$final boot=${boot.ifEmpty { "none" }} clock=${if (bootUnixMs > 0) "device" else if (anchor != null) "table" else "unknown"} added=${added.name.lowercase()}")
         if (added == Added.SESSION) {
             if (age == null || age <= PLACE_MAX_AGE) newSession(device, session) else log("INFO session from backlog session=$session age=$age")
         }
         pipeline.kick()
+        return added
     }
 
     suspend fun health(device: String, hours: Int): List<HealthSample> =
@@ -262,8 +277,11 @@ class Hub(
                 return@post call.fail(HttpStatusCode.BadRequest, "need X-Device, X-Session (hex), X-Seq and X-Duration-Ms headers")
             }
             val data = call.receive<ByteArray>().let { if (it.size > MAX_CHUNK) it.copyOf(MAX_CHUNK) else it }
-            receiveChunk(device, session, seq, h["X-Final"] == "1", h["X-Start-Ms"]?.toLongOrNull() ?: 0, duration, data, "wifi")
-            call.respondText("")
+            val added = receiveChunk(
+                device, session, seq, h["X-Final"] == "1", h["X-Start-Ms"]?.toLongOrNull() ?: 0, duration, data, "wifi",
+                bootKey(h["X-Boot-Id"]), h["X-Boot-Unix-Ms"]?.toLongOrNull()?.takeIf { it > 0 } ?: 0,
+            )
+            call.json(hubJson.encodeToString(ChunkReply(device, session, seq, storedName(added))))
         }
         get("/api/transcripts") {
             val device = call.device() ?: return@get call.fail(HttpStatusCode.BadRequest, "need device")

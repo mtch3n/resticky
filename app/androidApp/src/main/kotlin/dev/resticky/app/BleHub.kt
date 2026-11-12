@@ -260,7 +260,7 @@ class BleHub(private val context: Context, private val hub: Hub, private val sco
             FRAME_CHUNK -> {
                 val chunk = parseChunk(frame.payload) ?: return log("WARN ble bad chunk frame bytes=${frame.payload.size}")
                 scope.launch {
-                    runCatching { hub.receiveChunk(chunk.device, chunk.sessionId, chunk.seq.toInt(), chunk.final, chunk.startMs, chunk.durationMs, chunk.audio, "ble") }
+                    runCatching { hub.receiveChunk(chunk.device, chunk.sessionId, chunk.seq.toInt(), chunk.final, chunk.startMs, chunk.durationMs, chunk.audio, "ble", chunk.boot, chunk.bootUnixMs) }
                         .onFailure { return@launch log("WARN ble chunk not stored, no ack ${chunk.sessionId}/${chunk.seq}: ${it.message}") }
                     write(ackFrame(chunk.session, chunk.seq))
                     val kbs = if (tookMs > 0) frame.payload.size / 1.024 / tookMs else 0.0

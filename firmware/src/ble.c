@@ -30,7 +30,7 @@
 #define TYPE_INSTALL 16
 #define TYPE_PHOTO 17
 #define TYPE_LISTS 23
-#define CHUNK_HEADER 31
+#define CHUNK_HEADER 43
 #define ACK_LEN 8
 #define ACK_TIMEOUT_MS 15000
 #define RX_MAX (5 + 48000)
@@ -413,6 +413,8 @@ bool ble_send_chunk(const audio_chunk_t *c)
     memcpy(h + 15, &c->start_ms, 8);
     memcpy(h + 23, &duration, 4);
     memcpy(h + 27, &len, 4);
+    memcpy(h + 31, &c->boot_id, 4);
+    memcpy(h + 35, &c->boot_unix_ms, 8);
     xQueueReset(acks);
     int64_t t0 = esp_timer_get_time();
     if (!send_frame(TYPE_CHUNK, h, sizeof h, c->data, c->len)) return false;

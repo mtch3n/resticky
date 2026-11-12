@@ -31,7 +31,7 @@ const val OTA_WINDOW = 16 * 1024
 const val MAX_FRAME = (1 shl 20) + 64
 const val OTA_BLOCK = 4096
 const val MAX_DATA_PAYLOAD = 2048
-private const val CHUNK_HEADER = 31
+private const val CHUNK_HEADER = 43
 
 class Frame(val type: Int, val payload: ByteArray)
 
@@ -42,9 +42,12 @@ class ChunkFrame(
     val final: Boolean,
     val startMs: Long,
     val durationMs: Long,
+    val bootId: Long,
+    val bootUnixMs: Long,
     val audio: ByteArray,
 ) {
     val sessionId: String get() = session.toString(16).padStart(8, '0')
+    val boot: String get() = bootKey(bootId.toString(16))
 }
 
 private fun ByteArray.u32(at: Int): Long = (0 until 4).fold(0L) { v, i -> v or ((this[at + i].toLong() and 0xff) shl (8 * i)) }
@@ -88,6 +91,8 @@ fun parseChunk(p: ByteArray): ChunkFrame? {
         final = p[14].toInt() != 0,
         startMs = p.i64(15),
         durationMs = p.u32(23),
+        bootId = p.u32(31),
+        bootUnixMs = p.i64(35).coerceAtLeast(0),
         audio = p.copyOfRange(CHUNK_HEADER, p.size),
     )
 }

@@ -62,13 +62,34 @@ class HubContractTest {
 
     private fun get(path: String) = send("GET", path)
 
-    private fun chunk(session: String, seq: Int, final: Boolean = false, frames: Int = 50) = send(
+    private val boot = "0000b007"
+    private val bootUnixMs = System.currentTimeMillis() - 120_000
+
+    private fun chunk(
+        session: String, seq: Int, final: Boolean = false, frames: Int = 50,
+        startMs: Long = 60_000L + seq * 30_000L, boot: String = this.boot, unixMs: Long = bootUnixMs,
+    ) = send(
         "POST", "/api/chunks", opusFrames(frames),
         mapOf(
             "X-Device" to device, "X-Session" to session, "X-Seq" to "$seq", "X-Final" to if (final) "1" else "0",
-            "X-Start-Ms" to "0", "X-Duration-Ms" to "${frames * 20}",
+            "X-Start-Ms" to "$startMs", "X-Duration-Ms" to "${frames * 20}", "X-Boot-Id" to boot, "X-Boot-Unix-Ms" to "$unixMs",
         ),
     )
+
+    private fun started(session: String): Long = java.time.Instant.parse(meta(session).getValue("started").jsonPrimitive.content).toEpochMilli()
+
+    private fun estimated(session: String): Boolean = meta(session)["time_estimated"]?.jsonPrimitive?.boolean == true
+
+    private fun transcripts(): List<JsonObject> = get("/api/transcripts?device=$device").json.jsonArray.map { it.jsonObject }
+
+    private fun stored(r: Reply, session: String, seq: Int): String {
+        assertEquals(200, r.status)
+        val o = r.json.jsonObject
+        assertEquals(device, o.getValue("device").jsonPrimitive.content)
+        assertEquals(session, o.getValue("session").jsonPrimitive.content)
+        assertEquals(seq, o.getValue("seq").jsonPrimitive.int)
+        return o.getValue("stored").jsonPrimitive.content
+    }
 
     private fun opusFrames(n: Int): ByteArray {
         val packet = byteArrayOf(0x08, 0x0b, 0xe4.toByte(), 0xc1.toByte())
@@ -248,6 +269,77 @@ class HubContractTest {
     }
 
     @Test
+    fun chunkReplyNamesTheStoredChunk() {
+        val s = "c0ffee03"
+        assertEquals("added", stored(chunk(s, 0), s, 0))
+        assertEquals("added", stored(chunk(s, 1), s, 1))
+        assertEquals("repeat", stored(chunk(s, 0), s, 0))
+        data.delete("$device/$s/0.opus")
+        assertEquals("restored", stored(chunk(s, 0), s, 0))
+        assertEquals("conflict", stored(chunk(s, 0, frames = 70), s, 0))
+    }
+
+    @Test
+    fun outOfOrderChunksKeepStartedAtTheLowestSeq() {
+        val s = "0d0e0f01"
+        assertEquals(200, chunk(s, 3).status)
+        assertEquals(bootUnixMs + 60_000 + 3 * 30_000 - 3 * 30_000, started(s))
+        assertEquals(200, chunk(s, 1, startMs = 70_000).status)
+        assertEquals(bootUnixMs + 70_000 - 30_000, started(s))
+        assertEquals(200, chunk(s, 2, startMs = 100_000).status)
+        assertEquals(bootUnixMs + 40_000, started(s))
+        assertTrue(!estimated(s))
+    }
+
+    @Test
+    fun unknownClockIsEstimatedUntilTheAnchorArrives() {
+        val s = "0d0e0f02"
+        val other = "0d0e0f03"
+        val fresh = "0000f00d"
+        assertEquals(200, chunk(s, 0, startMs = 5_000, boot = fresh, unixMs = 0).status)
+        assertTrue(estimated(s))
+        assertTrue(transcripts().single().getValue("when").jsonPrimitive.content.startsWith("~"))
+        val anchor = System.currentTimeMillis() - 50_000
+        assertEquals(200, chunk(s, 1, startMs = 35_000, boot = fresh, unixMs = anchor).status)
+        assertEquals(anchor + 5_000, started(s))
+        assertTrue(!estimated(s))
+        assertTrue(Regex("""\d\d:\d\d""").matches(transcripts().single().getValue("when").jsonPrimitive.content))
+        val later = "0000d00d"
+        val checkin = """{"device":"$device","boot_id":"$later","boot_unix_ms":${anchor + 1_000},"health":{"uptime_s":40}}"""
+        assertEquals(200, send("POST", "/api/checkin", checkin.encodeToByteArray(), mapOf("Content-Type" to "application/json")).status)
+        assertEquals(200, chunk(other, 0, startMs = 20_000, boot = later, unixMs = 0).status)
+        assertEquals(anchor + 21_000, started(other))
+        assertTrue(!estimated(other))
+    }
+
+    @Test
+    fun lateChunkOpensAProvisionalSessionAgain() {
+        assumeFalse(data.realEngines, "needs the fake engines")
+        val s = "1a7e01"
+        val now = ZonedDateTime.now()
+        val text = "we plan the garden fence for the spring and Kim buys the wood on Monday"
+        data.write(
+            "$device/$s/meta.json",
+            """{"device":"$device","id":"$s","started":"${now.minusHours(3).toOffsetDateTime()}","last_chunk":"${now.minusMinutes(25).toOffsetDateTime()}",""" +
+                """"duration_ms":60000,"final":true,"final_seq":6,"chunks":{"5":"$text","6":"$text"}}""",
+        )
+        assertEquals(200, chunk("1a7e02", 0).status)
+        val deadline = System.currentTimeMillis() + 30_000
+        var item: JsonObject? = null
+        while (System.currentTimeMillis() < deadline) {
+            item = transcripts().firstOrNull { text in it.getValue("text").jsonPrimitive.content }
+            if (item?.getValue("ready")?.jsonPrimitive?.boolean == true) break
+            Thread.sleep(300)
+        }
+        val ready = item ?: fail("no transcript item")
+        assertTrue(ready.getValue("ready").jsonPrimitive.boolean, "provisional session not summarized: $ready")
+        assertTrue(!ready.getValue("complete").jsonPrimitive.boolean)
+        assertEquals("added", stored(chunk(s, 0), s, 0))
+        assertTrue(meta(s)["ready"]?.jsonPrimitive?.boolean != true)
+        assertTrue(transcripts().none { it.getValue("ready").jsonPrimitive.boolean })
+    }
+
+    @Test
     fun sessionsMinutesApartAreOneTranscript() {
         val now = ZonedDateTime.now()
         seed("f1", now.minusMinutes(8), """"chunks":{"0":"one two three"}""")
@@ -277,6 +369,7 @@ class HubContractTest {
         assertEquals(listOf("Fake todo"), ready.getValue("todos").jsonArray.map { it.jsonPrimitive.content })
         assertEquals("we agreed to ship the billing report on Friday and Sam checks the numbers".let { "$it $it" }, ready.getValue("text").jsonPrimitive.content)
         assertTrue(Regex("""\d\d:\d\d""").matches(ready.getValue("when").jsonPrimitive.content))
+        assertTrue(ready["complete"] == null)
     }
 
     @Test

@@ -44,8 +44,8 @@ with a bad ID gets `400`.
 | Method and path | Request | Response |
 |---|---|---|
 | `GET /api/hello` | Optional `nonce` (see "Hub password"). No `Authorization` header necessary. | `200`, `{"service":"resticky-hub","version":"<v>"}`, and `"proof":"<hex>"` when the hub has a password and the request has a `nonce`. |
-| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound`, `home` and `night` (optional): see "Display". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>","night":"off"|"HH:MM-HH:MM"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
-| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start; see "Places"), `X-Duration-Ms`. Body: audio frames (see below), at most 1 MB. | `200` only when the hub holds this exact chunk on disk (see "Chunk acknowledgement"). `400` if a header is missing or bad. `500` if the hub cannot store the chunk; the device keeps the chunk and sends it again. |
+| `POST /api/checkin` | JSON `{"device","firmware","battery_pct","voltage_mv","current_ma","recording","outbox_chunks","outbox_bytes","dropped_chunks","wifi_saved","wifi_ssid","wifi_rssi","health"}`. The outbox fields count the chunks that wait in the device flash spool and the chunks that the device deleted because the spool was full. The Wi-Fi fields: see "Wi-Fi from the phone". `health` (optional, firmware 0.11 and later): see "Health". `marks` (optional): see "Marks". `sound`, `home` and `night` (optional): see "Display". `boot_id` and `boot_unix_ms`: see "Clock anchor". | `200` after the marks are stored, `{"hub_version":"<v>","utc_offset_min":<n>,"clock_face":"<face>","weather_style":"<style>","hour_format":"24"|"12","sound":"off"|"beep"|"buzz","home":"<screen>","night":"off"|"HH:MM-HH:MM"}` (see "Time" and "Display"). `400` if the body is not JSON or the device ID is bad. |
+| `POST /api/chunks` | Headers `X-Device`, `X-Session`, `X-Seq` (integer ≥ 0), `X-Final` (`1` or `0`), `X-Start-Ms` (device uptime in ms at the chunk start, always uptime), `X-Duration-Ms`, `X-Boot-Id` (8 hex digits) and `X-Boot-Unix-Ms` (decimal, `0` = clock not known); see "Clock anchor". Body: audio frames (see below), at most 1 MB. | `200` only when the hub holds this exact chunk on disk (see "Chunk acknowledgement"), with the body `{"device":"<id>","session":"<id>","seq":<n>,"stored":"added"\|"repeat"\|"restored"\|"conflict"}`. `400` if a header is missing or bad. `500` if the hub cannot store the chunk; the device keeps the chunk and sends it again. |
 | `GET /api/transcripts?device=<id>` | — | `200`, a JSON array of at most 18 items, newest session first. Sessions with the title "No speech" are not in the list. |
 | `GET /api/todos?device=<id>` | — | `200`, `{"open":[todo],"done":[todo]}`. `done` has only the to-dos done since 00:00 local time today. |
 | `PUT /api/todos/{device}/{session}/{index}` | JSON `{"done":true\|false,"at":"<RFC 3339 time>"}` | `200`, `{"done":…,"at":…}` with the state that the hub keeps. `404` if the to-do does not exist. `400` if the body is bad. See "To-do changes". |
@@ -80,7 +80,7 @@ Required hub change (shared store, `app/shared`): `POST /api/chunks` reads the t
 writes them into `meta.json` as `vad`: sequence number (string) → `{"speech":"<base64>","keep":"<base64>",
 "keep_prev":<n>}`. A chunk with no `X-Vad-Speech` header has no entry. The BLE `chunk` frame gets an
 optional VAD trailer after the audio (u16 mask length `m`, speech mask `m` bytes, keep mask `m` bytes,
-keep_prev u16); `parseChunk` must accept `size >= 31 + audio length` before the device sends it.
+keep_prev u16); `parseChunk` must accept `size >= 43 + audio length` before the device sends it.
 
 ### Transcript item
 
@@ -89,7 +89,9 @@ keep_prev u16); `parseChunk` must accept `size >= 31 + audio length` before the 
 ```
 
 - `when`: `HH:MM` for a session that started today, else `Mon D HH:MM` (Go layout `Jan 2 15:04`), local
-  time.
+  time. A `~` comes first when the start time is an estimate (see "Clock anchor").
+- `complete`: `false` when a session of the item is closed with chunks missing (`provisional`, or `final`
+  after the long time limit; see "Session rules"). Left out when `true`.
 - `ready`: `true` when the summary exists. While it is `false`, `title` and `summary` are empty and
   `todos` is `[]`. `todos` is always an array, never `null`.
 - `text`: the last 180 characters (Unicode code points) of the transcript, with `...` before them when
@@ -311,6 +313,31 @@ the range: the discharge rate in % per hour, the hours of data, and the hours fr
 uses only discharge stretches of 1 hour or more. A stretch stops at a gap of more than 30 minutes, at a
 sample with `current_ma` > 0 (charging), at a rise of `battery_pct`, and at a change of `firmware`.
 
+## Clock anchor
+
+`start_ms` is always the device uptime in ms. The device does not put Unix time into it. Each chunk and each
+check-in also carries the anchor of the boot:
+
+| Field | HTTP chunk | BLE chunk | Check-in | Content |
+|---|---|---|---|---|
+| `boot_id` | `X-Boot-Id` (8 hex digits) | offset 31, u32 | `"boot_id":"<8 hex>"` | Random u32, not 0, made at each boot. |
+| `boot_unix_ms` | `X-Boot-Unix-Ms` | offset 35, i64 | `"boot_unix_ms":<n>` | Unix time in ms at uptime 0. `0` = the clock is not known. |
+
+- The device sets `boot_unix_ms` when its clock becomes valid (RTC at the start, or SNTP) and again at each
+  SNTP sync. A chunk stores the anchor that was valid at its start. When a chunk of the current boot has
+  `0`, the device puts the current anchor into the send.
+- The capture time of a chunk is `boot_unix_ms + start_ms`.
+- The hub keeps a table (device, `boot_id`) → anchor in `<device>/anchors.json`. A chunk or a check-in with a
+  `boot_unix_ms` above 0 fills it. A check-in of a boot with no anchor gives an estimate:
+  `now − uptime_s × 1000` (marked `estimated`). A device anchor replaces an estimate; an estimate never
+  replaces a device anchor or an older estimate.
+- When the table gets a new anchor for a boot, the hub calculates `started` again for each session of that
+  boot. Thus a clock that becomes valid in the middle of a session also gives the time of the earlier chunks.
+- With no anchor for the boot, the hub estimates the time from the arrival (`now − X-Duration-Ms` for the
+  first chunk that arrives) and sets `time_estimated`. The apps show the time with `~`.
+- A chunk with `boot_id` 0 (a flash chunk in the old header format, magic `RSP1`) has no anchor. The hub uses the
+  arrival estimate.
+
 ## Places
 
 The phone hub tags each new session with a place. The user names the places in Settings › Places on the
@@ -318,10 +345,9 @@ phone (name, radius 100, 150 or 300 m, the precise location of the phone when th
 places are stored only in the app preferences on the phone.
 
 - When the first chunk of a session that the hub does not know arrives, the hub decides if the session is
-  live: the chunk age is `uptime_s × 1000 + (now − time of the last check-in) − X-Start-Ms` (BLE: `start ms`),
-  from the last check-in of the device. A chunk older than 10 minutes (from the outbox backlog) gets no tag. If
-  the age is not known (no `health` in the last check-in, or a negative age after a restart of the device), the
-  hub tags the session.
+  live: the chunk age is `now − (anchor + X-Start-Ms)` (BLE: `start ms`), with the clock anchor of the boot of
+  the chunk (see "Clock anchor"). A chunk older than 10 minutes (from the outbox backlog) gets no tag. If the
+  age is not known (no anchor for this boot, or a negative age), the hub tags the session.
 - The phone needs precise location (`ACCESS_FINE_LOCATION`) and, when the app is not on the screen,
   `ACCESS_BACKGROUND_LOCATION` ("Allow all the time"). The app asks for them only in Settings › Places. Without
   them the session gets no tag. The hub service type stays `connectedDevice`: with background access, a
@@ -435,7 +461,21 @@ A mark is a moment that the user marked on the Sticky with a double press while 
 
 ## Session rules
 
-- A session is closed when a chunk has `X-Final: 1`, or when no chunk came for 3 minutes.
+A session has one of three states. The times are arrival times on the hub, not capture times. Thus a session
+from the device backlog does not close at its first chunk.
+
+| State | Condition | Pipeline |
+|---|---|---|
+| `open` | Not complete, and a chunk arrived in the last 20 minutes. | Transcribes each chunk. No speakers, no summary. |
+| `provisional` | Not complete, and no chunk arrived for 20 minutes. | Speakers and summary, with `"complete":false` in the transcript item. |
+| `final` | Complete: the final chunk (`X-Final: 1`) arrived, and each seq from 0 to the final seq is there. Or no chunk arrived for 24 hours. | Speakers and summary. A `final` session after 24 hours with missing seqs also has `"complete":false`. |
+
+- A chunk that arrives for a `provisional` or `final` session opens it again: the hub clears `ready` and the
+  speaker run, and the pipeline does the work again when the session closes. A summary is made again only
+  when its input changed (the input hash, see `input` in `meta.json`).
+- `started` is the capture time at the start of the session timeline, from the chunk with the lowest seq that
+  the hub has: `anchor + start_ms(lowest) − timeline offset(lowest)`. When a chunk with a lower seq arrives,
+  the hub calculates `started` again. Offsets inside a session use `start_ms` differences (all of one boot).
 - Each chunk is transcribed when it arrives. A closed session with no pending chunk gets a summary: a
   title (at most 6 words), 1 to 2 sentences, and the to-dos. A session with no words gets the title
   "No speech" and no summary.
@@ -449,9 +489,15 @@ it (see "Chunk acknowledgement").
 - A new chunk goes from the upload queue in RAM (8 chunks) to the outbox. If the write fails, the chunk stays
   in the queue and the device tries again after 1 s (`spool_write_errors` counts each failed try). The device
   drops a new chunk only when the queue is full (`lost_chunks`).
+- A chunk file (`/spool/<id>.chk`) is a 48-byte header (little-endian), the audio, the VAD masks and the
+  level: magic `RSP2` (u32 `0x52535032`), session u32, seq u32, final u32, start ms i64, duration ms u32,
+  audio length u32, boot Unix ms i64, boot ID u32, zero u32. The device also reads the old 32-byte header
+  (magic `RSP1`, no boot fields); such a chunk goes with boot ID 0 (see "Clock anchor").
 - When the outbox has less than 256 KB free, the device first deletes the files that it moved aside, then
   the oldest chunks (`dropped_chunks`).
-- The device deletes a chunk only after HTTP `200` for that chunk or an `ack` with the same session and seq.
+- The device deletes a chunk only after HTTP `200` with a body that names the same device, session and seq
+  (and a known `stored` value), or an `ack` with the same session and seq. A `200` with a different body, or a
+  body that is not JSON, is not an acknowledgement: the chunk stays and goes again.
 - When the device cannot read a chunk because it has no memory, or the file system gives an error, it keeps
   the chunk and tries again later. When the file is corrupt (wrong magic, or the length in the header is
   more than the file), the device renames it to `<id>.bad`, counts it in `spool_corrupt`, and sends the next
@@ -469,13 +515,17 @@ device deletes its copy. "Durably" means: the hub wrote the file to a temporary 
 (`fsync`), renamed it, and flushed the folders. The hub compares the chunk with the stored data for the same
 device, session and seq:
 
-| Stored | Hub action | Answer |
-|---|---|---|
-| No chunk with this seq | Writes `<seq>.opus` durably, adds the duration, writes `meta.json` durably. | ack |
-| `<seq>.opus` with the same bytes | Nothing. | ack |
-| The seq is in `meta.json`, but `<seq>.opus` is missing | Writes `<seq>.opus` durably. The duration and the text do not change. Log: `WARN chunk restored`. | ack |
-| `<seq>.opus` with different bytes (conflict) | Keeps `<seq>.opus`. Writes the new bytes durably to `<seq>.conflict-<hash>.opus` (`<hash>` = the first 8 bytes of the SHA-256 of the new bytes, in lowercase hex), if that file does not have these bytes already. Log: `WARN chunk conflict ... quarantine=<name>`. The duration and the text do not change. | ack |
-| Any write fails | Nothing more. | no ack (HTTP `500`) |
+| Stored | Hub action | Answer | `stored` |
+|---|---|---|---|
+| No chunk with this seq | Writes `<seq>.opus` durably, adds the duration, writes `meta.json` durably. | ack | `added` |
+| `<seq>.opus` with the same bytes | Nothing. | ack | `repeat` |
+| The seq is in `meta.json`, but `<seq>.opus` is missing | Writes `<seq>.opus` durably. The duration and the text do not change. Log: `WARN chunk restored`. | ack | `restored` |
+| `<seq>.opus` with different bytes (conflict) | Keeps `<seq>.opus`. Writes the new bytes durably to `<seq>.conflict-<hash>.opus` (`<hash>` = the first 8 bytes of the SHA-256 of the new bytes, in lowercase hex), if that file does not have these bytes already. Log: `WARN chunk conflict ... quarantine=<name>`. The duration and the text do not change. | ack | `conflict` |
+| Any write fails | Nothing more. | no ack (HTTP `500`) | — |
+
+The HTTP ack is `200` with `{"device","session","seq","stored"}`. The device, session and seq are the values
+of the request headers. Thus a different server that answers `200` to each request does not make the device
+delete a chunk. The BLE `ack` names the session and seq; the bonded link names the device.
 
 The hub never replaces a stored chunk. A conflict copy is not transcribed; it stays for a person to examine. The
 audio retention deletes it with the other audio of the session.
@@ -488,6 +538,7 @@ Default: `~/.local/share/resticky/data`.
 <device>/
   screen.png                  last screen frame
   health.bin                  health history (see "Health")
+  anchors.json                clock anchors: boot ID → {"unix_ms","estimated"} (see "Clock anchor")
   <session>/
     meta.json                 the session
     <seq>.opus                the chunk as received
@@ -502,10 +553,15 @@ Default: `~/.local/share/resticky/data`.
 | Field | Type | Notes |
 |---|---|---|
 | `device`, `id` | string | |
-| `started` | RFC 3339 time | arrival of the first chunk minus its duration |
+| `started` | RFC 3339 time | capture time at the start of the session timeline, from the chunk with the lowest seq (see "Session rules" and "Clock anchor") |
 | `last_chunk` | RFC 3339 time | arrival of the last chunk |
 | `duration_ms` | integer | sum of the chunk durations |
-| `final` | boolean | left out when false |
+| `final` | boolean | the final chunk arrived. Left out when false. |
+| `final_seq` | integer | seq of the final chunk. Left out when not known (a session from before this field uses the highest seq). |
+| `boot` | string | `boot_id` of the session (8 hex digits). Left out when not known. |
+| `chunk_start` | object | sequence number (string) → `X-Start-Ms`. Left out when empty. |
+| `guess_anchor_ms` | integer | anchor estimate from the arrival of the first chunk. The hub uses it while the table has no anchor for the boot. Left out when not known. |
+| `time_estimated` | boolean | `started` is an estimate (no device anchor). Left out when false. |
 | `chunks` | object | sequence number (string) → transcript text. The text `"\u0000pending"` means "not transcribed yet". |
 | `title`, `summary` | string | left out when empty |
 | `todos` | array of strings | left out when empty |
@@ -585,7 +641,7 @@ the device must accept RX frames of at most 2053 bytes (required firmware change
 
 | Type | Name | Direction | Payload |
 |---|---|---|---|
-| 1 | `chunk` | device → hub | header (31 bytes, little-endian) and the audio frames |
+| 1 | `chunk` | device → hub | header (43 bytes, little-endian) and the audio frames |
 | 2 | `ack` | hub → device | session (u32), seq (u32) |
 | 3 | `checkin` | device → hub | the JSON of `POST /api/checkin` (UTF-8) |
 | 4 to 7 | reserved | | `state`, `hint`, `screen` (later layers) |
@@ -623,7 +679,9 @@ The device ignores types that it does not know.
 | 15 | start ms (`X-Start-Ms`) | i64 |
 | 23 | duration ms | u32 |
 | 27 | audio length in bytes | u32 |
-| 31 | audio frames, the same format as the body of `POST /api/chunks` | |
+| 31 | boot ID (`X-Boot-Id`, see "Clock anchor") | u32 |
+| 35 | boot Unix ms (`X-Boot-Unix-Ms`, `0` = clock not known) | i64 |
+| 43 | audio frames, the same format as the body of `POST /api/chunks` | |
 
 ### Rules
 

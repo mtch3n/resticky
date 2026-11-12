@@ -44,13 +44,13 @@ class PlacesTest {
     }
 
     @Test
-    fun chunkAgeUsesDeviceUptime() {
+    fun chunkAgeUsesTheClockAnchor() {
         val now = Clock.System.now()
-        val c = Checkin(device = "ab", health = Health(uptimeS = 1000), seen = now - 10.seconds)
-        assertEquals(410.seconds, chunkAge(c, 600_000, now))
-        assertNull(chunkAge(c.copy(health = null), 600_000, now))
-        assertNull(chunkAge(c, 2_000_000, now))
-        assertNull(chunkAge(null, 0, now))
+        val anchor = now.toEpochMilliseconds() - 1_010_000
+        assertEquals(410.seconds, chunkAge(anchor, 600_000, now))
+        assertNull(chunkAge(null, 600_000, now))
+        assertNull(chunkAge(anchor, 2_000_000, now))
+        assertNull(chunkAge(anchor, 0, now))
     }
 
     @Test

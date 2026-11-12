@@ -69,8 +69,8 @@ class ConversationsTest {
         assertEquals(t0 + 120.seconds, s.wallAt(s.endMs()))
         s.final = false
         s.lastChunk = t0 + 30.minutes
-        assertTrue(s.closed(t0 + 6.minutes))
-        assertFalse(s.closed(t0 + 4.minutes))
+        assertFalse(s.closed(t0 + 49.minutes))
+        assertTrue(s.closed(t0 + 50.minutes))
         assertEquals(5_000, session("x", t0, listOf("a")).captureMs(5_000))
     }
 

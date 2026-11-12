@@ -92,6 +92,7 @@ import dev.resticky.MARK_WINDOW_MS
 import dev.resticky.Session
 import dev.resticky.Person
 import dev.resticky.speakerLetter
+import dev.resticky.startLabel
 import dev.resticky.Conversation
 import dev.resticky.linkPhoto
 import dev.resticky.wallAt
@@ -313,7 +314,9 @@ private fun conversationSubtitle(v: ConversationView): String {
         else -> "$n to-dos"
     }
     val c = v.conversation
-    return listOfNotNull("${clock(c.start)}–${clock(c.end())}", placeLabel(c.head.session), if (v.ready) todos else "summarizing").joinToString(" · ")
+    val approx = if (c.approximate) "~" else ""
+    val partial = if (c.partial(Clock.System.now())) "not complete" else null
+    return listOfNotNull("$approx${clock(c.start)}–${clock(c.end())}", placeLabel(c.head.session), if (v.ready) todos else "summarizing", partial).joinToString(" · ")
 }
 
 @Composable
@@ -758,7 +761,8 @@ fun TranscriptScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Pill(whenLabel(c.start), Ink.card)
+                        Pill(startLabel(c), Ink.card)
+                        if (c.partial(Clock.System.now())) Pill("Not complete", Ink.card)
                         placeLabel(c.head.session)?.let { Pill(it, Ink.card) }
                         Pill(duration((c.end() - c.start).inWholeMilliseconds), Ink.card)
                         if (r.engine.isNotEmpty()) Pill(r.engine, Ink.card)

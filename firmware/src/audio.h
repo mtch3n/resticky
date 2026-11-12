@@ -23,6 +23,8 @@ typedef struct {
     bool final;
     int64_t start_ms;
     uint32_t duration_ms;
+    uint32_t boot_id;
+    int64_t boot_unix_ms;
     size_t len;
     uint8_t *data;
     bool has_vad;

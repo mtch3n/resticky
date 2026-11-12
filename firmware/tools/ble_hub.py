@@ -20,7 +20,7 @@ SERVICE = "5a391e60-e572-4f44-920b-4a82eb105232"
 RX = "5a391e61-e572-4f44-920b-4a82eb105232"
 TX = "5a391e62-e572-4f44-920b-4a82eb105232"
 TYPE_CHUNK, TYPE_ACK, TYPE_CHECKIN = 1, 2, 3
-CHUNK_HEADER = struct.Struct("<6sIIBqII")
+CHUNK_HEADER = struct.Struct("<6sIIBqIIIq")
 AGENT_PATH = "/resticky/agent"
 
 
@@ -117,7 +117,7 @@ class Hub:
             if kind != TYPE_CHUNK:
                 print(f"frame type {kind} ignored ({len(body)} bytes)")
                 continue
-            mac, session, seq, final, start_ms, duration_ms, length = CHUNK_HEADER.unpack_from(body)
+            mac, session, seq, final, start_ms, duration_ms, length, boot_id, boot_unix_ms = CHUNK_HEADER.unpack_from(body)
             audio = body[CHUNK_HEADER.size:]
             if len(audio) != length:
                 print(f"chunk {session:08x}/{seq}: {len(audio)} bytes, header says {length}; no ack")
@@ -127,7 +127,7 @@ class Hub:
             took = t1 - t0
             self.total_bytes += len(body) + 5
             self.total_s += took
-            print(f"chunk {session:08x}/{seq} final={final} start_ms={start_ms} {duration_ms} ms audio, {len(audio)} bytes in {took * 1000:.0f} ms "
+            print(f"chunk {session:08x}/{seq} final={final} start_ms={start_ms} boot={boot_id:08x} boot_unix_ms={boot_unix_ms} {duration_ms} ms audio, {len(audio)} bytes in {took * 1000:.0f} ms "
                   f"({len(body) / 1024 / took:.1f} KB/s), acked {(time.monotonic() - t1) * 1000:.0f} ms after the last fragment; "
                   f"average {self.total_bytes / 1024 / self.total_s:.1f} KB/s")
 

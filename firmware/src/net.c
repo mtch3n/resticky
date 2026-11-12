@@ -262,7 +262,7 @@ static int http(const char *method, const char *path, const char *ctype, const c
 {
     char url[192];
     snprintf(url, sizeof url, "%s%s", hub_url, path);
-    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 15000, .buffer_size_tx = 1024};
+    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 15000, .buffer_size_tx = 1536};
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     esp_http_client_set_method(c, !strcmp(method, "POST") ? HTTP_METHOD_POST : !strcmp(method, "PUT") ? HTTP_METHOD_PUT : HTTP_METHOD_GET);
     if (ctype) esp_http_client_set_header(c, "Content-Type", ctype);
@@ -281,36 +281,62 @@ static int http(const char *method, const char *path, const char *ctype, const c
     return status;
 }
 
+static bool ack_matches(const char *resp, const audio_chunk_t *ch)
+{
+    cJSON *j = cJSON_Parse(resp);
+    const char *device = cJSON_GetStringValue(cJSON_GetObjectItem(j, "device"));
+    const char *session = cJSON_GetStringValue(cJSON_GetObjectItem(j, "session"));
+    const char *stored = cJSON_GetStringValue(cJSON_GetObjectItem(j, "stored"));
+    const cJSON *seq = cJSON_GetObjectItem(j, "seq");
+    char *end = NULL;
+    unsigned long sess = session && *session ? strtoul(session, &end, 16) : 0;
+    bool ok = device && !strcmp(device, device_id) && end && !*end && sess == ch->session && cJSON_IsNumber(seq) &&
+              seq->valuedouble == (double)ch->seq && stored &&
+              (!strcmp(stored, "added") || !strcmp(stored, "repeat") || !strcmp(stored, "restored") || !strcmp(stored, "conflict"));
+    if (!ok) ESP_LOGW(TAG, "chunk reply does not name session %08lx seq %lu: %.120s", (unsigned long)ch->session, (unsigned long)ch->seq, resp);
+    cJSON_Delete(j);
+    return ok;
+}
+
+static void stamp(audio_chunk_t *ch)
+{
+    if (!ch->boot_unix_ms && ch->boot_id == clock_boot_id()) ch->boot_unix_ms = clock_boot_unix_ms();
+}
+
 static bool upload(audio_chunk_t *ch)
 {
-    char session[9], seq[11], start[21], dur[11];
+    char session[9], seq[11], start[21], dur[11], boot[9], boot_ms[21];
     snprintf(session, sizeof session, "%08lx", ch->session);
     snprintf(seq, sizeof seq, "%lu", ch->seq);
     snprintf(start, sizeof start, "%lld", ch->start_ms);
     snprintf(dur, sizeof dur, "%lu", ch->duration_ms);
+    snprintf(boot, sizeof boot, "%08lx", (unsigned long)ch->boot_id);
+    snprintf(boot_ms, sizeof boot_ms, "%lld", (long long)ch->boot_unix_ms);
     char speech[256], keep[256], prev[11], level[40];
-    const char *h[21] = {"X-Device", device_id, "X-Session", session, "X-Seq", seq, "X-Final", ch->final ? "1" : "0",
-                         "X-Start-Ms", start, "X-Duration-Ms", dur};
+    const char *h[25] = {"X-Device", device_id, "X-Session", session, "X-Seq", seq, "X-Final", ch->final ? "1" : "0",
+                         "X-Start-Ms", start, "X-Duration-Ms", dur, "X-Boot-Id", boot, "X-Boot-Unix-Ms", boot_ms};
+    int n = 16;
     size_t mask = (ch->duration_ms / 20 + 7) / 8, o;
     if (ch->has_vad && mask <= AUDIO_MASK_BYTES &&
         !mbedtls_base64_encode((unsigned char *)speech, sizeof speech, &o, ch->vad.speech, mask) &&
         !mbedtls_base64_encode((unsigned char *)keep, sizeof keep, &o, ch->vad.keep, mask)) {
         snprintf(prev, sizeof prev, "%lu", ch->vad.keep_prev);
         const char *v[] = {"X-Vad-Speech", speech, "X-Vad-Keep", keep, "X-Vad-Keep-Prev", prev};
-        memcpy(h + 12, v, sizeof v);
+        memcpy(h + n, v, sizeof v);
+        n += 6;
     }
     if (ch->has_level) {
         snprintf(level, sizeof level, "%d,%d,%d,%d,%u", ch->level.peak_db, ch->level.rms_db, ch->level.noise_db,
                  ch->level.speech_db, ch->level.clipped);
-        int n = h[12] ? 18 : 12;
         h[n] = "X-Level";
         h[n + 1] = level;
     }
+    char resp[192];
     int64_t t0 = esp_log_timestamp();
-    int st = http("POST", "/api/chunks", "application/x-resticky-opus", (const char *)ch->data, ch->len, h, NULL, 0);
+    int st = http("POST", "/api/chunks", "application/x-resticky-opus", (const char *)ch->data, ch->len, h, resp, sizeof resp);
     ESP_LOGI(TAG, "upload session %s seq %s (%u bytes, %s ms, final %d): %d in %lld ms", session, seq, ch->len, dur, ch->final, st,
              esp_log_timestamp() - t0);
-    return st == 200;
+    return st == 200 && ack_matches(resp, ch);
 }
 
 static int sent_marks;
@@ -468,10 +494,12 @@ static void checkin_body(char *body, size_t n)
     char *ssid_json = cJSON_PrintUnformatted(ssid);
     snprintf(body, n,
              "{\"device\":\"%s\",\"firmware\":\"%s\",\"battery_pct\":%d,\"voltage_mv\":%d,\"current_ma\":%d,\"recording\":%s,"
-             "\"outbox_chunks\":%lu,\"outbox_bytes\":%lu,\"dropped_chunks\":%lu,\"wifi_saved\":%s,\"wifi_ssid\":%s,\"wifi_rssi\":%d}",
+             "\"outbox_chunks\":%lu,\"outbox_bytes\":%lu,\"dropped_chunks\":%lu,\"wifi_saved\":%s,\"wifi_ssid\":%s,\"wifi_rssi\":%d,"
+             "\"boot_id\":\"%08lx\",\"boot_unix_ms\":%lld}",
              device_id, esp_app_get_description()->version, tele.battery_pct, tele.voltage_mv, tele.current_ma,
              tele.recording ? "true" : "false", (unsigned long)sp.chunks, (unsigned long)sp.bytes, (unsigned long)sp.dropped,
-             list ? list : "[]", ssid_json ? ssid_json : "\"\"", w.up ? w.rssi : 0);
+             list ? list : "[]", ssid_json ? ssid_json : "\"\"", w.up ? w.rssi : 0, (unsigned long)clock_boot_id(),
+             (long long)clock_boot_unix_ms());
     cJSON_free(list);
     cJSON_free(ssid_json);
     size_t used = strlen(body);
@@ -919,6 +947,7 @@ static bool send_ble(void)
     uint32_t id;
     audio_chunk_t *next = spool_oldest(&id);
     if (!next) return false;
+    stamp(next);
     bool acked = ble_send_chunk(next);
     if (acked) spool_remove(id);
     free(next->data);
@@ -932,6 +961,7 @@ static bool send_wifi(void)
     uint32_t id;
     audio_chunk_t *next = spool_oldest(&id);
     if (!next) return false;
+    stamp(next);
     bool sent = upload(next);
     if (sent) spool_remove(id);
     if (sent && next->final) last_poll = 0;

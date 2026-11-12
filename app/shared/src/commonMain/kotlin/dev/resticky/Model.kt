@@ -100,6 +100,10 @@ class Session(
     val suggested: MutableMap<String, String> = mutableMapOf(),
     @SerialName("user_named") val userNamed: MutableSet<String> = mutableSetOf(),
     val fixes: MutableList<Fix> = mutableListOf(),
+    @SerialName("final_seq") var finalSeq: Int? = null,
+    var boot: String = "",
+    @SerialName("guess_anchor_ms") var guessAnchorMs: Long? = null,
+    @SerialName("time_estimated") var timeEstimated: Boolean = false,
 ) {
     val pending: Boolean get() = chunks.values.any { it == PENDING }
 
@@ -244,7 +248,22 @@ data class Checkin(
     @SerialName("buzz_hz") val buzzHz: Int? = null,
     val home: String? = null,
     val night: String? = null,
+    @SerialName("boot_id") val bootId: String = "",
+    @SerialName("boot_unix_ms") val bootUnixMs: Long = 0,
 )
+
+@Serializable
+data class Anchor(@SerialName("unix_ms") val unixMs: Long, val estimated: Boolean = false)
+
+fun bootKey(hex: String?): String = hex?.takeIf { ID_PATTERN.matches(it) && it.length <= 8 }?.toLong(16)?.takeIf { it != 0L }?.toString(16)?.padStart(8, '0').orEmpty()
+
+@Serializable
+data class ChunkReply(val device: String, val session: String, val seq: Int, val stored: String)
+
+fun storedName(a: Added): String = when (a) {
+    Added.SESSION, Added.CHUNK -> "added"
+    else -> a.name.lowercase()
+}
 
 @Serializable
 data class TranscriptItem(
@@ -257,6 +276,7 @@ data class TranscriptItem(
     val place: String,
     val marks: Int,
     val photos: Int,
+    val complete: Boolean = true,
 )
 
 @Serializable

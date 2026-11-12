@@ -38,11 +38,9 @@ fun placeTag(places: List<NamedPlace>, lat: Double, lon: Double): PlaceTag =
         ?.let { PlaceTag(it.first.name, null, null) }
         ?: PlaceTag(ELSEWHERE, roundKm(lat), roundKm(lon))
 
-fun chunkAge(last: Checkin?, startMs: Long, now: Instant): Duration? {
-    val uptime = last?.health?.uptimeS ?: return null
-    val seen = last.seen ?: return null
-    val deviceNowMs = uptime * 1000L + (now - seen).inWholeMilliseconds
-    return (deviceNowMs - startMs).takeIf { it >= 0 }?.milliseconds
+fun chunkAge(anchorMs: Long?, startMs: Long, now: Instant): Duration? {
+    if (anchorMs == null || startMs <= 0) return null
+    return (now.toEpochMilliseconds() - anchorMs - startMs).takeIf { it >= 0 }?.milliseconds
 }
 
 fun placeContext(place: String): String = if (place.isEmpty() || place == ELSEWHERE || place == PENDING) "" else place

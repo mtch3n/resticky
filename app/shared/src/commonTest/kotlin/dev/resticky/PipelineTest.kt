@@ -89,15 +89,46 @@ class PipelineTest {
     }
 
     @Test
-    fun sessionClosesByCaptureTimeAfterAnOutboxBurst() = runTest {
+    fun backlogSessionWaitsForTheArrivalIdleTime() = runTest {
         val store = Store(root)
         val now = Clock.System.now()
         store.addChunk("ab", "01", 0, false, 30_000, ByteArray(4), 1_000_000, now - 20.minutes)
         store.addChunk("ab", "01", 1, false, 30_000, ByteArray(5), 1_030_000)
-        store.addChunk("ab", "02", 0, false, 30_000, ByteArray(4), 2_000_000, now - 1.minutes)
         Pipeline(store, { _, _ -> listOf(Segment(0, 1000, SPOKEN)) }, { _, _ -> Summary("T", "S") }, NO_SPEAKERS) {}.drain()
-        assertTrue(store.list("ab").single { it.id == "01" }.ready)
-        assertTrue(!store.list("ab").single { it.id == "02" }.ready)
+        assertTrue(!store.list("ab").single().ready)
+        assertEquals(SessionState.OPEN, store.list("ab").single().state(Clock.System.now()))
+    }
+
+    @Test
+    fun lateChunkOpensAProvisionalSessionAgain() = runTest {
+        val store = Store(root)
+        val inputs = mutableListOf<String>()
+        val pipeline = Pipeline(store, { p, _ -> listOf(Segment(0, 1000, "${p.name} $SPOKEN")) }, { t, _ -> inputs += t; Summary("T${inputs.size}", "S") }, NO_SPEAKERS) {}
+        store.addChunk("ab", "01", 5, false, 30_000, ByteArray(4), 1_150_000, boot = "0000beef")
+        store.addChunk("ab", "01", 6, true, 30_000, ByteArray(5), 1_180_000, boot = "0000beef")
+        pipeline.drain()
+        assertEquals(listOf(0, 1, 2, 3, 4), store.list("ab").single().gaps())
+        assertTrue(!store.list("ab").single().ready)
+        store.update("ab", "01") { it.lastChunk = Clock.System.now() - PROVISIONAL_IDLE }
+        assertEquals(SessionState.PROVISIONAL, store.list("ab").single().state(Clock.System.now()))
+        pipeline.drain()
+        val first = store.list("ab").single()
+        assertTrue(first.ready)
+        assertEquals("T1", first.title)
+        assertTrue(transcriptItems(store.list("ab")).single().let { it.ready && !it.complete })
+        store.addChunk("ab", "01", 0, false, 30_000, ByteArray(6), 1_000_000, boot = "0000beef")
+        assertEquals(SessionState.OPEN, store.list("ab").single().state(Clock.System.now()))
+        assertTrue(!store.list("ab").single().ready)
+        pipeline.drain()
+        assertEquals(1, inputs.size)
+        for (seq in 1..4) store.addChunk("ab", "01", seq, false, 30_000, ByteArray(6 + seq), 1_000_000 + seq * 30_000L, boot = "0000beef")
+        assertEquals(SessionState.FINAL, store.list("ab").single().state(Clock.System.now()))
+        pipeline.drain()
+        val last = store.list("ab").single()
+        assertEquals(2, inputs.size)
+        assertEquals("T2", last.title)
+        assertTrue(last.ready && last.complete())
+        assertTrue(transcriptItems(store.list("ab")).single().complete)
     }
 
     @Test
