@@ -222,6 +222,93 @@ class SpeakersTest {
     }
 }
 
+class WordSpeakersTest {
+    private fun session(vararg segs: Segment) = Session("d", "s", Instant.fromEpochSeconds(0), Instant.fromEpochSeconds(0), 0,
+        chunks = mutableMapOf("0" to segs.joinToString(" ") { it.text }), segments = mutableMapOf("0" to segs.toList()), chunkMs = mutableMapOf("0" to 30_000))
+
+    private fun said(vararg w: Word) = Segment(w.first().startMs, w.last().endMs, w.joinToString(" ") { it.text }, words = w.toList())
+
+    @Test
+    fun yeahInsideALongTurnGetsTheOtherSpeaker() {
+        val s = session(said(Word(4000, 4500, "so"), Word(4500, 4900, "we"), Word(5050, 5350, "yeah"), Word(6000, 6400, "ship")))
+        s.assignSpeakers(listOf(Turn(0, 5000, 0), Turn(5000, 5400, 1), Turn(5400, 10_000, 0)))
+        assertEquals(listOf(0 to "so we", 1 to "yeah", 0 to "ship"), s.lines().map { it.speaker to it.text })
+        assertEquals(listOf(4000L, 5050L, 6000L), s.lines().map { it.atMs })
+        assertEquals("Speaker A: so we\nSpeaker B: yeah\nSpeaker A: ship", conversations(listOf(s)).single().labelledTranscript())
+    }
+
+    @Test
+    fun backchannelThatOverlapsALongTurnGetsTheShortSpeaker() {
+        val turns = listOf(Turn(0, 20_000, 0), Turn(8000, 8600, 1))
+        assertEquals(0, wordSpeaker(7800, 8100, turns, null))
+        assertEquals(1, wordSpeaker(8100, 8400, turns, 0))
+        assertEquals(0, wordSpeaker(8500, 8900, turns, 1))
+        assertEquals(0, wordSpeaker(7900, 8500, listOf(Turn(0, 20_000, 0), Turn(8000, 11_000, 1)), null))
+        assertEquals(0, wordSpeaker(8100, 8700, listOf(Turn(0, 20_000, 0), Turn(8000, 8600, 1)), null))
+    }
+
+    @Test
+    fun wordBetweenTurnsTakesTheNearTurnElseThePreviousWord() {
+        val turns = listOf(Turn(0, 1000, 0), Turn(2000, 3000, 1))
+        assertEquals(0, wordSpeaker(1200, 1250, turns, 1))
+        assertEquals(1, wordSpeaker(1700, 1800, turns, 0))
+        assertEquals(1, wordSpeaker(1400, 1600, turns, 1))
+        assertEquals(0, wordSpeaker(1400, 1600, turns, 0))
+        assertEquals(0, wordSpeaker(1400, 1600, turns, null))
+        assertEquals(-1, wordSpeaker(0, 10, emptyList(), null))
+    }
+
+    @Test
+    fun segmentsSplitAtSpeakerChanges() {
+        val seg = Segment(0, 3000, "Hi, Sam. Yes. Go on.", words = listOf(Word(0, 400, "Hi,"), Word(400, 900, "Sam."), Word(1000, 1300, "Yes."), Word(1500, 1800, "Go"), Word(1800, 2900, "on.")))
+        val out = seg.splitBySpeaker(listOf(0, 0, 1, 0, 0))
+        assertEquals(listOf("Hi, Sam.", "Yes.", "Go on."), out.map { it.text })
+        assertEquals(listOf(0L to 900L, 1000L to 1300L, 1500L to 2900L), out.map { it.startMs to it.endMs })
+        assertEquals(listOf(0, 1, 0), out.map { it.speaker })
+        assertEquals(listOf(2, 1, 2), out.map { it.words.size })
+        assertEquals(listOf(seg.copy(speaker = 1)), seg.splitBySpeaker(listOf(1, 1, 1, 1, 1)))
+    }
+
+    @Test
+    fun segmentsWithoutWordsKeepTheOldRule() {
+        val s = session(Segment(0, 6000, "long text without words"), Segment(6000, 7000, "ok"))
+        s.assignSpeakers(listOf(Turn(0, 5000, 0), Turn(5000, 5400, 1), Turn(5400, 10_000, 0)))
+        assertEquals(listOf(0 to "long text without words", 0 to "ok"), s.lines().map { it.speaker to it.text })
+        val again = session(Segment(0, 6000, "long text without words"))
+        assertEquals("long text without words", conversations(listOf(again)).single().labelledTranscript())
+    }
+
+    @Test
+    fun shortTurnIsNotAbsorbedByTimeIntoTheSpeakerItInterrupts() {
+        val turns = listOf(Turn(0, 60_000, 0), Turn(60_000, 60_500, 2), Turn(60_500, 120_000, 0), Turn(120_000, 180_000, 1))
+        val voices = listOf(Voice(0, floatArrayOf(1f, 0f), 60_000), Voice(1, floatArrayOf(0f, 1f), 60_000))
+        assertEquals(listOf(0, -1, 0, 1), mergeSpeakers(Diarization(turns, voices)).turns.map { it.speaker })
+        val heard = turns.map { if (it.speaker == 2) Turn(it.startMs, it.endMs, 2, floatArrayOf(0.1f, 0.9f)) else it }
+        assertEquals(listOf(0, 1, 0, 1), mergeSpeakers(Diarization(heard, voices)).turns.map { it.speaker })
+        val far = turns.map { if (it.speaker == 2) Turn(it.startMs, it.endMs, 2, floatArrayOf(-1f, -0.1f)) else it }
+        assertEquals(listOf(0, -1, 0, 1), mergeSpeakers(Diarization(far, voices)).turns.map { it.speaker })
+    }
+
+    @Test
+    fun unknownSpeakerShowsAsQuestionMark() {
+        val s = session(said(Word(0, 500, "so"), Word(5050, 5350, "yeah"), Word(6000, 6400, "ship")))
+        s.assignSpeakers(listOf(Turn(0, 5000, 0), Turn(5000, 5400, -1), Turn(5400, 10_000, 0)))
+        assertEquals(listOf(0, -1, 0), s.lines().map { it.speaker })
+        assertEquals("?", s.speakerName(-1))
+        assertEquals("Speaker A: so\n?: yeah\nSpeaker A: ship", conversations(listOf(s)).single().labelledTranscript())
+    }
+
+    @Test
+    fun shortTurnsOfSpeakersWithoutAVoiceGetALowConfidenceEmbedding() {
+        val pcm = FloatArray(10 * 16)
+        val seen = mutableListOf<Int>()
+        val d = diarization(pcm, 16, listOf(Turn(0, 2000, 0), Turn(2000, 2900, 1), Turn(2900, 3500, 2), Turn(3500, 4400, 0))) { seen += it.size; floatArrayOf(1f, 0f) }
+        assertEquals(listOf(32, 14), seen)
+        assertEquals(listOf(0), d.voices.map { it.speaker })
+        assertEquals(listOf(false, true, false, false), d.turns.map { it.voice != null })
+    }
+}
+
 class DiarizationTest {
     @Test
     fun longTurnsGiveOneVoicePerSpeaker() {

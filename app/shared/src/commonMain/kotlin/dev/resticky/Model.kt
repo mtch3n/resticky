@@ -137,17 +137,22 @@ class Session(
 
     fun endMs(): Long = offsets().entries.maxByOrNull { it.value }?.let { (seq, at) -> at + (chunkMs[seq] ?: CHUNK_MS) } ?: 0
 
-    fun speakerName(speaker: Int): String = speakers["$speaker"] ?: speakerLetter(speaker)
+    fun speakerName(speaker: Int): String = if (speaker < 0) speakerLetter(speaker) else speakers["$speaker"] ?: speakerLetter(speaker)
+
+    val hasSpeakers: Boolean get() = segments.values.any { l -> l.any { it.speaker >= 0 } }
 
     fun assignSpeakers(turns: List<Turn>) {
         val offsets = offsets()
-        var last = -1
+        var last: Int? = null
         for (seq in offsets.keys.sortedBy { it.toInt() }) {
             val at = offsets.getValue(seq)
-            segments[seq] = segments[seq]?.map { seg ->
-                val speaker = speakerAt(at + seg.startMs, at + seg.endMs, turns, last)
-                last = speaker
-                seg.copy(speaker = speaker)
+            segments[seq] = segments[seq]?.flatMap { seg ->
+                if (seg.words.isEmpty()) {
+                    val speaker = speakerAt(at + seg.startMs, at + seg.endMs, turns, last ?: -1)
+                    last = speaker
+                    return@flatMap listOf(seg.copy(speaker = speaker))
+                }
+                seg.splitBySpeaker(seg.words.map { w -> wordSpeaker(at + w.startMs, at + w.endMs, turns, last).also { last = it } })
             } ?: continue
         }
     }

@@ -46,6 +46,48 @@ New `meta.json` fields. Each one is left out when it is empty. An old `meta.json
 
 An old `people.json` loads: a missing `auto` is false.
 
+## Speakers of short replies
+
+A short reply ("yeah", "you know") from one person in the long talk of another person must get its own speaker.
+The rules come from WhisperX (a speaker for each word) and pyannote community-1 (the exclusive view at overlaps).
+
+Diarizer (both hubs, `Speakers.kt` constants that `Engines.kt` and `Main.kt` use):
+
+| Constant | Value | Note |
+|---|---|---|
+| `MIN_DURATION_ON` | 0.2 s | Was 0.3 s. Shorter turns stay. |
+| `MIN_DURATION_OFF` | 0.2 s | Was 0.5 s. A short gap no longer joins two turns. |
+| `VOICE_MIN_MS` | 1500 ms | A turn of this length or more gives the speaker voice. |
+| `SHORT_VOICE_MIN_MS` | 800 ms | A speaker with no voice gets an embedding for each turn of this length or more (`Turn.voice`). It is low confidence: it only decides the speaker of that turn. It never goes into `voices` or the people library. |
+
+Minor speakers (`mergeSpeakers`): a speaker with little talk time and no voice joins a main speaker by time (the
+main speaker of the turn before it). This rule does not apply when the turn interrupts that main speaker. A turn
+interrupts speaker X when the turn before it is a turn of X that continues after it, or when the turns before and
+after it (of other speakers) are both of X. Then:
+
+1. If the turn has a `Turn.voice`, it goes to the main speaker with the highest cosine (`ABSORB_MIN_COSINE` or
+   more).
+2. Else the speaker is unknown (`-1`). The transcript shows "?" and the summary input shows "?:". The name sheet
+   does not open for "?".
+
+A session that has no speakers (no diarization, old data) shows no label, as before.
+
+Speaker of a word (`wordSpeaker`, `Session.assignSpeakers`). Times are session times:
+
+1. The turns that contain the midpoint of the word give the speaker.
+2. When turns of two or more speakers contain the midpoint: if the shortest of them is `BACKCHANNEL_MAX_MS`
+   (2000 ms) or less and the word is fully in it, its speaker gets the word. Else the speaker of the turn with the
+   largest overlap with the word gets the word.
+3. When no turn contains the midpoint: the nearest turn gets the word if the gap is `WORD_NEAR_MS` (300 ms) or
+   less. Else the word gets the speaker of the word before it. The first word of a session gets the nearest turn.
+4. `Segment.splitBySpeaker` then splits the segment at each speaker change. Each new segment has the words of one
+   run, its start and end from these words, and the text of these words with spaces between them. A segment with
+   one speaker stays as it is.
+
+A segment with no words (old data, engines without word times) gets the speaker with the largest overlap, as
+before. The `meta.json` format does not change, so an old `meta.json` loads. Old sessions change only when
+diarization runs again.
+
 ## Matching
 
 1. The pipeline calculates the cosine of each session voice and each person.

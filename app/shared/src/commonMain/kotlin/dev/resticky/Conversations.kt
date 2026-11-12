@@ -82,11 +82,12 @@ class Conversation(val parts: List<Part>) {
     private fun turns(named: Boolean): List<List<Spoken>> {
         val out = mutableListOf<MutableList<Spoken>>()
         var last: Pair<Session, Int>? = null
+        val labelled = parts.map { it.session }.filter { it.hasSpeakers }.map { it.id }.toSet()
         for (p in parts) for (l in p.lines()) {
             val who = p.session to l.speaker
             if (who != last) {
                 out += mutableListOf<Spoken>()
-                if (l.speaker >= 0) out.last() += Spoken(if (named) p.session.speakerName(l.speaker) + ":" else speakerLetter(l.speaker) + ":", p.session.id, l.atMs)
+                if (l.speaker >= 0 || p.session.id in labelled) out.last() += Spoken(if (named) p.session.speakerName(l.speaker) + ":" else speakerLetter(l.speaker) + ":", p.session.id, l.atMs)
                 last = who
             }
             out.last() += if (l.words.isEmpty()) listOf(Spoken(l.text, p.session.id, l.atMs)) else l.words.map { Spoken(it.text, p.session.id, it.startMs) }

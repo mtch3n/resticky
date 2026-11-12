@@ -708,6 +708,7 @@ fun TranscriptScreen(
         }
     }
     val said = remember(c) { c.parts.flatMap { p -> p.lines().map { Said(p.session, it, c.at(p.session, it.atMs)) } } }
+    val labelled = remember(c) { c.parts.map { it.session }.filter { it.hasSpeakers }.map { it.id }.toSet() }
     val marks = remember(c) { c.parts.flatMap { p -> p.session.marks.filter(p::covers).map { p.session to it } } }
     val near = remember(c) {
         said.indices.filter { i ->
@@ -832,8 +833,8 @@ fun TranscriptScreen(
                 val speaker = s.line.speaker
                 val fixes = s.session.fixes.filter { !it.undone && it.atMs == s.line.atMs }
                 TimedLine(
-                    s.line, s.at, if (speaker >= 0) s.session.speakerName(speaker) else null, prefs.cleanUp, i == current, i in near, i in starred, fixes,
-                    { naming = s.session to speaker }, { fixing = s to it }, { showing = s.session to it },
+                    s.line, s.at, if (speaker >= 0 || s.session.id in labelled) s.session.speakerName(speaker) else null, prefs.cleanUp, i == current, i in near, i in starred, fixes,
+                    { if (speaker >= 0) naming = s.session to speaker }, { fixing = s to it }, { showing = s.session to it },
                 ) {
                     go(s.session.id, s.line.atMs, false)
                 }

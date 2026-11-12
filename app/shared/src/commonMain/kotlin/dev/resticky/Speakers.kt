@@ -17,9 +17,17 @@ const val VOICE_MIN_MS = 1500L
 const val ABSORB_MIN_COSINE = 0.4
 const val ABSORB_TIME_MAX_MS = 5_000L
 const val OVERLAP_MAX_MS = 1_000L
+const val SHORT_VOICE_MIN_MS = 800L
+const val WORD_NEAR_MS = 300L
+const val BACKCHANNEL_MAX_MS = 2_000L
+const val UNKNOWN_SPEAKER = -1
 private const val FRAME_MS = 20L
 
-class Turn(val startMs: Long, val endMs: Long, val speaker: Int)
+class Turn(val startMs: Long, val endMs: Long, val speaker: Int, val voice: FloatArray? = null) {
+    val ms: Long get() = endMs - startMs
+
+    fun withSpeaker(speaker: Int): Turn = Turn(startMs, endMs, speaker, voice)
+}
 
 class Voice(val speaker: Int, val embedding: FloatArray, val weightMs: Long)
 
@@ -50,7 +58,7 @@ fun interface Diarizer {
     suspend fun diarize(frames: ByteArray): Diarization
 }
 
-fun speakerLetter(speaker: Int): String =
+fun speakerLetter(speaker: Int): String = if (speaker < 0) "?" else
     "Speaker " + if (speaker < 26) "${'A' + speaker}" else "${speaker + 1}"
 
 internal fun FloatArray.unit(): FloatArray {
@@ -121,52 +129,82 @@ fun mergeSpeakers(d: Diarization, minCosine: Double = SPEAKER_MERGE): Diarizatio
         together[a]?.remove(b)
     }
     val byStart = d.turns.sortedBy { it.startMs }
-    val sorted = byStart.map { Turn(it.startMs, it.endMs, root(it.speaker)) }
+    val sorted = byStart.map { it.withSpeaker(root(it.speaker)) }
     val talk = sorted.groupBy { it.speaker }.mapValues { (_, l) -> l.sumOf { it.endMs - it.startMs } }
     val total = talk.values.sum()
     val major = talk.filter { (_, ms) -> ms >= SPEAKER_MIN_MS && ms >= total * SPEAKER_MIN_SHARE }.keys
     val absorbed = if (major.isEmpty()) sorted else sorted.mapIndexed { i, t ->
         if (t.speaker in major) return@mapIndexed t
         val allowed = major.filter { overlap(t.speaker, it) <= OVERLAP_MAX_MS }
+        fun closest(e: FloatArray): Int? = allowed.filter { it in voices }.map { it to cosine(e, voices.getValue(it).first) }
+            .filter { it.second >= ABSORB_MIN_COSINE }.maxByOrNull { it.second }?.first
         val own = voices[t.speaker]?.first
         val into = when {
-            own != null -> allowed.filter { it in voices }.map { it to cosine(own, voices.getValue(it).first) }
-                .filter { it.second >= ABSORB_MIN_COSINE }.maxByOrNull { it.second }?.first
-            talk.getValue(t.speaker) < ABSORB_TIME_MAX_MS ->
-                (i - 1 downTo 0).firstOrNull { sorted[it].speaker in allowed }?.let { sorted[it].speaker }
+            own != null -> closest(own)
+            talk.getValue(t.speaker) < ABSORB_TIME_MAX_MS -> {
+                val byTime = (i - 1 downTo 0).firstOrNull { sorted[it].speaker in allowed }?.let { sorted[it].speaker }
                     ?: (i + 1 until sorted.size).firstOrNull { sorted[it].speaker in allowed }?.let { sorted[it].speaker }
+                if (byTime == null || byTime != interrupted(sorted, i)) byTime
+                else t.voice?.let { closest(it.unit()) } ?: UNKNOWN_SPEAKER
+            }
             else -> null
         }
-        Turn(t.startMs, t.endMs, into ?: t.speaker)
+        t.withSpeaker(into ?: t.speaker)
     }
     val order = mutableMapOf<Int, Int>()
-    val turns = absorbed.map { t -> Turn(t.startMs, t.endMs, order.getOrPut(t.speaker) { order.size }) }
+    val turns = absorbed.map { t -> Turn(t.startMs, t.endMs, if (t.speaker < 0) t.speaker else order.getOrPut(t.speaker) { order.size }) }
     val went = mutableMapOf<Int, MutableMap<Int, Long>>()
     byStart.forEachIndexed { i, t ->
         val m = went.getOrPut(t.speaker) { mutableMapOf() }
         m[turns[i].speaker] = (m[turns[i].speaker] ?: 0) + (t.endMs - t.startMs)
     }
-    val finalVoices = d.voices.mapNotNull { v -> went[v.speaker]?.maxByOrNull { it.value }?.let { it.key to v } }
+    val finalVoices = d.voices.mapNotNull { v -> went[v.speaker]?.filterKeys { it >= 0 }?.maxByOrNull { it.value }?.let { it.key to v } }
         .groupBy({ it.first }, { it.second.embedding to it.second.weightMs })
         .mapNotNull { (speaker, parts) -> voiceOf(speaker, parts) }
         .sortedBy { it.speaker }
     return Diarization(turns, finalVoices)
 }
 
+private fun interrupted(sorted: List<Turn>, i: Int): Int? {
+    val t = sorted[i]
+    val before = (i - 1 downTo 0).map { sorted[it] }.firstOrNull { it.speaker != t.speaker } ?: return null
+    if (before.endMs >= t.endMs) return before.speaker
+    val after = (i + 1 until sorted.size).map { sorted[it] }.firstOrNull { it.speaker != t.speaker } ?: return null
+    return before.speaker.takeIf { it == after.speaker }
+}
+
+private fun overlapMs(startMs: Long, endMs: Long, t: Turn): Long = minOf(endMs, t.endMs) - maxOf(startMs, t.startMs)
+
 fun speakerAt(startMs: Long, endMs: Long, turns: List<Turn>, last: Int): Int {
-    var best = -1
-    var bestOverlap = 0L
-    for (t in turns) {
-        val overlap = minOf(endMs, t.endMs) - maxOf(startMs, t.startMs)
-        if (overlap > bestOverlap) {
-            best = t.speaker
-            bestOverlap = overlap
-        }
-    }
-    if (best >= 0) return best
+    turns.map { it to overlapMs(startMs, endMs, it) }.filter { it.second > 0 }.maxByOrNull { it.second }?.let { return it.first.speaker }
     if (last >= 0) return last
     val mid = (startMs + endMs) / 2
     return turns.minByOrNull { minOf(kotlin.math.abs(mid - it.startMs), kotlin.math.abs(mid - it.endMs)) }?.speaker ?: -1
+}
+
+fun wordSpeaker(startMs: Long, endMs: Long, turns: List<Turn>, last: Int?): Int {
+    val mid = (startMs + endMs) / 2
+    val covering = turns.filter { mid >= it.startMs && mid < it.endMs }
+    if (covering.isNotEmpty()) {
+        if (covering.all { it.speaker == covering.first().speaker }) return covering.first().speaker
+        val short = covering.minBy { it.ms }
+        if (short.ms <= BACKCHANNEL_MAX_MS && startMs >= short.startMs && endMs <= short.endMs) return short.speaker
+        return covering.maxBy { overlapMs(startMs, endMs, it) }.speaker
+    }
+    fun gap(t: Turn): Long = maxOf(t.startMs - endMs, startMs - t.endMs, 0)
+    val near = turns.minByOrNull(::gap) ?: return last ?: -1
+    if (gap(near) <= WORD_NEAR_MS) return near.speaker
+    return last ?: near.speaker
+}
+
+fun Segment.splitBySpeaker(speakers: List<Int>): List<Segment> {
+    val runs = mutableListOf<MutableList<Int>>()
+    speakers.indices.forEach { i -> if (i > 0 && speakers[i] == speakers[i - 1]) runs.last() += i else runs += mutableListOf(i) }
+    if (runs.size <= 1) return listOf(copy(speaker = speakers.firstOrNull() ?: speaker))
+    return runs.map { run ->
+        val w = run.map { words[it] }
+        Segment(w.first().startMs, w.last().endMs, w.joinToString(" ") { it.text }, speakers[run.first()], w)
+    }
 }
 
 fun frameWindows(frames: ByteArray, windowMs: Long): List<Pair<Long, ByteArray>> {
@@ -197,25 +235,28 @@ suspend fun diarizeSession(frames: ByteArray, diarizer: Diarizer, windowMs: Long
     val voices = mutableListOf<Voice>()
     frameWindows(frames, windowMs).forEachIndexed { w, (offset, part) ->
         val d = diarizer.diarize(part)
-        turns += d.turns.map { Turn(it.startMs + offset, it.endMs + offset, w * 1000 + it.speaker) }
+        turns += d.turns.map { Turn(it.startMs + offset, it.endMs + offset, w * 1000 + it.speaker, it.voice) }
         voices += d.voices.map { Voice(w * 1000 + it.speaker, it.embedding, it.weightMs) }
     }
     return mergeSpeakers(Diarization(turns, voices))
 }
 
 const val CLUSTER_THRESHOLD = 1.1f
-const val MIN_DURATION_ON = 0.3f
-const val MIN_DURATION_OFF = 0.5f
+const val MIN_DURATION_ON = 0.2f
+const val MIN_DURATION_OFF = 0.2f
 
 fun diarization(pcm: FloatArray, rate: Int, turns: List<Turn>, embed: (FloatArray) -> FloatArray): Diarization {
-    val voices = turns.filter { it.endMs - it.startMs >= VOICE_MIN_MS }.groupBy { it.speaker }.mapNotNull { (speaker, list) ->
-        voiceOf(speaker, list.map { t ->
-            val from = (t.startMs * rate / 1000).toInt().coerceIn(0, pcm.size)
-            val to = (t.endMs * rate / 1000).toInt().coerceIn(from, pcm.size)
-            embed(pcm.copyOfRange(from, to)) to (t.endMs - t.startMs)
-        })
+    fun embedTurn(t: Turn): FloatArray {
+        val from = (t.startMs * rate / 1000).toInt().coerceIn(0, pcm.size)
+        val to = (t.endMs * rate / 1000).toInt().coerceIn(from, pcm.size)
+        return embed(pcm.copyOfRange(from, to))
     }
-    return Diarization(turns, voices)
+    val voices = turns.filter { it.ms >= VOICE_MIN_MS }.groupBy { it.speaker }.mapNotNull { (speaker, list) ->
+        voiceOf(speaker, list.map { embedTurn(it) to it.ms })
+    }
+    val voiced = voices.map { it.speaker }.toSet()
+    val out = turns.map { t -> if (t.speaker !in voiced && t.ms >= SHORT_VOICE_MIN_MS) Turn(t.startMs, t.endMs, t.speaker, embedTurn(t)) else t }
+    return Diarization(out, voices)
 }
 
 const val VOICE_WINDOW_MS = 3_000L

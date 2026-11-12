@@ -220,6 +220,13 @@ low power and storage use that we can profile.
   hub checks (candidate, not a common word, sound-alike) and applies with a dotted underline and Undo; a pair in
   2 conversations becomes a rule. See `plan-transcription.md`.
 
+## Speakers of short replies (hub, 2026-11-11)
+
+- Built, not tested on a device. Each word gets a speaker (the turn at the word midpoint; at an overlap a short
+  turn of 2 s or less wins). Segments split at speaker changes. The diarizer keeps turns and gaps of 0.2 s. A short
+  turn that interrupts a speaker does not join that speaker by time: a turn embedding (0.8 s or more) decides, else
+  the speaker is "?" (`-1`). See "Speakers of short replies" in `plan-people.md`.
+
 ## Documents
 
 - `plan-apps.md`: the approved plan (Kotlin Multiplatform apps, BLE and Wi-Fi links, engines, layers).
