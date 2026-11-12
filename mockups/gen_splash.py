@@ -1,7 +1,8 @@
 import sys
 
 root = sys.argv[1]
-STEPS = ["starting", "opening storage", "starting Bluetooth", "joining Wi-Fi", "finding the hub", "ready"]
+STEPS = ["starting", "opening storage", "starting Bluetooth", "ready"]
+SHOWN = [1, 3, 5, 6]
 
 
 def page(name, shown, bottom, extra="", scene="speech"):
@@ -66,8 +67,8 @@ document.querySelectorAll('[data-bar]').forEach(b => {{
 
 page("power-off", 6, '<div style="position:absolute;right:62px;top:172px;font-size:30px;font-weight:600;line-height:1">press to start</div>',
      "add(rc.path('M424 190 C440 194 456 192 470 186', pen(3, 90))); add(rc.path('M458 176 L471 186 L460 198', pen(3, 91)));", "weather")
-for k in range(1, 7):
-    page(f"boot-{k}", k, f'<div data-bar="{k / 6:.3f}"></div><div class=t style="top:704px;font-size:30px;font-weight:600">{STEPS[k - 1]}</div>')
+for k in range(1, len(STEPS) + 1):
+    page(f"boot-{k}", SHOWN[k - 1], f'<div data-bar="{k / len(STEPS):.3f}"></div><div class=t style="top:704px;font-size:30px;font-weight:600">{STEPS[k - 1]}</div>')
 
 
 def drawn(name, mark, title, lines, bar=None, button=None):

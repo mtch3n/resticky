@@ -11,7 +11,7 @@ from PIL import Image
 
 W, H = 480, 800
 PANEL_STRIDE = 800 // 8
-FRAMES = [f"boot-{k}" for k in range(1, 7)] + ["power-off"]
+FRAMES = [f"boot-{k}" for k in range(1, 5)] + ["power-off"]
 
 
 def render(html: Path, out: Path) -> Image.Image:

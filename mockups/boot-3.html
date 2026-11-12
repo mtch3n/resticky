@@ -6,9 +6,9 @@
 <div class=t style="top:50px;font-size:112px;font-weight:700;line-height:1">resticky</div>
 <svg id=s width=480 height=800 style="position:absolute;left:0;top:0"></svg>
 <div class=t style="top:604px;font-size:40px;font-weight:600">keeps what was said</div>
-<div data-bar="0.500"></div><div class=t style="top:704px;font-size:30px;font-weight:600">starting Bluetooth</div>
+<div data-bar="0.750"></div><div class=t style="top:704px;font-size:30px;font-weight:600">starting Bluetooth</div>
 <script src="assets/js/rough.js"></script><script>
-const svg = document.getElementById('s'), rc = rough.svg(svg), shown = 3, scene = 'speech';
+const svg = document.getElementById('s'), rc = rough.svg(svg), shown = 5, scene = 'speech';
 const add = n => svg.appendChild(n);
 const pen = (w, s) => ({roughness: 1.1, strokeWidth: w, seed: s});
 const cloud = (x, y, w, h, sd) => add(rc.path(`M${x} ${y + h} C${x - h * 0.6} ${y + h} ${x - h * 0.6} ${y + h * 0.35} ${x + w * 0.12} ${y + h * 0.4} C${x + w * 0.1} ${y - h * 0.15} ${x + w * 0.45} ${y - h * 0.25} ${x + w * 0.52} ${y + h * 0.15} C${x + w * 0.62} ${y - h * 0.05} ${x + w * 0.9} ${y + h * 0.05} ${x + w * 0.86} ${y + h * 0.45} C${x + w * 1.08} ${y + h * 0.45} ${x + w * 1.08} ${y + h} ${x + w * 0.9} ${y + h} Z`, {...pen(3, sd), fill: '#fff', fillStyle: 'solid'}));

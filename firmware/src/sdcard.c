@@ -98,15 +98,16 @@ bool sdcard_format(void (*progress)(int percent))
         deselect();
         return false;
     }
+    sdmmc_host_t again = card->host;
     size_t total = card->csd.capacity, part = total / ERASE_PARTS;
     int erased = 0;
     for (int i = 0; i < ERASE_PARTS; i++) {
         size_t count = i == ERASE_PARTS - 1 ? total - i * part : part;
         esp_err_t err = sdmmc_erase_sectors(card, i * part, count, SDMMC_ERASE_ARG);
-        if (err == ESP_OK) err = sdmmc_card_init(&card->host, card);
+        if (err == ESP_OK) err = sdmmc_card_init(&again, card);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "erase stopped at %d%%: %s", i, esp_err_to_name(err));
-            sdmmc_card_init(&card->host, card);
+            sdmmc_card_init(&again, card);
             break;
         }
         erased = i + 1;

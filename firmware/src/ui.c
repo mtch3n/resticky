@@ -1758,7 +1758,7 @@ static void build_map(void)
     lv_obj_set_pos(wake, 24, 560);
 }
 
-static lv_obj_t *sd_rows[5], *sd_format, *sd_status;
+static lv_obj_t *sd_rows[5], *sd_format;
 static uint32_t sd_confirm_until;
 
 static void size_text(char *buf, size_t n, uint64_t bytes)
@@ -1796,6 +1796,7 @@ static void show_sd_present(void)
 static volatile int sd_progress;
 static volatile bool sd_formatting, sd_done, sd_ok;
 static int sd_shown;
+static uint32_t sd_result_until;
 
 static void format_progress(int percent) { sd_progress = percent; }
 
@@ -1820,27 +1821,32 @@ static void format_clicked(lv_event_t *e)
     sd_formatting = true;
     sd_progress = 0;
     sd_shown = -1;
-    lv_label_set_text(text, "Formatting...");
+    lv_label_set_text(text, "Erasing 0%");
     set_inverted(sd_format, false);
     if (xTaskCreate(format_task, "sd_format", 6144, NULL, 4, NULL) != pdPASS) {
         sd_formatting = false;
-        lv_label_set_text(sd_status, "Format failed. Check the card.");
+        lv_label_set_text(text, "Format failed. Tap to retry.");
     }
 }
 
 static void show_format(void)
 {
+    lv_obj_t *text = lv_obj_get_child(sd_format, 0);
     int p = sd_progress;
     if (sd_formatting && p / 2 != sd_shown) {
         sd_shown = p / 2;
-        if (p <= 90) lv_label_set_text_fmt(sd_status, "Erasing %d%%", p * 100 / 90);
-        else lv_label_set_text(sd_status, "Writing file system...");
+        if (p <= 90) lv_label_set_text_fmt(text, "Erasing %d%%", p * 100 / 90);
+        else lv_label_set_text(text, "Writing file system...");
     }
     if (sd_formatting && sd_done) {
         sd_formatting = sd_done = false;
-        lv_label_set_text(sd_status, sd_ok ? "Formatted. The card is empty." : "Format failed. Check the card.");
-        lv_label_set_text(lv_obj_get_child(sd_format, 0), "Format card");
+        lv_label_set_text(text, sd_ok ? "Formatted" : "Format failed. Tap to retry.");
+        sd_result_until = tick_ms() + 5000;
         show_sd();
+    }
+    if (sd_result_until && tick_ms() > sd_result_until) {
+        sd_result_until = 0;
+        lv_label_set_text(text, "Format card");
     }
 }
 
@@ -1850,8 +1856,6 @@ static void build_sd(void)
     v_sd.on_show = show_sd;
     const char *names[5] = {"Card", "Size", "Used", "Free", "Speed"};
     for (int i = 0; i < 5; i++) sd_rows[i] = row_value(row(s, TOP - 8 + i * ROW_H, names[i]), -24);
-    sd_status = label(s, "", &body_18);
-    lv_obj_set_pos(sd_status, 24, UI_H - 130);
     sd_format = button(s, "Format card", UI_H - 88, false, format_clicked);
 }
 
@@ -2180,8 +2184,6 @@ void ui_set_net(const net_state_t *n)
     show_update(n);
     const wifi_status_t *w = &n->wifi;
     set_status_wifi(w);
-    if (w->up) ui_boot_step(5);
-    if (n->hub) ui_boot_step(6);
     lv_label_set_text(wifi_value, w->up ? w->connected : w->off ? WIFI_OFF_TEXT : w->count ? "Not connected" : "Not set");
     lv_label_set_text(hub_value, n->hub ? "OK" : n->phone ? "Phone linked" : "Not found");
     lv_label_set_text(hub_name, n->hub ? n->hub_host : n->phone ? "Phone (Bluetooth)" : "-");
