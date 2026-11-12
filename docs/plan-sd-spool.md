@@ -587,7 +587,8 @@ New function `card_quiesce(timeout)`:
 | Wake | SPI mode entry (see "SPI mode first"), `card_release`, `CHECK`. The backlog is due at once. |
 
 - "Card power off" as the last step is the same as a power cut for the card. The manifest rules cover it.
-- `quiesce` in `main.c` reads the results of `audio_stop`, `net_park` and `card_quiesce`. Today it reads none.
+- `quiesce` in `main.c` reads the results of `audio_stop`, `net_park` and `card_quiesce`. Since 0.15.4 it calls
+  `net_save_audio`, which reads the results of `audio_stop` and `net_park` (see "Shutdown save" in `protocol.md`).
 - `net_park` keeps its fallback: if the net task does not answer, the caller writes the queue to the flash.
 - A format that runs gets the cancel as all jobs. The card is `UNREADABLE` after the wake, and the user
   starts the format again.

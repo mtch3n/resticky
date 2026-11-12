@@ -271,16 +271,32 @@ hub keeps the history and the device stores none:
 | `cpu_filter_pm`, `cpu_opus_pm`, `cpu_vad_pm` | per mille | Part of the audio core time used by the filter, the Opus encoder and the VAD. |
 | `opus_max_us` | µs | Longest Opus encode of one frame. |
 | `overflows` | count | I2S overflows since start. |
+| `audio_overruns` | count | Optional, firmware 0.15.4 and later. Audio frames since start that took more than 15 ms, or that came with a new I2S overflow. After each one, the audio task keeps the CPU at 240 MHz for 10 s. |
 | `audio_keep_pm` | per mille | Optional, firmware 0.15.0 and later. Part of the frames in the last 60 s that the speech gate encoded. |
-| `early_chunks` | count | Optional, firmware 0.15.0 and later. Chunks closed early in the last 60 s because the audio buffer was full. |
+| `early_chunks` | count | Optional, firmware 0.15.0 and later. Chunks closed early since start because the audio buffer was full. |
 | `lost_chunks` | count | Optional, firmware 0.15.0 and later. Chunks lost since start (no memory for a chunk, or the upload queue was full). Must be 0. |
+| `dropped_chunks` | count | Optional, firmware 0.15.4 and later. The same value as `dropped_chunks` in the check-in: chunks that the device deleted because the flash outbox was full. |
+| `shutdown_lost` | count | Optional, firmware 0.15.4 and later. Chunks lost at a shutdown (restart, deep sleep, power off, restart after an update, rollback) before this start, and not reported to a hub yet. See "Shutdown save". Must be 0. |
 | `spool` | text | Optional. State of the flash outbox at start: `ok`, `formatted` (the partition was blank and the device formatted it), `mount failed` or `format failed` (see "Device outbox"). |
 | `spool_write_errors` | count | Optional. Failed writes of a chunk to the flash outbox since start. Each try counts. Must be 0. |
 | `spool_corrupt` | count | Optional. Chunk files that the device moved aside because they are corrupt (see "Device outbox"). Must be 0. |
+| `ble_fast_s` | s | Optional, firmware 0.15.4 and later. Time since start with a BLE connection interval of 30 ms or less. |
+| `ble_tx_bytes` | bytes | Optional, firmware 0.15.4 and later. Bytes sent in BLE notifications since start. |
 | `temp_c` | °C | Chip temperature. The hub keeps 0.1 °C. |
 
-The hub stores only the 15 fields above `audio_keep_pm` in `health.bin`. To keep the three new fields, the hub
+The hub stores only the 15 fields above `audio_keep_pm` in `health.bin`. To keep the new fields, the hub
 must add them to the record.
+
+### Shutdown save
+
+Before a restart, a deep sleep, a power off, the restart after an update and an OTA rollback, the device
+stops the audio task (the final chunk goes into the upload queue) and writes the upload queue to the flash
+outbox. The save is good only when the audio task stopped and the upload queue is empty. If the save is not
+good, the device tries one more time. If the second try also fails, the device continues the shutdown and
+adds the number of lost chunks (the chunks in the queue, plus 1 if the audio task did not stop) to the NVS
+key `diag`/`shut_lost`. At the next start the device sends ` shutdown_lost=<n>` in `boot` and the value in
+`shutdown_lost`. It erases the NVS key after the first check-in that the hub answers. A light sleep keeps
+the RAM, thus it does not count a loss.
 
 The hub keeps one sample for each check-in, but at most one sample in each minute (UTC minute of the hub
 clock; the first check-in in a minute wins). A check-in without `health` gives a sample with `"health":null`.
@@ -557,8 +573,10 @@ The device asks for the LE 2M PHY and for data length 251 bytes. The preferred A
 
 Connection interval (firmware 0.15.0 and later): 5 s after the link is ready, the device asks for a slow
 interval (150 to 200 ms, peripheral latency 4, supervision timeout 6 s) with a connection parameter update.
-While an update runs (frames 18 to 22), and for 5 s after each part of a `photo` (17), `lists` (23) or OTA
-frame, the device asks for a fast interval (15 to 30 ms, latency 0, timeout 6 s). Then it asks for the slow
+While an update runs (frames 18 to 22), for 5 s after each part of a `photo` (17), `lists` (23) or OTA
+frame, and (firmware 0.15.4 and later) while audio chunks wait in the outbox, the device asks for a fast
+interval (15 to 30 ms, latency 0, timeout 6 s). The outbox does not keep the fast interval while the device
+waits after a chunk with no ack (60 s). Then it asks for the slow
 interval again. If the interval is not in the requested range, the device asks again after 30 s. The hub must
 accept these requests. The hub must not set its own interval (for example Android
 `requestConnectionPriority`) after an update, because this stops the slow interval until the next request.
@@ -685,9 +703,12 @@ The device can turn Wi-Fi off while the phone hub is linked. Then the lists come
   the last invalid slot).
 - The device writes the image into the other app slot; `esp_ota_end` checks the image hash that ESP-IDF
   appends to every image. The device does not start an update below 20% battery unless USB is connected.
-- A new firmware starts in "pending verify". It confirms itself when it has written an audio chunk to the
-  outbox and the hub answered a check-in (Wi-Fi or BLE), within 3 minutes. Otherwise, or if it crashes
-  first, the bootloader starts the previous firmware.
+- A new firmware starts in "pending verify". It confirms itself within 3 minutes when the rule is true:
+  the hub answered a check-in (Wi-Fi or BLE), AND either the device wrote an audio chunk to the outbox,
+  or (firmware 0.15.4 and later) recording is off (mute, face down, update, sleep) and the audio task read
+  a frame from the mic that is not constant. A muted device thus confirms a good update. Otherwise, or if
+  it crashes first, the device saves the audio (see "Shutdown save") and the bootloader starts the previous
+  firmware.
 - Releases are checked only by hand: the "Check for updates" button (phone App settings › Updates, Sticky
   settings › Firmware). Only that button asks the GitHub REST API
   (`GET https://api.github.com/repos/mtch3n/resticky/releases/latest`, no token, `User-Agent: resticky-android/<v>`,

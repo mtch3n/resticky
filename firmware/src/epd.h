@@ -7,4 +7,4 @@
 #define EPD_FB_SIZE (EPD_W / 8 * EPD_H)
 
 bool epd_init(void);
-void epd_refresh(const uint8_t *fb, bool full);
+void epd_refresh(const uint8_t *fb, const uint8_t *shown, bool full);

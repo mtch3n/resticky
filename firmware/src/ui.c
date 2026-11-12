@@ -170,7 +170,7 @@ static uint32_t toast_until;
 static void refresh_panel(bool full)
 {
     int64_t t = esp_timer_get_time();
-    epd_refresh(panel_fb, full);
+    epd_refresh(panel_fb, shown_fb, full);
     if (!splash_on) net_post_screen(panel_fb, EPD_FB_SIZE);
     memcpy(shown_fb, panel_fb, EPD_FB_SIZE);
     ESP_LOGI(TAG, "%s frame shown in %lld ms", full ? "full" : "partial", (esp_timer_get_time() - t) / 1000);

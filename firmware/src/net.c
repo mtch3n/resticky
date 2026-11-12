@@ -47,7 +47,7 @@
 #define BLE_PAUSE_MS 60000
 #define OTA_MIN_BATTERY 20
 #define HUB_RECHECK_MS (5 * 60 * 1000)
-#define CHECKIN_LEN 1280
+#define CHECKIN_LEN 1536
 #define LISTS_MAX (40 * 1024)
 #define WIFI_OFF_AFTER_MS 60000
 #define WIFI_BACK_AFTER_MS 60000
@@ -429,28 +429,56 @@ static const char *climate_part(void)
 }
 
 static char boot_text[160];
+static uint32_t shutdown_lost;
+
+static void record_loss(uint32_t lost)
+{
+    nvs_handle_t h;
+    uint32_t before = 0;
+    if (nvs_open("diag", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_get_u32(h, "shut_lost", &before);
+    nvs_set_u32(h, "shut_lost", before + lost);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void loss_reported(void)
+{
+    static bool done;
+    if (done || !shutdown_lost) return;
+    done = true;
+    nvs_handle_t h;
+    if (nvs_open("diag", NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_erase_key(h, "shut_lost");
+    nvs_commit(h);
+    nvs_close(h);
+}
 
 void net_set_boot(const char *text) { strlcpy(boot_text, text, sizeof boot_text); }
 
 static const char *health_json(void)
 {
-    static char out[768];
+    static char out[1024];
     audio_load_t a;
     audio_get_load(&a);
     spool_stats_t sp;
     spool_stats(&sp);
+    ble_stats_t b;
+    ble_get_stats(&b);
     TaskHandle_t nimble = xTaskGetHandle("nimble_host"), net = xTaskGetHandle("net"), mainh = xTaskGetHandle("main");
     snprintf(out, sizeof out,
              "{\"uptime_s\":%lld,\"heap_free\":%u,\"heap_min\":%u,\"heap_largest\":%u,\"psram_free\":%u,\"psram_min\":%u,"
              "\"stack_main\":%u,\"stack_net\":%u,\"stack_ble\":%u,\"cpu_filter_pm\":%d,\"cpu_opus_pm\":%d,\"cpu_vad_pm\":%d,"
-             "\"opus_max_us\":%d,\"overflows\":%lu,\"audio_keep_pm\":%d,\"early_chunks\":%lu,\"lost_chunks\":%lu,\"spool\":\"%s\",\"spool_write_errors\":%lu,\"spool_corrupt\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
+             "\"opus_max_us\":%d,\"overflows\":%lu,\"audio_overruns\":%lu,\"audio_keep_pm\":%d,\"early_chunks\":%lu,\"lost_chunks\":%lu,\"dropped_chunks\":%lu,\"shutdown_lost\":%lu,\"spool\":\"%s\",\"spool_write_errors\":%lu,\"spool_corrupt\":%lu,"
+             "\"ble_fast_s\":%lu,\"ble_tx_bytes\":%lu,\"temp_c\":%d,\"boot\":\"%s\"%s}",
              esp_timer_get_time() / 1000000, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
              mainh ? (unsigned)uxTaskGetStackHighWaterMark(mainh) : 0, net ? (unsigned)uxTaskGetStackHighWaterMark(net) : 0,
              nimble ? (unsigned)uxTaskGetStackHighWaterMark(nimble) : 0, a.filter_pm, a.opus_pm, a.vad_pm, a.opus_max_us,
-             (unsigned long)a.overflows, a.keep_pm, (unsigned long)a.early_chunks, (unsigned long)a.lost_chunks, sp.state,
-             (unsigned long)sp.write_errors, (unsigned long)sp.corrupt, sensors_chip_celsius(),
+             (unsigned long)a.overflows, (unsigned long)a.overruns, a.keep_pm, (unsigned long)a.early_chunks, (unsigned long)a.lost_chunks, (unsigned long)sp.dropped,
+             (unsigned long)shutdown_lost, sp.state, (unsigned long)sp.write_errors, (unsigned long)sp.corrupt, (unsigned long)b.fast_s,
+             (unsigned long)b.tx_bytes, sensors_chip_celsius(),
              boot_text, climate_part());
     return out;
 }
@@ -664,6 +692,7 @@ static bool checkin(void)
     int st = http("POST", "/api/checkin", "application/json", body, strlen(body), NULL, resp, sizeof resp);
     if (st == 200) {
         marks_delivered();
+        loss_reported();
         cJSON *j = cJSON_Parse(resp);
         cJSON *off = cJSON_GetObjectItem(j, "utc_offset_min");
         if (cJSON_IsNumber(off)) clock_set_offset(off->valueint);
@@ -891,8 +920,7 @@ static void park_if_wanted(void)
 static void restart_now(void)
 {
     ESP_LOGI(TAG, "restart after the update");
-    audio_stop(3000);
-    spool_fresh();
+    net_save_audio(3000, 0);
     esp_restart();
 }
 
@@ -911,6 +939,7 @@ static bool send_ble(void)
         checkin_body(body, sizeof body);
         ble_linked = ble_send_json(BLE_TYPE_CHECKIN, body);
         if (ble_linked) marks_delivered();
+        if (ble_linked) loss_reported();
         if (ble_linked) ota_note_hub();
         last_ble_checkin = now;
     }
@@ -1308,19 +1337,29 @@ void net_need_wifi(void)
     wifi_need_until = esp_log_timestamp() + WIFI_NEED_MS;
 }
 
+static bool outbox_waiting(void)
+{
+    spool_stats_t sp;
+    spool_stats(&sp);
+    return esp_log_timestamp() >= ble_pause_until && (sp.chunks || uxQueueMessagesWaiting(chunks));
+}
+
 static void net_task(void *arg)
 {
     for (;;) {
         park_if_wanted();
         if (restart_at && esp_log_timestamp() > restart_at) restart_now();
         if (ble_ready()) phone_frames();
-        ble_tick(updating());
+        ble_tick(updating() || outbox_waiting());
         if (updating()) {
             spool_fresh();
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        ota_tick();
+        if (ota_rollback_due()) {
+            net_save_audio(3000, 0);
+            ota_roll_back();
+        }
         bool stored = spool_fresh();
         apply_lists();
         wifi_policy();
@@ -1362,6 +1401,16 @@ void net_init(void)
         spool_stats(&sp);
         strlcat(boot_text, " spool=", sizeof boot_text);
         strlcat(boot_text, sp.state, sizeof boot_text);
+    }
+    nvs_handle_t h;
+    if (nvs_open("diag", NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u32(h, "shut_lost", &shutdown_lost);
+        nvs_close(h);
+    }
+    if (shutdown_lost) {
+        char lost[32];
+        snprintf(lost, sizeof lost, " shutdown_lost=%lu", (unsigned long)shutdown_lost);
+        strlcat(boot_text, lost, sizeof boot_text);
     }
     todo_changes = xQueueCreate(8, sizeof(todo_change_t));
     uint8_t mac[6];
@@ -1465,9 +1514,10 @@ bool net_park(uint32_t timeout_ms)
     xSemaphoreTake(parked, 0);
     park_wanted = true;
     bool ok = is_parked || xSemaphoreTake(parked, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
-    spool_fresh();
-    ESP_LOGI(TAG, "park: %s", ok ? "net task stopped" : "net task busy, outbox written by the caller");
-    return ok;
+    bool stored = spool_fresh();
+    ESP_LOGI(TAG, "park: %s, outbox %s", ok ? "net task stopped" : "net task busy, outbox written by the caller",
+             stored ? "on flash" : "not all on flash");
+    return stored;
 }
 
 bool net_sleep(uint32_t timeout_ms)
@@ -1475,6 +1525,22 @@ bool net_sleep(uint32_t timeout_ms)
     bool ok = net_park(timeout_ms);
     if (!wifi_off) wifi_stop();
     return ok;
+}
+
+bool net_save_audio(uint32_t audio_ms, uint32_t park_ms)
+{
+    uint32_t lost = 0;
+    for (int tries = 0; tries < 2; tries++) {
+        bool stopped = audio_stop(audio_ms);
+        bool stored = park_ms ? net_park(park_ms) : spool_fresh();
+        if (stopped && stored) return true;
+        lost = uxQueueMessagesWaiting(chunks) + !stopped;
+        ESP_LOGW(TAG, "save: audio %s, %lu chunks not on flash", stopped ? "stopped" : "not stopped",
+                 (unsigned long)uxQueueMessagesWaiting(chunks));
+    }
+    ESP_LOGE(TAG, "save failed: %lu chunks lost", (unsigned long)lost);
+    record_loss(lost);
+    return false;
 }
 
 void net_wake(void)

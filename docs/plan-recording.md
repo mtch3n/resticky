@@ -106,8 +106,13 @@ sleep. Opus encoded all audio, also silence. The gate removes this work.
   adds the 500 ms in the ring to its offset. When recording stops, the device encodes the frames in the ring
   before the final chunk.
 - Without the VADNet model, the device encodes all frames, as before.
-- The `CPU_FREQ_MAX` lock is held only from the end of an I2S read to the end of the filter, VAD and encode
-  work of that frame. While the task waits for the next frame, DFS can go to 80 MHz.
+- The `CPU_FREQ_MAX` lock (firmware 0.15.4) is held only while the task encodes frames. The task takes the
+  lock before the first Opus encode and releases it after the first frame that it does not encode. Thus the
+  filter and VADNet run at 80 MHz in silence (VADNet is about 10 to 14 % of a frame at 240 MHz, thus about
+  40 % at 80 MHz). The frequency switches only at the start and the end of speech. Safety: when a frame
+  takes more than 15 ms (`FRAME_BUDGET_US`) or a new I2S overflow occurs, the task keeps the lock for 10 s
+  (`BOOST_US`) and counts it in `audio_overruns`. The `cpu_*_pm` fields thus give the time at the real
+  clock, not at 240 MHz.
 - A full chunk buffer (72,000 bytes) closes the chunk early (`early chunks` in the log and `early_chunks` in
   health). The device never drops a frame from a chunk. A chunk that the device cannot queue counts in
   `lost_chunks`.
@@ -153,7 +158,10 @@ once. The sequence now is:
 2. Stop recording. The audio task encodes the ring, queues the final chunk, switches the mic off and gives an
    acknowledgement (at most 5 s).
 3. Park the net task. It writes the upload queue to the flash outbox and then stops (at most 20 s). If the
-   net task does not stop in time, the caller writes the queue to flash.
+   net task does not stop in time, the caller writes the queue to flash. For a deep sleep, a restart and a
+   power off, steps 2 and 3 are one save that must give "audio stopped and queue empty". If it fails, the
+   device tries one more time, then continues and records the lost chunks (see "Shutdown save" in
+   `protocol.md`).
 4. Stop BLE (`nimble_port_stop`, `nimble_port_deinit`) and Wi-Fi (`esp_wifi_stop`).
 5. Read the IMU interrupt sources (`TAP_SRC`, `WAKE_UP_SRC`, `D6D_SRC`) to release the latched INT1, and log
    the GPIO7 level before and after.
@@ -312,6 +320,9 @@ Updates must be easy: no USB cable and no tools on the PC.
 - The device does not start an update below 20% battery unless USB power is connected.
 - The device keeps the audio that waits for upload in the flash spool during the update, so an
   update loses no audio.
+- Confirm rule (firmware 0.15.4): hub check-in AND (an audio chunk in the outbox OR recording intentionally
+  off with a mic frame that is not constant). Before 0.15.4 a muted or face-down device made no audio
+  chunk, thus a good update rolled back after 3 minutes. See "Firmware update" in `protocol.md`.
 - USB flash stays possible as the recovery path.
 
 ## Build layers

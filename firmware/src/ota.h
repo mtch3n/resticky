@@ -15,8 +15,10 @@ typedef void (*ota_progress_cb)(int percent);
 
 void ota_init(void);
 void ota_note_audio(void);
+void ota_note_mic_idle(void);
 void ota_note_hub(void);
-void ota_tick(void);
+bool ota_rollback_due(void);
+void ota_roll_back(void);
 bool ota_is_newer(const char *version);
 bool ota_install(const char *base_url, const char *auth, const ota_info_t *info, ota_progress_cb progress, const volatile bool *cancel);
 bool ota_stream_begin(const char *version, size_t size);

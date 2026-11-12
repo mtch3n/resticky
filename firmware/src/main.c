@@ -86,8 +86,7 @@ static void apply_settings(const settings_t *s)
 static void quiesce(void)
 {
     set_off(OFF_POWER, true);
-    audio_stop(AUDIO_STOP_MS);
-    net_park(NET_PARK_MS);
+    net_save_audio(AUDIO_STOP_MS, NET_PARK_MS);
 }
 
 static void restart(void)
@@ -336,13 +335,13 @@ void app_main(void)
     net_set_night(settings.night_on, settings.night_start, settings.night_end);
     ui_boot_step(2);
     net_init();
+    audio_set_recording(recording);
     audio_init(net_enqueue);
     ui_boot_step(3);
     if (!ble_init()) ESP_LOGE(TAG, "bluetooth not started");
     ui_boot_step(4);
     audio_set_bitrate(settings.bitrate_kbps * 1000);
     ui_set_settings(&settings);
-    audio_set_recording(recording);
     unsigned net_version = 0;
     EXT_RAM_BSS_ATTR static wifi_status_t net_wifi;
     bool net_hub = false;
