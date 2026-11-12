@@ -967,7 +967,7 @@ static void mark_changed(void)
     xSemaphoreGive(lock);
 }
 
-static bool send_ble(void)
+static bool send_ble(bool with_chunks)
 {
     int64_t now = esp_log_timestamp();
     if (!ble_linked || now - last_ble_checkin > POLL_MS) {
@@ -981,6 +981,7 @@ static bool send_ble(void)
     }
     send_weather_change(true);
     send_todos_ble();
+    if (!with_chunks) return false;
     uint32_t id;
     audio_chunk_t *next = spool_oldest(&id);
     if (!next) return false;
@@ -1353,7 +1354,7 @@ static void wifi_policy(void)
     }
     set_phone(linked && lists_seen);
     bool needed = now < wifi_need_until;
-    if (!wifi_off && !needed && linked && lists_seen && now - link_since >= WIFI_OFF_AFTER_MS) {
+    if (!wifi_off && !needed && !tele.usb && linked && lists_seen && now - link_since >= WIFI_OFF_AFTER_MS) {
         ESP_LOGI(TAG, "phone linked for %lld s: Wi-Fi off", (now - link_since) / 1000);
         wifi_off = true;
         wifi_stop();
@@ -1361,8 +1362,8 @@ static void wifi_policy(void)
         state.hub = false;
         state.version++;
         xSemaphoreGive(lock);
-    } else if (wifi_off && (needed || (!linked && now - link_lost_at > WIFI_BACK_AFTER_MS))) {
-        ESP_LOGI(TAG, "Wi-Fi on: %s", needed ? "needed" : "phone link lost");
+    } else if (wifi_off && (needed || tele.usb || (!linked && now - link_lost_at > WIFI_BACK_AFTER_MS))) {
+        ESP_LOGI(TAG, "Wi-Fi on: %s", needed ? "needed" : tele.usb ? "USB power" : "phone link lost");
         wifi_off = false;
         last_find = 0;
         wifi_resume();
@@ -1375,11 +1376,16 @@ void net_need_wifi(void)
     wifi_need_until = esp_log_timestamp() + WIFI_NEED_MS;
 }
 
+static bool chunks_on_wifi(void)
+{
+    return tele.usb && state.hub;
+}
+
 static bool outbox_waiting(void)
 {
     spool_stats_t sp;
     spool_stats(&sp);
-    return esp_log_timestamp() >= ble_pause_until && (sp.chunks || uxQueueMessagesWaiting(chunks));
+    return !chunks_on_wifi() && esp_log_timestamp() >= ble_pause_until && (sp.chunks || uxQueueMessagesWaiting(chunks));
 }
 
 static void net_task(void *arg)
@@ -1403,7 +1409,7 @@ static void net_task(void *arg)
         wifi_policy();
         bool ble = ble_ready() && esp_log_timestamp() >= ble_pause_until;
         if (!ble) ble_linked = false;
-        bool busy = ble && send_ble();
+        bool busy = ble && send_ble(!chunks_on_wifi());
         if (wifi_wait_up(ble ? 0 : pdMS_TO_TICKS(1000))) {
             check_github();
             bool testing = test_now;
@@ -1412,7 +1418,7 @@ static void net_task(void *arg)
             if (install_now && latest.url[0]) install_update();
             if (have_hub(ble, testing)) {
                 if (install_now) install_update();
-                if (!ble) busy = send_wifi();
+                if (!ble || tele.usb) busy = send_wifi() || busy;
                 sync_wifi(testing);
             }
         }

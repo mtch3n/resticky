@@ -775,8 +775,9 @@ The device ignores types that it does not know.
   again only when its JSON changed (a new forecast, a settings change, a calendar change, a new offset, a
   new clock face or weather style). On Wi-Fi the device gets the same data with `GET /api/weather`,
   `GET /api/agenda` and the check-in reply.
-- While a BLE hub is ready, chunks go only on BLE. Check-ins go only on BLE. Screen frames use Wi-Fi when a
-  Wi-Fi hub is reachable.
+- While a BLE hub is ready, chunks go only on BLE. Exception (firmware 0.15.7 and later): on USB power, chunks
+  go on Wi-Fi when a Wi-Fi hub is reachable, and on BLE when no Wi-Fi hub is reachable or an upload fails.
+  Check-ins go only on BLE. Screen frames use Wi-Fi when a Wi-Fi hub is reachable.
 - The hub sends `lists` when the link becomes ready and each time the transcripts or the to-dos change. The
   device puts the items into the same state as `GET /api/transcripts` and `GET /api/todos`. After the first
   `lists` frame of a link, the device stops the HTTP requests for transcripts and to-dos.
@@ -789,6 +790,8 @@ The device ignores types that it does not know.
 Firmware 0.15.0 and later. Weather, agenda, display, time and lists come on BLE. Thus the device does not
 need Wi-Fi while a phone hub is linked.
 
+- The device does not stop Wi-Fi while it is on USB power (firmware 0.15.7 and later). It starts Wi-Fi again
+  when USB power comes on.
 - The device stops Wi-Fi (`esp_wifi_stop`) when the BLE hub was ready for 60 s without a break and a `lists`
   frame came on this link.
 - The device starts Wi-Fi again when the BLE link is not ready for more than 60 s. It also starts Wi-Fi for
