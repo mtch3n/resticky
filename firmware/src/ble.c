@@ -335,14 +335,8 @@ static bool send_frame(uint8_t type, const uint8_t *head, size_t head_len, const
     return ok;
 }
 
-bool ble_init(void)
+static bool start(void)
 {
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    acks = xQueueCreate(4, ACK_LEN);
-    if (!acks) {
-        ESP_LOGE(TAG, "ack queue not created");
-        return false;
-    }
     size_t internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (internal < MIN_INTERNAL_FREE) {
         ESP_LOGE(TAG, "not started: internal heap free %u KB", (unsigned)(internal / 1024));
@@ -353,6 +347,7 @@ bool ble_init(void)
         ESP_LOGE(TAG, "nimble init failed: %s", esp_err_to_name(err));
         return false;
     }
+    started = true;
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
@@ -371,7 +366,6 @@ bool ble_init(void)
         ESP_LOGE(TAG, "gatt service not added: %d", rc);
         return false;
     }
-    started = true;
     ble_store_config_init();
     if (xTaskCreatePinnedToCore(host_task, "nimble_host", CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE, NULL,
                                 configMAX_PRIORITIES - 4, NULL, CONFIG_BT_NIMBLE_PINNED_TO_CORE) != pdPASS) {
@@ -382,6 +376,25 @@ bool ble_init(void)
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
     return true;
+}
+
+bool ble_init(void)
+{
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    acks = xQueueCreate(4, ACK_LEN);
+    if (!acks) {
+        ESP_LOGE(TAG, "ack queue not created");
+        return false;
+    }
+    return start();
+}
+
+bool ble_resume(void)
+{
+    if (started || !acks) return started;
+    bool ok = start();
+    if (!ok && started) ble_stop();
+    return ok;
 }
 
 bool ble_ready(void)
@@ -469,6 +482,7 @@ void ble_stop(void)
     if (rc == 0) nimble_port_deinit();
     conn = BLE_HS_CONN_HANDLE_NONE;
     secure = subscribed = false;
+    passkey = -1;
     ESP_LOGI(TAG, "stopped: %d", rc);
 }
 

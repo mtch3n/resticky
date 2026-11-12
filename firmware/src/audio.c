@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "board.h"
 #include "driver/gpio.h"
 #include "driver/i2s_pdm.h"
 #include "encoder/impl/esp_opus_enc.h"
@@ -22,7 +23,6 @@
 
 #define PIN_PDM_CLK 19
 #define PIN_PDM_DATA 20
-#define PIN_MIC_EN 38
 #define SAMPLE_RATE 16000
 #define FRAME_SAMPLES 320
 #define CHUNK_MS (AUDIO_CHUNK_FRAMES * 20)

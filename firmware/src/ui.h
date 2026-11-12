@@ -20,12 +20,15 @@ typedef struct {
     ui_action_cb check_updates;
     ui_action_cb cancel_update;
     ui_action_cb need_wifi;
+    ui_action_cb deep_sleep;
 } ui_actions_t;
 
 void ui_init(const ui_actions_t *actions);
 void ui_boot_step(int step);
 void ui_show_off(void);
-void ui_show_sleep(void);
+void ui_show_sleep(bool deep);
+void ui_show_deep_sleep(int wake_minute);
+void ui_wake(void);
 void ui_show_passkey(int passkey);
 void ui_set_settings(const settings_t *s);
 void ui_set_recording(bool recording);

@@ -61,13 +61,13 @@ never loses data or privacy (those actions need a hold); the buttons work withou
 
 | Button | Press | Hold 1.5 s |
 |---|---|---|
-| Power | Sleep / wake (manual sleep: recording paused, radios off, deep sleep, sleep screen) | Hold 10 s: power off |
+| Power | Sleep / wake (light sleep: recording paused, radios off, moon in the status row; 0.15.2) | Hold 10 s: power off |
 | Up | Previous page | Mark moment: the last 2 minutes are important (never dropped by the voice detector, audio kept, shown first in the summary) |
 | Down | Next page | Mute / record |
 | Up + Down | — | Hold 3 s: pair a phone (shows the BLE code) |
 
 Settings > Buttons shows the map and lets the user give each press or hold another action: Sleep/wake,
-Mute/record, Mark moment, Previous/next page, Home, Pair phone, Nothing. Power off on a 10 s hold is fixed.
+Mute/record, Mark moment, Previous/next page, Home, Deep sleep (0.15.2), Pair phone, Nothing. Power off on a 10 s hold is fixed.
 
 Sleep indicators: in quiet mode (automatic, still listening) the Wi-Fi icon in the status line becomes a
 moon and the Recorder tile says "Listening"; manual sleep shows the full sleep screen (moon, "Sleeping",

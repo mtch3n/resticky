@@ -9,8 +9,8 @@ buzzer).
 
 | GPIO | Net | Part |
 |---|---|---|
-| 4 | PWR_BUTTON | Power key (also wakes from deep sleep) |
-| 5 / 6 | BUTTON_UP / BUTTON_DOWN | Side keys |
+| 4 | PWR_BUTTON | Power key (also wakes from deep sleep and light sleep) |
+| 5 / 6 | BUTTON_UP / BUTTON_DOWN | Side keys (also wake from deep sleep and light sleep) |
 | 45 / 46 | PWR_HOLD / PWR_LOCK | Power latch |
 | 7 | BFG_INT and 6D_INTn | Fuel gauge interrupt and IMU INT1 (shared) |
 | 0 / 1 | BFG_I2C_SCL/SDA = MISC_I2C | BQ27220 gauge 0x55, LSM6DS3TR-C IMU 0x6A, PCF8563 RTC 0x51, SHT40 0x44 |
@@ -43,7 +43,8 @@ Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/gre
 | PDM_EN mic power | Yes | The mic is off when recording is off |
 
 | **RTC alarm (RTC_INTn)** | **No** | Scheduled wake (night pause); check where RTC_INTn goes |
-| CPU power management (DFS) | Yes | 80 to 240 MHz, no light sleep. 0.15.0: the audio task holds `CPU_FREQ_MAX` only while it works on a frame |
+| CPU power management (DFS) | Yes | 80 to 240 MHz, no automatic light sleep. 0.15.0: the audio task holds `CPU_FREQ_MAX` only while it works on a frame |
+| Light sleep (`esp_light_sleep_start`) | Yes (0.15.2) | The "Sleep" action. Wake: keys (GPIO wake, low level) and a 10-minute timer for the night check. Wi-Fi and BLE stop before it. The driven pins (power latch, charger, e-paper, SD, touch, mic, buzzer) keep their level with `gpio_sleep_sel_dis`. The GT911 goes into its sleep mode. See "Sleep modes" in `plan-recording.md` |
 | **PIE SIMD (esp-dsp aes3)** | **No** | Needs the audio task stack in internal RAM or a fix for the PIE context |
 | **Hardware AES/SHA** | **No** | Encrypted uploads (HTTP is plain today) |
 | ULP RISC-V coprocessor | No | Not needed while ext0/ext1 wake is enough |

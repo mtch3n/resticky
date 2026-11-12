@@ -82,7 +82,7 @@ LV_FONT_DECLARE(hand_200);
 #define ICON_HOME "\xEE\xAB\x81"
 static const char *const BATTERY_LEVELS[] = {"\xEE\xA8\xB4", "\xEE\xA8\xAF", "\xEE\xA8\xB0", "\xEE\xA8\xB1", "\xEE\xA8\xB2"};
 static const char *const WIFI_LEVELS[] = {"\xEE\xAE\xA3", "\xEE\xAE\xA4", "\xEE\xAE\xA5", "\xEE\xAD\x92"};
-static const char *const ACTION_NAMES[ACT_COUNT] = {"Nothing", "Sleep / wake", "Mute / record", "Previous page", "Next page", "Home", "Mark moment"};
+static const char *const ACTION_NAMES[ACT_COUNT] = {"Nothing", "Sleep / wake", "Mute / record", "Previous page", "Next page", "Home", "Mark moment", "Deep sleep"};
 static const char *const SLOT_NAMES[SLOT_COUNT] = {"POWER \xC2\xB7 PRESS", "POWER \xC2\xB7 DOUBLE PRESS", "UP \xC2\xB7 PRESS", "UP \xC2\xB7 HOLD", "DOWN \xC2\xB7 PRESS", "DOWN \xC2\xB7 HOLD", "BACK \xC2\xB7 DOUBLE TAP"};
 static const int QUALITIES[3] = {8, 12, 16};
 
@@ -1817,6 +1817,7 @@ static void build_sd(void)
 
 static void restart_clicked(lv_event_t *e) { actions.restart(); }
 static void power_off_clicked(lv_event_t *e) { actions.power_off(); }
+static void deep_sleep_clicked(lv_event_t *e) { actions.deep_sleep(); }
 
 static void pitch_clicked(lv_event_t *e)
 {
@@ -1908,6 +1909,7 @@ static void build_device(void)
     static const char *const pitches[BUZZ_PITCHES] = {"100 Hz", "175 Hz", "300 Hz", "500 Hz"};
     seg_create(&pitch_seg, s, TOP + 208, pitches, BUZZ_PITCHES, pitch_clicked);
     update_button = button(v_settings.scr, "Check for updates", UI_H - 88, false, check_clicked);
+    button(s, "Deep sleep", UI_H - 248, false, deep_sleep_clicked);
     button(s, "Restart", UI_H - 168, false, restart_clicked);
     button(s, "Shut down", UI_H - 88, false, power_off_clicked);
 }
@@ -1985,9 +1987,25 @@ static void set_rec_tile(void)
     lv_label_set_text(rec_tile_icon, on ? ICON_MIC : ICON_MIC_OFF);
 }
 
-void ui_show_sleep(void)
+void ui_show_sleep(bool deep)
 {
     sleeping = true;
+    if (deep) force_full = true;
+    set_status_wifi(&view.wifi);
+    set_rec_tile();
+    lv_refr_now(NULL);
+}
+
+void ui_show_deep_sleep(int wake_minute)
+{
+    ESP_LOGI(TAG, "deep sleep screen, wake minute %d", wake_minute);
+    lv_obj_invalidate(lv_screen_active());
+    ui_show_sleep(true);
+}
+
+void ui_wake(void)
+{
+    sleeping = false;
     set_status_wifi(&view.wifi);
     set_rec_tile();
     lv_refr_now(NULL);

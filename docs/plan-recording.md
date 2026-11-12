@@ -50,7 +50,8 @@ layer 2.
 
 1. Physical mute (a button toggle). Nothing can override it.
 2. Face down (IMU): stop.
-3. Night schedule (RTC): deep sleep.
+3. Night schedule (RTC): deep sleep. The "Deep sleep" action also starts deep sleep. The "Sleep" action
+   starts light sleep (see "Sleep modes").
 4. Meeting windows from the hub calendar: continuous mode. This rule cannot override 1–3.
 
 The IMU can detect the orientation. It cannot reliably detect "in a drawer", so the plan does
@@ -64,6 +65,7 @@ not use that rule.
 | Speech: record + encode | ~35 mA | 3 | ~105 |
 | Wi-Fi bursts | — | — | ~15 |
 | Night deep sleep | ~0.1 mA | 13 | ~2 |
+| Light sleep (side key), if used | ~0.5–1 mA | — | ~0.5–1 per hour |
 | Total | | | ~160 |
 
 The 5 mA and 0.1 mA values need very low sleep current for the full board (PSRAM, regulators,
@@ -136,7 +138,8 @@ The device keeps the reasons why recording is off. It records only when there is
 | Mute | The mute action (key, back tap, Settings › Recording). Stored in NVS (`muted`), so it stays after a restart, a sleep and a power off. | Only the mute action. This also clears "face down". |
 | Face down | Face down for 2 s (with "Stop when face down" on). | Face up for 2 s, or the setting off. |
 | Update | Update mode. | The end of update mode. |
-| Power | Restart, sleep and power off. | The next start. |
+| Power | Restart, deep sleep and power off. | The next start. |
+| Sleep | Light sleep (0.15.2). | The wake from light sleep. If no other reason stays (for example mute), recording starts again. |
 
 Thus face up never starts a recording that the user muted.
 
@@ -165,7 +168,74 @@ reason, wake cause, ext1 pins, core dump summary) did not change.
 The fuel gauge can also pull GPIO7 low (for example a state-of-charge pulse) during deep sleep. This wakes the
 device. The boot report shows `wake=ext1 pins=0x80` for this case.
 
-## Next step: quiet mode (design, not built)
+## Sleep modes (firmware 0.15.2)
+
+| Mode | Started by | Screen | Wake | After the wake |
+|---|---|---|---|---|
+| Light sleep | The "Sleep" action (default: power key press). | No change, only the moon in the status row. | Any key (GPIO4, 5, 6, low level). A timer each 10 minutes checks the night window and goes back to light sleep with no screen refresh. | At once. The RAM and the screen stay. No boot animation. The moon goes away, Wi-Fi and BLE start again, the phone connects again, and recording starts again if it is not muted. |
+| Deep sleep | The "Deep sleep" action (Settings › Buttons, or Settings › Device › Deep sleep), or the night window. | The deep sleep screen (`ui_show_deep_sleep`, full refresh). | Power key, side keys, GPIO7 (ext1). Night: also the timer at the night end. | A restart with the boot animation. |
+
+If the night window starts during light sleep, the 10-minute timer wake changes to deep sleep until the
+night end. A light sleep can thus become a deep sleep with a delay of 10 minutes or less.
+
+### Light sleep sequence
+
+The 45 s sleep guard (abort with a core dump) covers the steps to sleep and the steps to wake. Each step is
+written to NVS (`diag/sleep_step`), and the boot report shows `sleep_step=N` after a hang or a crash.
+
+| Step | Action |
+|---|---|
+| 11 | Show the moon (partial refresh). |
+| 12 | Set the "sleep" recording-off reason. The audio task queues the final chunk and switches the mic off (at most 5 s). |
+| 13 | Park the net task (at most 20 s, the upload queue goes to the flash outbox). Stop Wi-Fi (`esp_wifi_stop`) if it is on. The Wi-Fi driver stays initialized. |
+| 14 | Stop BLE (`nimble_port_stop`, `nimble_port_deinit`: host and controller). |
+| 15 | Put the GT911 touch controller into its sleep mode (register 0x8040 = 5). |
+| 16 | Stop the guard. Wait at most 5 s until the keys are released. Enable the GPIO wake for each key that is high, and the 10-minute timer. `esp_light_sleep_start`. The step stays 16 while the device sleeps. |
+| 17 | Key wake: start the guard again. The keys must be released before the next press counts, so the wake press does not start an action. Wake the touch controller (INT high for 5 ms; a reset if it does not answer). |
+| 18 | Start BLE again (`nimble_port_init`, GATT services, host task). `ble_init` runs only one time at boot; the queue is not made again. |
+| 19 | Start Wi-Fi again (`esp_wifi_start`) if it was on before the sleep, release the net task, clear the "sleep" reason, remove the moon. Then step 0. |
+
+The log shows `light sleep: woke after N s (M night checks)` and the board line `light sleep: ESP_OK, cause …`.
+
+### Why the radios stop (ESP-IDF 5.5.3)
+
+- The ESP-IDF sleep modes guide (ESP32-S3, v5.5.3, "Wi-Fi/Bluetooth and Sleep Modes"): "In Deep-sleep and
+  Light-sleep modes, the wireless peripherals are powered down", and "Before entering Deep-sleep or
+  Light-sleep modes, the application must disable Wi-Fi and Bluetooth" (`nimble_port_stop()`,
+  `nimble_port_deinit()`, `esp_bt_controller_disable()`, `esp_wifi_stop()`). Only automatic light sleep with
+  modem sleep keeps a link.
+- `CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP` depends on `FREERTOS_USE_TICKLESS_IDLE` (automatic light
+  sleep), which the firmware does not use. It has no effect on `esp_light_sleep_start`. `sdkconfig.defaults`
+  does not change.
+- The BLE controller cannot be stopped alone while NimBLE runs. Thus the firmware stops and starts the full
+  NimBLE port. NimBLE `ble_hs_deinit` releases the GATT services (`ble_gatts_stop`), the GAP name and the
+  store, so the start adds them again. The bonds are in NVS, so the phone does not pair again.
+
+### Pins in light sleep
+
+With `CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND` (on by default for the ESP32-S3) ESP-IDF isolates all GPIOs
+in sleep (no output, no pull). An isolated PWR_HOLD or PWR_LOCK would switch the board off. Thus
+`board_light_sleep` calls `gpio_sleep_sel_dis` for the pins that the firmware drives: power latch (45, 46),
+charger enable (39), e-paper power, reset, CS and DC (47, 17, 15, 16), SD power and CS (10, 8), touch power
+and reset (42, 41), mic power (38) and buzzer (48). These keep their level in light sleep.
+`gpio_wakeup_enable` does the same for the keys, so their pull-ups stay. GPIO wake keeps `RTC_PERIPH` on.
+GPIO7 (IMU and gauge) and the touch INT do not wake from light sleep.
+
+### Power in light sleep (estimate, not measured)
+
+| Part | Current |
+|---|---|
+| ESP32-S3 light sleep (CPU powered down, `CONFIG_PM_POWER_DOWN_CPU_IN_LIGHT_SLEEP`), RTC peripherals on | ~0.25 mA |
+| PSRAM (8 MB, stays powered: the data stays) and flash standby | ~0.1–0.3 mA |
+| GT911 in sleep mode | ~0.07 mA |
+| E-paper (powered, not refreshing), IMU, gauge, regulators | ~0.1–0.2 mA |
+| Timer wake each 10 minutes (a few ms) | small |
+| Total | ~0.5–1 mA (deep sleep: ~0.1 mA) |
+
+Measure with the fuel gauge average current on battery, or with a power meter. The DFS settings (80 to
+240 MHz, `light_sleep_enable = false`) do not change.
+
+
 
 
 Quiet mode lowers the power when nobody speaks. It needs the gate on (dropped frames are not stored).

@@ -89,6 +89,20 @@ low power and storage use that we can profile.
     `protocol.md`.
   - Before the first build of 0.15.0 in a checkout, delete `firmware/sdkconfig.sticky`. The old file has
     `# CONFIG_BT_CTRL_MODEM_SLEEP is not set`, and `sdkconfig.defaults` does not change a set value.
+- Firmware 0.15.2 (2026-11-11, built, not flashed, not measured): two sleep modes. See "Sleep modes" in
+  `plan-recording.md`.
+  - "Sleep" (default: power key press) is light sleep. The screen keeps the page, the status row shows the
+    moon. Any key wakes the device at once, with no restart and no boot animation. Wi-Fi and BLE stop
+    before the sleep and start again after it; the phone connects again. Recording starts again if it is not
+    muted (new recording-off reason "sleep"). A timer each 10 minutes checks the night window and changes
+    to deep sleep when the night starts.
+  - "Deep sleep" is a new button action (Settings › Buttons) and a button in Settings › Device. The night
+    window also uses deep sleep. The deep sleep screen is `ui_show_deep_sleep(wake_minute)` (night end in
+    minutes after midnight, or -1); the body is a placeholder (moon and full refresh). Wake restarts the
+    device with the boot animation.
+  - Look at on the device: the log lines `light sleep: woke after N s (M night checks)`,
+    `ble: ready` after the wake (BLE starts again), `touch: wake: ok`, and the boot report for
+    `sleep_step=11` to `19` (a hang or crash in light sleep; 16 = during the sleep).
 
 
 ## Android app facts (layer 4, Wi-Fi part, 2026-11-10)

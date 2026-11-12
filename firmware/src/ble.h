@@ -22,4 +22,5 @@ bool ble_send_weather_set(const char *json);
 int ble_passkey(void);
 void ble_tick(bool busy);
 void ble_stop(void);
+bool ble_resume(void);
 
