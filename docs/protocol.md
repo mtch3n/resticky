@@ -528,6 +528,8 @@ from the device backlog does not close at its first chunk.
   the transcript, the task and the quote agree on negation, and the task has a word that is not a courtesy
   word ("thank you", "ok", "谢谢"). The hub removes a speaker label ("Speaker D:") at the start of a task and
   removes repeated tasks.
+- When the model output stops inside `speakers` or `corrections` (the output token limit), the hub keeps the
+  title, the summary and the to-dos, and uses no speaker names and no corrections from that output.
 - Audio files (`.opus`, `.ogg`, `.wav`) are deleted 7 days after they were written. Text stays.
 
 ## Device outbox

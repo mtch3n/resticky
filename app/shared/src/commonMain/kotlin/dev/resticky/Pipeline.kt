@@ -181,7 +181,10 @@ fun todoTask(task: String): String? {
 fun parseSummary(raw: String, transcript: String): Summary {
     val text = raw.trim()
     val json = text.substring(text.indexOf('{').coerceAtLeast(0), text.lastIndexOf('}').let { if (it < 0) text.length else it + 1 })
-    val d = hubJson.decodeFromString<SummaryDraft>(json)
+    val d = runCatching { hubJson.decodeFromString<SummaryDraft>(json) }.getOrElse { e ->
+        val cut = Regex(""",\s*"(speakers|corrections)"\s*:""").find(json) ?: throw e
+        hubJson.decodeFromString<SummaryDraft>(json.substring(0, cut.range.first) + "}")
+    }
     if (d.title.trim().equals(NO_SPEECH, ignoreCase = true)) return Summary(NO_SPEECH, "")
     val todos = d.todos.mapNotNull { t ->
         val task = todoTask(t.task) ?: return@mapNotNull null

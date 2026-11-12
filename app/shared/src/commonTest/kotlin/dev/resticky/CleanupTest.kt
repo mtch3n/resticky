@@ -65,6 +65,15 @@ class CleanupTest {
     }
 
     @Test
+    fun summaryCutOffInSpeakersKeepsTitleSummaryAndTodos() {
+        val transcript = "Sam, can you send the billing report on Friday?"
+        val raw = """{"title":"Billing","summary":"Sam sends it.","todos":[{"task":"Send the billing report","quote":"send the billing report on Friday"}],
+            "speakers":[{"speaker":"Speaker A","name":"Sam","evidence":"Sam, can"},{"speaker":"Speaker B","name":"""
+        val s = parseSummary(raw, transcript)
+        assertEquals(Summary("Billing", "Sam sends it.", listOf(Todo("Send the billing report", "send the billing report on Friday"))), s)
+    }
+
+    @Test
     fun quoteWordsMustComeInOrder() {
         val transcript = "the report is late. Friday we send nothing. Can you please send the full billing report on Friday morning?"
         assertNull(quoteSpan("send the report on Friday we", "we send the report on Friday"))
