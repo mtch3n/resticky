@@ -57,6 +57,11 @@ import dev.resticky.PIPELINE_VERSION
 import dev.resticky.Transcriber
 import dev.resticky.parseSummary
 import dev.resticky.NO_SPEECH
+import dev.resticky.Heard
+import dev.resticky.isCjk
+import dev.resticky.phrases
+import dev.resticky.routePhrases
+import dev.resticky.speechIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -120,18 +125,12 @@ private const val SENSE_VOICE = "https://huggingface.co/csukuangfj/sherpa-onnx-s
 private const val SAMPLE_RATE = 16_000
 private const val VAD_WINDOW = 512
 
-private fun isCjk(c: Char) = c in '\u3400'..'\u9fff' || c in '\uf900'..'\ufaff'
-
 private fun whisper(file: String) = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$file"
 
 val SPEECH_MODELS get() = listOf(Model.Auto) + Model.entries.filter { it.name.startsWith("Whisper") } + Model.SenseVoice
 val DEFAULT_SPEECH = Model.Auto
 private val AUTO_ENGLISH = Model.WhisperSmallQ8
 private val AUTO_PARTS = listOf(AUTO_ENGLISH, Model.SenseVoice, Model.SenseVoiceTokens)
-private fun mostlyChinese(text: String): Boolean {
-    val cjk = text.count(::isCjk)
-    return cjk >= 2 && cjk * 2 >= text.count { it.isLetter() }
-}
 val SPEAKER_MODELS = listOf(Model.SpeakerSegmentation, Model.SpeakerEmbedding)
 const val LISTEN_FILE = "listen.opus"
 
@@ -200,7 +199,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         (if (open) summaryOpen else summaryClosed).value = e
     }
 
-    fun speechId(): String = "${speech.value.label}/$PIPELINE_VERSION"
+    fun speechId(): String = "${speech.value.label}${if (speech.value == Model.Auto) " per phrase" else ""}/$PIPELINE_VERSION"
 
     fun speed(engine: String): Double? = prefs.getFloat("speed:$engine", -1f).takeIf { it >= 0 }?.toDouble()
 
@@ -294,7 +293,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 val windows = speechWindows(regions, pcm.size, context.size, SAMPLE_RATE)
                 val routes = mutableListOf<String>()
                 val segments = windows.flatMap { w ->
-                    val (route, segs) = transcribeWindow(m, w.audio(pcm), w, prompt)
+                    val (route, segs) = transcribeWindow(m, w.audio(pcm), w, regions, prompt)
                     routes += route
                     placeSegments(segs, w, context.size, SAMPLE_RATE)
                 }
@@ -312,16 +311,27 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         return pcm.copyOfRange(maxOf(0, pcm.size - (CONTEXT_MS * SAMPLE_RATE / 1000).toInt()), pcm.size)
     }
 
-    private fun transcribeWindow(m: Model, audio: FloatArray, w: SpeechWindow, prompt: String): Pair<String, List<Segment>> =
+    private fun transcribeWindow(m: Model, audio: FloatArray, w: SpeechWindow, regions: List<Piece>, prompt: String): Pair<String, List<Segment>> =
         when (m) {
-            Model.SenseVoice -> senseVoice(audio, w).let { "sensevoice" to it.second }
-            Model.Auto -> {
-                val sense = if (AUTO_PARTS.drop(1).all { modelPath(it) != null }) senseVoice(audio, w) else null
-                if (sense != null && mostlyChinese(sense.second.joinToString("") { it.text })) "sensevoice:${sense.first}" to sense.second
-                else "whisper:${sense?.first ?: "-"}" to whisper(AUTO_ENGLISH, audio, prompt)
-            }
+            Model.SenseVoice -> "sensevoice" to windowSegments(senseVoice(audio), w)
+            Model.Auto -> if (AUTO_PARTS.drop(1).all { modelPath(it) != null }) {
+                val parts = phrases(w.speechIn(regions), audio.size, SAMPLE_RATE)
+                val heard = parts.map { senseVoice(audio.copyOfRange(it.from, it.to)) }
+                val routed = routePhrases(parts, heard, SAMPLE_RATE) { whisper(AUTO_ENGLISH, audio.copyOfRange(it.from, it.to), prompt) }
+                routed.routes.joinToString("+") to routed.segments
+            } else "whisper:-" to whisper(AUTO_ENGLISH, audio, prompt)
             else -> "whisper" to whisper(m, audio, prompt)
         }
+
+    private fun windowSegments(heard: Heard, w: SpeechWindow): List<Segment> {
+        var from = 0L
+        return w.ends(SAMPLE_RATE).mapNotNull { end ->
+            val part = heard.words.filter { it.startMs in from until end }
+            val start = from
+            from = end
+            part.takeIf { it.isNotEmpty() }?.let { Segment(start, end, it.joinToString(" ") { x -> x.text }, words = it) }
+        }
+    }
 
     private var recognizer: OfflineRecognizer? = null
     private var vad: Vad? = null
@@ -374,7 +384,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
         }
     }
 
-    private fun senseVoice(audio: FloatArray, w: SpeechWindow): Pair<String, List<Segment>> {
+    private fun senseVoice(audio: FloatArray): Heard {
         val rec = recognizer ?: OfflineRecognizer(
             null,
             OfflineRecognizerConfig(
@@ -396,15 +406,7 @@ class Engines(private val context: Context, private val onScreen: () -> Boolean)
                 val to = if (k + 1 < r.tokens.size) (r.timestamps.getOrElse(k + 1) { 0f } * 1000).toLong() else endMs
                 Token(if (t.startsWith("\u2581")) " " + t.drop(1) else if (t.firstOrNull()?.let(::isCjk) == true) " $t" else t, from, to)
             }
-            val words = wordsFromTokens(tokens)
-            var from = 0L
-            val segments = w.ends(SAMPLE_RATE).mapNotNull { end ->
-                val part = words.filter { it.startMs in from until end }
-                val start = from
-                from = end
-                part.takeIf { it.isNotEmpty() }?.let { Segment(start, end, it.joinToString(" ") { x -> x.text }, words = it) }
-            }
-            return r.lang.removePrefix("<|").removeSuffix("|>") to segments
+            return Heard(r.lang.removePrefix("<|").removeSuffix("|>"), wordsFromTokens(tokens))
         } finally {
             stream.release()
         }

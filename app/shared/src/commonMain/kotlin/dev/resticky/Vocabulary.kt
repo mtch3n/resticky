@@ -37,7 +37,6 @@ data class VocabularyData(val terms: List<Term> = emptyList(), val rules: List<R
 
 internal fun same(a: String, b: String) = a.trim().equals(b.trim(), ignoreCase = true)
 
-private fun isCjk(c: Char) = c in '㐀'..'鿿' || c in '豈'..'﫿'
 
 private fun wordEdge(c: Char) = c.isLetterOrDigit() && !isCjk(c)
 

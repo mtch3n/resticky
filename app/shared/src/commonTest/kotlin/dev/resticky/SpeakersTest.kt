@@ -67,16 +67,62 @@ class SpeakersTest {
     @Test
     fun windowsSplitOnFrames() {
         val frames = ByteArray(0) + List(5) { byteArrayOf(1, 0, 9) }.reduce { a, b -> a + b }
-        val w = frameWindows(frames, 40)
+        val w = frameWindows(sequenceOf(frames), 40).toList()
         assertEquals(listOf(0L, 40L, 80L), w.map { it.first })
         assertEquals(listOf(6, 6, 3), w.map { it.second.size })
+    }
+
+    private fun frame(i: Int): ByteArray {
+        val n = i % 7
+        return byteArrayOf(n.toByte(), 0) + ByteArray(n) { (i * 31 + it).toByte() }
+    }
+
+    @Test
+    fun windowsReadChunksOnlyWhenNeeded() {
+        val chunks = sequence {
+            yield(List(3) { frame(it) }.reduce { a, b -> a + b })
+            error("read too early")
+        }
+        assertEquals(0L, frameWindows(chunks, 40).first().first)
+    }
+
+    @Test
+    fun chunkedWindowsGiveTheSameTurnsAsTheWholeSession() = runTest {
+        val frames = List(500) { frame(it) }
+        val whole = frames.reduce { a, b -> a + b }
+        val chunks = listOf(0, 7, 120, 121, 333, 500).zipWithNext { a, b -> frames.subList(a, b).fold(ByteArray(0)) { x, y -> x + y } }
+        val diarizer = Diarizer { part ->
+            val sum = part.sumOf { it.toInt() and 0xff }
+            Diarization(
+                listOf(Turn(0, 500, sum % 3), Turn(500, 1500, (sum / 3) % 3)),
+                listOf(v(sum % 3, 1f, (sum % 5).toFloat()), v((sum / 3) % 3, (sum % 2).toFloat(), 1f)),
+            )
+        }
+        val expected = diarizeSession(sequenceOf(whole), diarizer, 2000).turns
+        val actual = diarizeSession(chunks.asSequence(), diarizer, 2000).turns
+        assertEquals(5, frameWindows(chunks.asSequence(), 2000).count())
+        assertEquals(expected.map { Triple(it.startMs, it.endMs, it.speaker) }, actual.map { Triple(it.startMs, it.endMs, it.speaker) })
+        assertEquals(frameWindows(sequenceOf(whole), 2000).map { it.first to it.second.toList() }.toList(), frameWindows(chunks.asSequence(), 2000).map { it.first to it.second.toList() }.toList())
+    }
+
+    @Test
+    fun sessionChunksFillAMissingChunkWithSilence() = runTest {
+        val store = Store(root)
+        store.addChunk("ab", "02", 0, false, 60, frame(1) + frame(2) + frame(3))
+        store.addChunk("ab", "02", 1, false, 40, frame(4) + frame(5))
+        store.addChunk("ab", "02", 2, true, 20, frame(6))
+        SystemFileSystem.delete(Path(store.dir("ab", "02"), "1.opus"))
+        val m = store.list("ab").single()
+        val chunks = store.sessionChunks(m)!!.toList()
+        assertEquals(List<Byte>(4) { 0 }, chunks[1].toList())
+        assertEquals(store.sessionFrames(m)!!.toList(), chunks.reduce { a, b -> a + b }.toList())
     }
 
     @Test
     fun windowsAreDiarizedSeparatelyAndJoinedByVoice() = runTest {
         val frames = List(4) { byteArrayOf(0, 0) }.reduce { a, b -> a + b }
         var call = 0
-        val turns = diarizeSession(frames, {
+        val turns = diarizeSession(sequenceOf(frames), {
             val w = call++
             Diarization(listOf(Turn(0, 30, 0), Turn(30, 40, 1)), listOf(v(0, 1f, 0f), v(1, 0f, if (w == 0) 1f else -1f)))
         }, 40).turns
