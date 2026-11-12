@@ -7,7 +7,6 @@
 #include "epd.h"
 #include "esp_app_desc.h"
 #include "esp_attr.h"
-#include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -114,7 +113,6 @@ static const char *TAG = "ui";
 static uint8_t *panel_fb, *shown_fb;
 static int partials = PARTIALS_PER_FULL;
 static bool force_full, splash_on = true, sleeping;
-RTC_DATA_ATTR static view_t *resume_view;
 static int boot_shown;
 static uint32_t boot_ready_ms;
 static ui_actions_t actions;
@@ -1989,7 +1987,6 @@ static void set_rec_tile(void)
 
 void ui_show_sleep(void)
 {
-    resume_view = current_view == &v_update || current_view == &v_pair || current_view == &v_off ? NULL : current_view;
     sleeping = true;
     set_status_wifi(&view.wifi);
     set_rec_tile();
@@ -2008,8 +2005,7 @@ static void end_splash(void)
 {
     splash_on = false;
     force_full = true;
-    show_view(resume_view ? resume_view : home_view());
-    resume_view = NULL;
+    show_view(home_view());
     lv_obj_invalidate(lv_screen_active());
 }
 
@@ -2057,8 +2053,7 @@ void ui_init(const ui_actions_t *a)
     screen(&v_off, NULL, NULL);
     ui_set_recording(true);
     show_view(&v_launcher);
-    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) end_splash();
-    else ui_boot_step(1);
+    ui_boot_step(1);
 }
 
 void ui_set_settings(const settings_t *s)
