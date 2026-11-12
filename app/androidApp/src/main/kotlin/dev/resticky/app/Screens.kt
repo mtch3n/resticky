@@ -316,7 +316,7 @@ private fun conversationSubtitle(v: ConversationView): String {
     val c = v.conversation
     val approx = if (c.approximate) "~" else ""
     val partial = if (c.partial(Clock.System.now())) "not complete" else null
-    return listOfNotNull("$approx${clock(c.start)}–${clock(c.end())}", placeLabel(c.head.session), if (v.ready) todos else "summarizing", partial).joinToString(" · ")
+    return listOfNotNull("$approx${clock(c.start)}–${clock(c.end())}", placeLabel(c.head.session), when { v.ready -> todos; c.summaryRetry()?.failed == true -> "no summary"; else -> "summarizing" }, partial).joinToString(" · ")
 }
 
 @Composable
@@ -774,6 +774,7 @@ fun TranscriptScreen(
                             when {
                                 v.ready -> r.summary.ifEmpty { "No summary." }
                                 v.live -> "The summary comes when the session ends."
+                                v.conversation.summaryRetry()?.failed == true -> "The summary model failed. It tries again when the transcript changes."
                                 else -> "The summary is in progress."
                             },
                             style = Type.body,

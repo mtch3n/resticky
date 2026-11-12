@@ -46,11 +46,12 @@ const val MIN_SPEECH_UNITS = 25
 const val MIN_NOTE_UNITS = 5
 val RETRY_WAIT = 10.seconds
 const val TRANSCRIBE_ATTEMPTS = 8
-val TRANSCRIBE_RETRY_FIRST = 30.seconds
-val TRANSCRIBE_RETRY_MAX = 1.hours
+const val SUMMARY_ATTEMPTS = 4
+val RETRY_FIRST = 30.seconds
+val RETRY_MAX = 1.hours
 
-fun transcribeRetryWait(attempts: Int): Duration =
-    (TRANSCRIBE_RETRY_FIRST * (1L shl (attempts - 1).coerceIn(0, 20)).toDouble()).coerceAtMost(TRANSCRIBE_RETRY_MAX)
+fun retryWait(attempts: Int): Duration =
+    (RETRY_FIRST * (1L shl (attempts - 1).coerceIn(0, 20)).toDouble()).coerceAtMost(RETRY_MAX)
 
 data class SummaryContext(
     val place: String = "",
@@ -62,17 +63,17 @@ data class SummaryContext(
 
 fun summaryPrompt(c: SummaryContext): String = "This is a transcript of a conversation recorded by a desk device. It can mix English, Mandarin and Cantonese. " +
     "Return JSON with the keys title (at most 6 words, about the main topic), summary (at most 3 plain sentences), todos, speakers and corrections. " +
-    "Each todo is an object: task (a short action that starts with a verb) and quote (the exact words from the transcript that ask for or promise it). " +
+    "Each todo is an object: task (a short action that starts with a verb) and quote (the exact words from the transcript that ask for or promise it, at most 12 words). " +
     "Only list a todo when someone in the transcript asks for, agrees to or promises a concrete action; else return an empty array. " +
     "Name an owner in the task only if the transcript says the name of the person; never use \"Speaker A\" style names as owners. " +
     "Use only facts from the transcript, in the language of the transcript. " +
     "If the transcript is not a real conversation (only noise, music, or a few unrelated words), return the title \"$NO_SPEECH\", an empty summary and no todos. " +
     "When lines start with a speaker name and a colon, that is who speaks. " +
-    "Each speaker is an object: speaker (the label at the start of the line, for example \"Speaker B\"), name and evidence (the exact words from the transcript that show the name). " +
+    "Each speaker is an object: speaker (the label at the start of the line, for example \"Speaker B\"), name and evidence (the exact words from the transcript that show the name, at most 12 words). " +
     "Only add a speaker when the transcript shows the real name of that speaker: the speaker says their own name (\"this is Krista\"), " +
     "or another speaker says the name to them and they answer in the next line. Never guess a name; else return an empty array." +
     (if (c.attendees.isEmpty()) "" else " The people invited to this meeting are: ${c.attendees.joinToString(", ")}.") +
-    " Each correction is an object: from (the exact word or words in the transcript), to and evidence (the exact words around it). " +
+    " Each correction is an object: from (the exact word or words in the transcript), to and evidence (the exact words around it, at most 12 words). " +
     (if (c.candidates.isEmpty()) "Return an empty corrections array."
     else "Only add a correction when speech recognition wrote one of these names or terms wrongly and from sounds like it: ${c.candidates.joinToString(", ")}. Else return an empty array.") +
     (if (c.place.isEmpty()) "" else " The recording was made at the place that the user calls \"${c.place}\"; use it only as context.") +
@@ -167,19 +168,29 @@ private val NEGATION = Regex("""\b(not|cannot)\b|n't\b""")
 
 fun negated(text: String): Boolean = NEGATION.containsMatchIn(text.lowercase().replace('’', '\''))
 
+private val SPEAKER_PREFIX = Regex("""^\s*(speaker [a-z]|person \d+|you)\s*[:：]\s*""", RegexOption.IGNORE_CASE)
+private val COURTESY = setOf("thank", "thanks", "you", "ok", "okay", "yes", "yeah", "sure", "bye", "hello", "hi", "great", "good", "nice", "cool", "sorry", "please", "谢", "好", "拜", "嗯", "对")
+const val TODO_QUOTE_MIN = 3
+
+fun todoTask(task: String): String? {
+    val t = task.replace(SPEAKER_PREFIX, "").trim()
+    val words = tokens(t)
+    return if (words.isEmpty() || words.all { it in COURTESY }) null else t
+}
+
 fun parseSummary(raw: String, transcript: String): Summary {
     val text = raw.trim()
     val json = text.substring(text.indexOf('{').coerceAtLeast(0), text.lastIndexOf('}').let { if (it < 0) text.length else it + 1 })
     val d = hubJson.decodeFromString<SummaryDraft>(json)
     if (d.title.trim().equals(NO_SPEECH, ignoreCase = true)) return Summary(NO_SPEECH, "")
     val todos = d.todos.mapNotNull { t ->
-        val task = t.task.trim()
-        val span = quoteSpan(t.quote, transcript)
-        if (task.isEmpty() || span == null || negated(task) != negated(span)) null else Todo(task, span)
+        val task = todoTask(t.task) ?: return@mapNotNull null
+        val span = quoteSpan(t.quote, transcript)?.takeIf { tokens(it).size >= TODO_QUOTE_MIN }
+        if (span == null || negated(task) != negated(span)) null else Todo(task, span)
     }
     val speakers = d.speakers.map { SpeakerName(it.speaker.trim(), it.name.trim(), it.evidence.trim()) }.filter { it.speaker.isNotEmpty() && it.name.isNotEmpty() }
     val corrections = d.corrections.map { Correction(it.from.trim(), it.to.trim(), it.evidence.trim()) }.filter { it.from.isNotEmpty() && it.to.isNotEmpty() }
-    return Summary(d.title.trim(), d.summary.trim(), todos.distinctBy { it.task }, speakers = speakers, corrections = corrections)
+    return Summary(d.title.trim(), d.summary.trim(), todos.distinctBy { normalized(it.task) }, speakers = speakers, corrections = corrections)
 }
 
 private val TAG_OPEN = setOf('[', '(', '*', '<')
@@ -320,7 +331,13 @@ class Pipeline(
             val sessions = c.parts.map { it.session }.distinct()
             if (sessions.any { it.pending || it.needsSpeakers || !it.closed(now) || it.place == PENDING && now - it.lastChunk < PLACE_WAIT }) continue
             if (c.ready()) continue
-            return summarize(c, list)
+            val retry = c.summaryRetry()
+            if (retry != null && (retry.failed || retry.next > now)) {
+                if (!retry.failed) nextRetry = listOfNotNull(nextRetry, retry.next).min()
+                continue
+            }
+            summarize(c, list)
+            return true
         }
         return false
     }
@@ -330,7 +347,7 @@ class Pipeline(
             if (it.chunks[seq] != PENDING) return@update null
             val attempts = (it.chunkRetry[seq]?.attempts ?: 0) + 1
             val failed = attempts >= TRANSCRIBE_ATTEMPTS
-            Retry(attempts, e.message ?: "${e::class.simpleName}", Clock.System.now() + transcribeRetryWait(attempts), failed).also { r ->
+            Retry(attempts, e.message ?: "${e::class.simpleName}", Clock.System.now() + retryWait(attempts), failed).also { r ->
                 it.chunkRetry[seq] = r
                 if (failed) {
                     it.chunks[seq] = ""
@@ -405,7 +422,15 @@ class Pipeline(
         v.learnRules(repeatedFixes(conversations(store.list(c.device))))
     }
 
-    private suspend fun summarize(c: Conversation, all: List<Conversation>): Boolean {
+    private suspend fun summaryFailed(c: Conversation, input: String, e: Throwable) {
+        val attempts = (c.summaryRetry()?.attempts ?: 0) + 1
+        val retry = Retry(attempts, e.message ?: "${e::class.simpleName}", Clock.System.now() + retryWait(attempts), attempts >= SUMMARY_ATTEMPTS, input)
+        store.update(c.head.session.device, c.head.session.id) { it.summaryRetry["${c.head.fromMs}"] = retry }
+        val then = if (retry.failed) "gave_up" else "next=${retry.next}"
+        log("WARN summarize conversation=${c.key} attempt=$attempts/$SUMMARY_ATTEMPTS $then err=${retry.error.lineSequence().first().take(200)}")
+    }
+
+    private suspend fun summarize(c: Conversation, all: List<Conversation>) {
         val input = c.input()
         val units = speechUnits(c.transcript())
         val start = TimeSource.Monotonic.markNow()
@@ -417,8 +442,8 @@ class Pipeline(
             units < MIN_NOTE_UNITS -> Summary(NO_SPEECH, "")
             units < MIN_SPEECH_UNITS -> Summary(SHORT_NOTE, c.transcript().trim())
             else -> runCatching { summarizer.summarize(text, c.context().copy(attendees = invited, candidates = candidates)) }.getOrElse {
-                log("WARN summarize conversation=${c.key} err=${it.message}")
-                return false
+                if (it is CancellationException) throw it
+                return summaryFailed(c, input, it)
             }.also { log("INFO summarized conversation=${c.key} parts=${c.parts.size} title=\"${it.title}\" todos=${it.todos.size} took=${start.elapsedNow()}") }
         }
         val todos = sum.todos.take(TODO_SLOTS)
@@ -441,17 +466,14 @@ class Pipeline(
             for (r in rules) for (s in members) fixed += s.autoFix(r) { ms -> now.parts.any { it.session === s && it.covers(ms) } }
             val recap = rules.fold(Recap(sum.title, sum.summary, texts, quotes, sum.engine, done, changes, true, input)) { r, rule -> r.fixed(rule) }
             now.head.session.putRecap(now.head.fromMs, recap.copy(input = now.input()))
+            now.head.session.summaryRetry.remove("${now.head.fromMs}")
             members.filter { it.place == PENDING }.forEach { it.place = "" }
             members
         }
-        if (saved == 0) {
-            log("INFO summary dropped conversation=${c.key} reason=input_changed")
-            return true
-        }
+        if (saved == 0) return log("INFO summary dropped conversation=${c.key} reason=input_changed")
         if (fixed > 0) log("INFO fixed conversation=${c.key} proposed=${sum.corrections.size} changed=$fixed")
         learnNames(c, sum, text, invited)
         learnWords(c, sum.title, all, invited)
-        return true
     }
 
     suspend fun drain() = running.withLock {

@@ -200,6 +200,39 @@ class PipelineTest {
     }
 
     @Test
+    fun failingSummaryWaitsAndOtherSummariesGoOn() = runTest {
+        val store = Store(root)
+        val now = Clock.System.now()
+        store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4), capturedAt = now - 60.minutes)
+        store.addChunk("ab", "02", 0, true, 30_000, ByteArray(4), capturedAt = now - 20.minutes)
+        var broken = 0
+        val logs = mutableListOf<String>()
+        val transcriber = Transcriber { opus, _ -> listOf(Segment(0, 1000, if (opus.parent?.name == "01") "$SPOKEN broken" else SPOKEN)) }
+        val summarizer = Summarizer { t, _ ->
+            if ("broken" in t) {
+                broken++
+                error("cut off")
+            }
+            Summary("T", "S")
+        }
+        val pipeline = Pipeline(store, transcriber, summarizer, NO_SPEAKERS) { logs += it }
+        pipeline.drain()
+        pipeline.drain()
+        assertEquals(1, broken)
+        val first = store.list("ab").single { it.id == "01" }
+        val retry = first.summaryRetry.getValue("0")
+        assertTrue(!retry.failed && retry.next > now && !first.ready)
+        assertTrue(store.list("ab").single { it.id == "02" }.ready)
+        repeat(SUMMARY_ATTEMPTS) {
+            store.update("ab", "01") { m -> m.summaryRetry["0"] = m.summaryRetry.getValue("0").copy(next = now - 1.minutes) }
+            pipeline.drain()
+        }
+        assertEquals(SUMMARY_ATTEMPTS, broken)
+        assertTrue(store.list("ab").single { it.id == "01" }.summaryRetry.getValue("0").failed)
+        assertTrue(logs.any { "attempt=$SUMMARY_ATTEMPTS/$SUMMARY_ATTEMPTS gave_up" in it })
+    }
+
+    @Test
     fun givenUpChunkRunsAgainWithANewEngine() = runTest {
         val store = Store(root)
         store.addChunk("ab", "01", 0, true, 30_000, ByteArray(4))
@@ -215,10 +248,10 @@ class PipelineTest {
 
     @Test
     fun retryWaitDoublesUpToOneHour() {
-        assertEquals(TRANSCRIBE_RETRY_FIRST, transcribeRetryWait(1))
-        assertEquals(TRANSCRIBE_RETRY_FIRST * 4, transcribeRetryWait(3))
-        assertEquals(TRANSCRIBE_RETRY_MAX, transcribeRetryWait(TRANSCRIBE_ATTEMPTS))
-        assertEquals(TRANSCRIBE_RETRY_MAX, transcribeRetryWait(100))
+        assertEquals(RETRY_FIRST, retryWait(1))
+        assertEquals(RETRY_FIRST * 4, retryWait(3))
+        assertEquals(RETRY_MAX, retryWait(TRANSCRIBE_ATTEMPTS))
+        assertEquals(RETRY_MAX, retryWait(100))
     }
 
     @Test

@@ -520,6 +520,14 @@ from the device backlog does not close at its first chunk.
 - A closed session with no pending chunk gets a summary: a
   title (at most 6 words), 1 to 2 sentences, and the to-dos. A session with no words gets the title
   "No speech" and no summary.
+- When the summary model fails, the hub stores the try in `meta.json` `summary_retry` of the first session of
+  the conversation and continues with other conversations. It tries again after 30 s, 1 minute and 2 minutes.
+  After 4 failed tries it stops, and the phone shows "no summary". A change of the conversation input (see
+  `input`) starts the tries again. Log: `WARN summarize ... attempt=<n>/4 next=<time>` or `... gave_up`.
+- The hub keeps a to-do from the model only when all of these are true: its quote (at least 3 words) is in
+  the transcript, the task and the quote agree on negation, and the task has a word that is not a courtesy
+  word ("thank you", "ok", "谢谢"). The hub removes a speaker label ("Speaker D:") at the start of a task and
+  removes repeated tasks.
 - Audio files (`.opus`, `.ogg`, `.wav`) are deleted 7 days after they were written. Text stays.
 
 ## Device outbox
@@ -618,6 +626,7 @@ Default: `~/.local/share/resticky/data`.
 | `speakers` | object | Speaker number (string) → name. Left out when empty. |
 | `photos` | array | See "Photos". Left out when empty. |
 | `chunk_retry` | object | sequence number (string) → `{"attempts","error","next","failed"}`: failed transcription tries, the last error, the RFC 3339 time of the next try, and `failed` (left out when false) after the last try (see "Session rules"). Left out when empty. |
+| `summary_retry` | object | conversation start offset in ms (string) → `{"attempts","error","next","failed","input"}`: failed summary tries for the conversation that starts at that offset, and the conversation input of the tries (see "Session rules"). Left out when empty. |
 | `vad` | object | sequence number (string) → `{"speech","keep","keep_prev"}` from the `X-Vad-*` headers (see "Voice activity"). Left out when empty. Needs the hub change. |
 
 ## Bluetooth LE

@@ -101,6 +101,8 @@ class Conversation(val parts: List<Part>) {
 
     fun todoId(i: Int): String = "${head.session.id}-${head.fromMs / MINUTE_MS * TODO_SLOTS + i}"
 
+    fun summaryRetry(): Retry? = head.session.summaryRetry["${head.fromMs}"]?.takeIf { it.input == input() }
+
     fun ready(): Boolean {
         val r = recap()
         val whole = parts.size == 1 && head.fromMs == 0L && head.toMs == head.session.endMs()

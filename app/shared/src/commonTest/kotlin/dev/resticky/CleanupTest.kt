@@ -52,6 +52,19 @@ class CleanupTest {
     }
 
     @Test
+    fun courtesyLabelsAndShortQuotesAreNotTodos() {
+        val transcript = "Thank you. Speaker D said we should figure out what to say to the coach. 谢谢 好的 ok bye"
+        val raw = """{"title":"Coach","summary":"S.","todos":[
+            {"task":"Thank you","quote":"Thank you"},
+            {"task":"thank","quote":"Thank you"},
+            {"task":"谢谢","quote":"谢谢 好的"},
+            {"task":"Speaker D: Figure out what to say.","quote":"figure out what to say to the coach"},
+            {"task":"Speaker A: Figure out what to say.","quote":"figure out what to say to the coach"},
+            {"task":"Say bye","quote":"ok bye"}]}"""
+        assertEquals(listOf("Figure out what to say."), parseSummary(raw, transcript).todos.map { it.task })
+    }
+
+    @Test
     fun quoteWordsMustComeInOrder() {
         val transcript = "the report is late. Friday we send nothing. Can you please send the full billing report on Friday morning?"
         assertNull(quoteSpan("send the report on Friday we", "we send the report on Friday"))
