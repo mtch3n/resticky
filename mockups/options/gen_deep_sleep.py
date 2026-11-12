@@ -1,0 +1,49 @@
+import sys
+
+HEAD = """<!doctype html><meta charset=utf-8><style>
+@font-face{font-family:H;src:url(../assets/fonts/Caveat.ttf)}
+*{margin:0;padding:0}body{width:480px;height:800px;overflow:hidden;background:#fff;position:relative;font-family:H}
+.t{position:absolute;width:480px;text-align:center}
+</style><body><svg id=s width=480 height=800 style="position:absolute;left:0;top:0"></svg>"""
+JS = """<script src="../assets/js/rough.js"></script><script>
+const NS='http://www.w3.org/2000/svg', svg=document.getElementById('s'), rc=rough.svg(svg), add=n=>svg.appendChild(n);
+const pen=(w,s,r=1.1)=>({roughness:r,strokeWidth:w,seed:s});
+const g=(t)=>{const e=document.createElementNS(NS,'g');e.setAttribute('transform',t);svg.appendChild(e);return e;};
+const z=(p,x,y,size)=>{const e=document.createElementNS(NS,'text');e.setAttribute('x',x);e.setAttribute('y',y);e.setAttribute('font-family','H');e.setAttribute('font-weight','700');e.setAttribute('font-size',size);e.textContent='z';p.appendChild(e);};
+const note=(p,x,y,w,h,seed)=>{
+  p.appendChild(rc.path(`M${x+12} ${y+12} L${x+w+12} ${y+12} L${x+w+12} ${y+h-28} L${x+w-28} ${y+h+12} L${x+12} ${y+h+12} Z`,{roughness:0.8,stroke:'none',fill:'#000',fillStyle:'hachure',hachureGap:6,fillWeight:1.6,hachureAngle:40,seed}));
+  p.appendChild(rc.path(`M${x} ${y} L${x+w} ${y} L${x+w} ${y+h-40} L${x+w-40} ${y+h} L${x} ${y+h} Z`,{...pen(3,seed+1),fill:'#fff',fillStyle:'solid'}));
+  p.appendChild(rc.path(`M${x+w} ${y+h-40} L${x+w-40} ${y+h-40} L${x+w-40} ${y+h}`,pen(2.6,seed+2)));
+};
+const eyes=(p,x,y,s,seed)=>{p.appendChild(rc.path(`M${x} ${y} Q${x+s/2} ${y+s*0.6} ${x+s} ${y}`,pen(3.4,seed)));p.appendChild(rc.path(`M${x+s*1.6} ${y} Q${x+s*2.1} ${y+s*0.6} ${x+s*2.6} ${y}`,pen(3.4,seed+1)));};
+"""
+LINES = lambda title, sub: f'<div class=t style="top:{TITLE_Y}px;font-size:60px;font-weight:700">{title}</div><div class=t style="top:{SUB_Y}px;font-size:34px;font-weight:600">{sub}</div>'
+
+OPTIONS = {
+"a": ("Sleepy note, centre", 470, 548, """
+const n=g('rotate(-4 240 300)'); note(n,130,170,220,230,10); eyes(n,170,290,36,20);
+n.appendChild(rc.path('M222 340 Q240 350 258 340',pen(2.6,30)));
+z(svg,372,190,46); z(svg,404,140,36); z(svg,428,100,28);
+"""),
+"b": ("Night sky over the note", 520, 598, """
+add(rc.path('M330 70 C285 80 270 140 300 175 C330 210 390 200 410 160 C365 170 325 135 330 70 Z',{...pen(3,40),fill:'#000',fillStyle:'hachure',hachureGap:5,fillWeight:2,hachureAngle:-40}));
+[[90,90],[160,150],[60,210],[220,80],[430,250]].forEach(([x,y],i)=>{add(rc.line(x-10,y,x+10,y,pen(2.4,60+i)));add(rc.line(x,y-10,x,y+10,pen(2.4,70+i)));});
+const n=g('rotate(3 240 380)'); note(n,165,280,150,155,10); eyes(n,193,360,26,20);
+z(svg,330,300,38); z(svg,356,262,28);
+add(rc.path('M40 470 C140 455 340 455 440 470',pen(3,90)));
+"""),
+"c": ("Tucked in on a pillow", 520, 598, """
+add(rc.path('M60 300 C50 240 120 220 200 230 C290 240 420 230 420 280 C425 325 380 340 240 335 C120 332 68 330 60 300 Z',{...pen(3,40),fill:'#fff',fillStyle:'solid'}));
+const n=g('rotate(-12 200 260)'); note(n,120,140,170,190,10); eyes(n,152,232,28,20);
+add(rc.path('M30 330 C120 290 360 290 450 330 L450 470 L30 470 Z',{...pen(3,50),fill:'#000',fillStyle:'hachure',hachureGap:7,fillWeight:1.8,hachureAngle:30}));
+add(rc.path('M30 330 C120 290 360 290 450 330',pen(3.4,51))); add(rc.path('M60 330 C150 300 330 300 420 330',pen(2,52)));
+z(svg,330,220,44); z(svg,368,170,34); z(svg,398,132,26);
+"""),
+}
+TEXTS = {"manual": ("sleeping", "press any key to wake"), "night": ("good night", "wakes at 07:00")}
+
+root = sys.argv[1]
+for key, (name, ty, sy, js) in OPTIONS.items():
+    for mode, (title, sub) in TEXTS.items():
+        TITLE_Y, SUB_Y = ty, sy
+        open(f"{root}/options/deep-sleep-{key}-{mode}.html", "w").write(HEAD + LINES(title, sub) + JS + js + "</script></body>")

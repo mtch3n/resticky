@@ -57,6 +57,20 @@ for name, marks in {"update_arrow": ["M240 262 L240 352", "M206 322 L240 356 L27
                     + "".join(f"u.appendChild(rc.path('{d}', pen(4, {80 + i})));" for i, d in enumerate(marks)))
 ASSETS["update_fill"] = (292, 22, "add(rc.rectangle(0, 0, 292, 22, {stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2.4, hachureAngle: -50, seed: 70}));")
 ASSETS["update_frame"] = (304, 34, "add(rc.rectangle(2, 2, 300, 30, pen(2.6, 71)));")
+ASSETS["deep_sleep"] = (480, 490, """
+const note = (p, x, y, w, h, seed) => {
+  p.appendChild(rc.path(`M${x+12} ${y+12} L${x+w+12} ${y+12} L${x+w+12} ${y+h-28} L${x+w-28} ${y+h+12} L${x+12} ${y+h+12} Z`, {roughness: 0.8, stroke: 'none', fill: '#000', fillStyle: 'hachure', hachureGap: 6, fillWeight: 1.6, hachureAngle: 40, seed}));
+  p.appendChild(rc.path(`M${x} ${y} L${x+w} ${y} L${x+w} ${y+h-40} L${x+w-40} ${y+h} L${x} ${y+h} Z`, {...pen(3, seed+1), fill: '#fff', fillStyle: 'solid'}));
+  p.appendChild(rc.path(`M${x+w} ${y+h-40} L${x+w-40} ${y+h-40} L${x+w-40} ${y+h}`, pen(2.6, seed+2)));
+};
+const z = (x, y, size) => { const e = document.createElementNS(NS, 'text'); e.setAttribute('x', x); e.setAttribute('y', y); e.setAttribute('font-family', 'H'); e.setAttribute('font-weight', 700); e.setAttribute('font-size', size); e.textContent = 'z'; svg.appendChild(e); };
+add(rc.path('M330 70 C285 80 270 140 300 175 C330 210 390 200 410 160 C365 170 325 135 330 70 Z', {...pen(3, 40), fill: '#000', fillStyle: 'hachure', hachureGap: 5, fillWeight: 2, hachureAngle: -40}));
+[[90, 90], [160, 150], [60, 210], [220, 80], [430, 250]].forEach(([x, y], i) => { add(rc.line(x-10, y, x+10, y, pen(2.4, 60+i))); add(rc.line(x, y-10, x, y+10, pen(2.4, 70+i))); });
+const n = g('rotate(3 240 380)'); note(n, 165, 280, 150, 155, 10);
+n.appendChild(rc.path('M193 360 Q206 375.6 219 360', pen(3.4, 20))); n.appendChild(rc.path('M234.6 360 Q247.6 375.6 260.6 360', pen(3.4, 21)));
+z(330, 300, 38); z(356, 262, 28);
+add(rc.path('M40 470 C140 455 340 455 440 470', pen(3, 90)));
+""")
 ASSETS["card_half"] = (226, 176, "add(rc.rectangle(2, 2, 222, 172, pen(2.6, 600, 1.2)));")
 ASSETS["card_full"] = (456, 176, "add(rc.rectangle(2, 2, 452, 172, pen(2.6, 604, 1.2)));")
 

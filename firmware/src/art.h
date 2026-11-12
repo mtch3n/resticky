@@ -36,5 +36,6 @@ extern const lv_image_dsc_t art_update_arrow;
 extern const lv_image_dsc_t art_update_check;
 extern const lv_image_dsc_t art_update_fill;
 extern const lv_image_dsc_t art_update_frame;
+extern const lv_image_dsc_t art_deep_sleep;
 extern const lv_image_dsc_t art_card_half;
 extern const lv_image_dsc_t art_card_full;
