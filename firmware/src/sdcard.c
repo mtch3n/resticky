@@ -80,24 +80,42 @@ void sdcard_info(sdcard_info_t *out)
     unmount();
 }
 
-bool sdcard_format(void)
+#define ERASE_PARTS 100
+#define ERASE_SHARE 90
+
+bool sdcard_format(void (*progress)(int percent))
 {
     if (!present()) return false;
-    bool ok;
-    if (mount()) {
-        esp_err_t err = esp_vfs_fat_sdcard_format(MOUNT, card);
-        ESP_LOGI(TAG, "format: %s", esp_err_to_name(err));
-        ok = err == ESP_OK;
+    esp_vfs_fat_sdmmc_mount_config_t cfg = {.format_if_mount_failed = true, .max_files = 4, .allocation_unit_size = 32 * 1024};
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+    host.slot = SPI2_HOST;
+    host.max_freq_khz = 20000;
+    sdspi_device_config_t slot = SDSPI_DEVICE_CONFIG_DEFAULT();
+    slot.gpio_cs = PIN_SD_CS;
+    slot.host_id = SPI2_HOST;
+    if (esp_vfs_fat_sdspi_mount(MOUNT, &host, &slot, &cfg, &card) != ESP_OK) {
+        card = NULL;
+        deselect();
+        return false;
     }
-    else {
-        esp_vfs_fat_sdmmc_mount_config_t cfg = {.format_if_mount_failed = true, .max_files = 4, .allocation_unit_size = 32 * 1024};
-        sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-        host.slot = SPI2_HOST;
-        sdspi_device_config_t slot = SDSPI_DEVICE_CONFIG_DEFAULT();
-        slot.gpio_cs = PIN_SD_CS;
-        slot.host_id = SPI2_HOST;
-        ok = esp_vfs_fat_sdspi_mount(MOUNT, &host, &slot, &cfg, &card) == ESP_OK;
+    size_t total = card->csd.capacity, part = total / ERASE_PARTS;
+    int erased = 0;
+    for (int i = 0; i < ERASE_PARTS; i++) {
+        size_t count = i == ERASE_PARTS - 1 ? total - i * part : part;
+        esp_err_t err = sdmmc_erase_sectors(card, i * part, count, SDMMC_ERASE_ARG);
+        if (err == ESP_OK) err = sdmmc_card_init(&card->host, card);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "erase stopped at %d%%: %s", i, esp_err_to_name(err));
+            sdmmc_card_init(&card->host, card);
+            break;
+        }
+        erased = i + 1;
+        progress(erased * ERASE_SHARE / ERASE_PARTS);
     }
+    progress(ERASE_SHARE + 1);
+    esp_err_t err = esp_vfs_fat_sdcard_format(MOUNT, card);
+    ESP_LOGI(TAG, "format: erased %d%%, file system %s", erased, esp_err_to_name(err));
     unmount();
-    return ok;
+    progress(100);
+    return err == ESP_OK;
 }

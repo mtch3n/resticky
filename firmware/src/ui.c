@@ -1793,6 +1793,19 @@ static void show_sd_present(void)
     else if (!strcmp(lv_label_get_text(sd_value), "No card") || !lv_label_get_text(sd_value)[0]) lv_label_set_text(sd_value, "Card");
 }
 
+static volatile int sd_progress;
+static volatile bool sd_formatting, sd_done, sd_ok;
+static int sd_shown;
+
+static void format_progress(int percent) { sd_progress = percent; }
+
+static void format_task(void *arg)
+{
+    sd_ok = sdcard_format(format_progress);
+    sd_done = true;
+    vTaskDelete(NULL);
+}
+
 static void format_clicked(lv_event_t *e)
 {
     lv_obj_t *text = lv_obj_get_child(sd_format, 0);
@@ -1802,14 +1815,33 @@ static void format_clicked(lv_event_t *e)
         set_inverted(sd_format, true);
         return;
     }
+    if (sd_formatting) return;
     sd_confirm_until = 0;
-    lv_label_set_text(sd_status, "Formatting...");
-    lv_refr_now(NULL);
-    bool ok = sdcard_format();
-    lv_label_set_text(sd_status, ok ? "Formatted. The card is empty." : "Format failed. Check the card.");
-    lv_label_set_text(text, "Format card");
+    sd_formatting = true;
+    sd_progress = 0;
+    sd_shown = -1;
+    lv_label_set_text(text, "Formatting...");
     set_inverted(sd_format, false);
-    show_sd();
+    if (xTaskCreate(format_task, "sd_format", 6144, NULL, 4, NULL) != pdPASS) {
+        sd_formatting = false;
+        lv_label_set_text(sd_status, "Format failed. Check the card.");
+    }
+}
+
+static void show_format(void)
+{
+    int p = sd_progress;
+    if (sd_formatting && p / 2 != sd_shown) {
+        sd_shown = p / 2;
+        if (p <= 90) lv_label_set_text_fmt(sd_status, "Erasing %d%%", p * 100 / 90);
+        else lv_label_set_text(sd_status, "Writing file system...");
+    }
+    if (sd_formatting && sd_done) {
+        sd_formatting = sd_done = false;
+        lv_label_set_text(sd_status, sd_ok ? "Formatted. The card is empty." : "Format failed. Check the card.");
+        lv_label_set_text(lv_obj_get_child(sd_format, 0), "Format card");
+        show_sd();
+    }
 }
 
 static void build_sd(void)
@@ -2251,6 +2283,7 @@ void ui_tick(void)
         checking_until = 0;
         lv_label_set_text(lv_obj_get_child(update_button, 0), "No connection. Tap to retry.");
     }
+    show_format();
     if (sd_confirm_until && tick_ms() > sd_confirm_until) {
         sd_confirm_until = 0;
         lv_label_set_text(lv_obj_get_child(sd_format, 0), "Format card");
