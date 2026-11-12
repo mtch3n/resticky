@@ -8,4 +8,4 @@ PATH="$here/fakes:$PATH" "$@" -port "$port" -data "$data" -model /dev/null -vad 
 hub=$!
 trap 'kill $hub 2>/dev/null; rm -rf "$data" "$data.weather.json"' EXIT
 for _ in $(seq 100); do curl -sf "http://127.0.0.1:$port/api/hello" > /dev/null && break; sleep 0.2; done
-cd "$here/.." && ./gradlew -q :contract:test -PhubUrl="http://127.0.0.1:$port" -PhubData="$data" -PhubToken="$token"
+cd "$here/.." && ./gradlew --console=plain :contract:test -PhubUrl="http://127.0.0.1:$port" -PhubData="$data" -PhubToken="$token"
