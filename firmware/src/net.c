@@ -204,7 +204,7 @@ static bool hub_proven(const char *base)
     esp_fill_random(nonce, sizeof nonce);
     for (int i = 0; i < NONCE_LEN; i++) snprintf(nonce_hex + 2 * i, 3, "%02x", nonce[i]);
     snprintf(url, sizeof url, "%s/api/hello?nonce=%s", base, nonce_hex);
-    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 5000};
+    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 5000, .buffer_size_tx = 1024};
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     int got_len = -1;
     if (esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0 && esp_http_client_get_status_code(c) == 200)
@@ -262,7 +262,7 @@ static int http(const char *method, const char *path, const char *ctype, const c
 {
     char url[192];
     snprintf(url, sizeof url, "%s%s", hub_url, path);
-    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 15000};
+    esp_http_client_config_t cfg = {.url = url, .timeout_ms = 15000, .buffer_size_tx = 1024};
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     esp_http_client_set_method(c, !strcmp(method, "POST") ? HTTP_METHOD_POST : !strcmp(method, "PUT") ? HTTP_METHOD_PUT : HTTP_METHOD_GET);
     if (ctype) esp_http_client_set_header(c, "Content-Type", ctype);

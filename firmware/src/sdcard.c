@@ -114,7 +114,10 @@ bool sdcard_format(void (*progress)(int percent))
         progress(erased * ERASE_SHARE / ERASE_PARTS);
     }
     progress(ERASE_SHARE + 1);
-    esp_err_t err = esp_vfs_fat_sdcard_format(MOUNT, card);
+    esp_vfs_fat_sdcard_unmount(MOUNT, card);
+    card = NULL;
+    esp_err_t err = esp_vfs_fat_sdspi_mount(MOUNT, &host, &slot, &cfg, &card);
+    if (err != ESP_OK) card = NULL;
     ESP_LOGI(TAG, "format: erased %d%%, file system %s", erased, esp_err_to_name(err));
     unmount();
     progress(100);
