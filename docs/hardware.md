@@ -29,7 +29,7 @@ Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/gre
 
 | Feature | Used | Notes |
 |---|---|---|
-| E-paper, touch, keys, power latch | Yes | |
+| E-paper, touch, keys, power latch | Yes | 0.15.4: after each refresh the SSD1677 goes into deep sleep mode 1 (`0x10` `0x01`). Before the next refresh the device does a hardware reset and the init again, then writes the old image (`0x26`, from `shown_fb`) and the new image (`0x24`). Thus a partial refresh does not need the RAM of the controller. This adds about 60 ms to each refresh. |
 | PDM mic + Opus + VADNet (esp-nn) | Yes | |
 | esp-dsp filter | Partly | ANSI functions; the aes3 (PIE SIMD) versions corrupted memory with the audio stack in PSRAM |
 | Fuel gauge, charger status, VBUS | Yes | Polled each second |
@@ -43,7 +43,7 @@ Other parts: ESP32-S3R8 (8 MB PSRAM), 32 MB flash, TPS631000 buck-boost, red/gre
 | PDM_EN mic power | Yes | The mic is off when recording is off |
 
 | **RTC alarm (RTC_INTn)** | **No** | Scheduled wake (night pause); check where RTC_INTn goes |
-| CPU power management (DFS) | Yes | 80 to 240 MHz, no automatic light sleep. 0.15.0: the audio task holds `CPU_FREQ_MAX` only while it works on a frame |
+| CPU power management (DFS) | Yes | 80 to 240 MHz, no automatic light sleep. 0.15.4: the audio task holds `CPU_FREQ_MAX` only while it encodes speech frames; filter and VAD run at 80 MHz in silence (see `plan-recording.md`) |
 | Light sleep (`esp_light_sleep_start`) | Yes (0.15.2) | The "Sleep" action. Wake: keys (GPIO wake, low level) and a 10-minute timer for the night check. Wi-Fi and BLE stop before it. The driven pins (power latch, charger, e-paper, SD, touch, mic, buzzer) keep their level with `gpio_sleep_sel_dis`. The GT911 goes into its sleep mode. See "Sleep modes" in `plan-recording.md` |
 | **PIE SIMD (esp-dsp aes3)** | **No** | Needs the audio task stack in internal RAM or a fix for the PIE context |
 | **Hardware AES/SHA** | **No** | Encrypted uploads (HTTP is plain today) |

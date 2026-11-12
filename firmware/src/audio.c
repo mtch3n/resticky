@@ -18,6 +18,7 @@
 #include "dsps_biquad.h"
 #include "dsps_biquad_gen.h"
 #include "dsps_dotprod.h"
+#include "ota.h"
 #include "vad.h"
 #include <math.h>
 #include <string.h>
@@ -39,6 +40,9 @@
 #define HPF_HZ 80.0f
 #define DB_FLOOR 96
 #define FULL_SCALE 32768.0f
+#define FRAME_BUDGET_US 15000
+#define BOOST_US (10 * 1000000LL)
+#define MIC_CHECK_FRAMES 50
 
 typedef struct {
     uint16_t hist[DB_FLOOR + 1];
@@ -59,7 +63,25 @@ static audio_load_t load;
 static volatile uint32_t cur_session, cur_offset_ms;
 static bool vad_ok;
 static float hpf_coef[5], hpf_w[2];
+static esp_pm_lock_handle_t fast;
+static bool fast_held, mic_checked;
+static uint32_t overruns;
 EXT_RAM_BSS_ATTR static float x[FRAME_SAMPLES], y[FRAME_SAMPLES];
+
+static void cpu_fast(bool on)
+{
+    if (on == fast_held) return;
+    fast_held = on;
+    if (on) esp_pm_lock_acquire(fast);
+    else esp_pm_lock_release(fast);
+}
+
+static bool varies(const int16_t *pcm)
+{
+    for (int i = 1; i < FRAME_SAMPLES; i++)
+        if (pcm[i] != pcm[0]) return true;
+    return false;
+}
 
 static void condition(int16_t *pcm, meter_t *m)
 {
@@ -188,6 +210,7 @@ static void emit(rec_t *r, const slot_t *f, bool keep)
 {
     int n = 0;
     if (keep) {
+        cpu_fast(true);
         int64_t t = esp_timer_get_time();
         esp_audio_enc_in_frame_t in = {.buffer = (uint8_t *)f->pcm, .len = sizeof f->pcm};
         esp_audio_enc_out_frame_t out = {.buffer = packet, .len = sizeof packet};
@@ -267,24 +290,27 @@ static void record(rec_t *r, int16_t *pcm, int64_t *vad_us, int64_t *vad_max_us)
 
 static void audio_task(void *arg)
 {
-    esp_pm_lock_handle_t fast;
     ESP_ERROR_CHECK(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "audio", &fast));
     int16_t pcm[FRAME_SAMPLES];
     static rec_t r;
     int bitrate = 16000;
-    int64_t last_report = 0, vad_us = 0, vad_max_us = 0, dsp_us = 0;
+    int64_t last_report = 0, vad_us = 0, vad_max_us = 0, dsp_us = 0, boost_until = 0;
+    uint32_t seen_overflows = 0;
+    int check_frames = 0;
     for (;;) {
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_report >= 60000) {
             int64_t span_us = (now - last_report) * 1000;
             ESP_LOGI(TAG, "frames %lu, encoded %lu, speech %lu, encode failures %lu, early chunks %lu, lost chunks %lu, overflows %lu, recording %d, session %08lx",
                      r.frames, r.kept, r.speech, r.enc_fail, r.early, lost_chunks, overflows, want_recording, r.session);
-            ESP_LOGI(TAG, "cpu at %d MHz: filter %lld.%02lld%%, opus %lld.%02lld%% (max %lld us), vad %lld.%02lld%% (max %lld us)",
-                     CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ, dsp_us * 100 / span_us, dsp_us * 10000 / span_us % 100, r.enc_us * 100 / span_us,
-                     r.enc_us * 10000 / span_us % 100, r.enc_max_us, vad_us * 100 / span_us, vad_us * 10000 / span_us % 100, vad_max_us);
+            ESP_LOGI(TAG, "cpu: filter %lld.%02lld%%, opus %lld.%02lld%% (max %lld us), vad %lld.%02lld%% (max %lld us), overruns %lu",
+                     dsp_us * 100 / span_us, dsp_us * 10000 / span_us % 100, r.enc_us * 100 / span_us,
+                     r.enc_us * 10000 / span_us % 100, r.enc_max_us, vad_us * 100 / span_us, vad_us * 10000 / span_us % 100, vad_max_us,
+                     overruns);
             load = (audio_load_t){.filter_pm = dsp_us * 1000 / span_us, .opus_pm = r.enc_us * 1000 / span_us,
                                   .vad_pm = vad_us * 1000 / span_us, .opus_max_us = r.enc_max_us, .overflows = overflows,
-                                  .keep_pm = r.frames ? r.kept * 1000 / r.frames : 0, .early_chunks = r.early, .lost_chunks = lost_chunks};
+                                  .keep_pm = r.frames ? r.kept * 1000 / r.frames : 0, .early_chunks = r.early, .lost_chunks = lost_chunks,
+                                  .overruns = overruns};
             r.frames = r.kept = r.speech = 0;
             r.enc_us = r.enc_max_us = vad_us = vad_max_us = dsp_us = 0;
             last_report = now;
@@ -295,6 +321,7 @@ static void audio_task(void *arg)
             ESP_LOGI(TAG, "opus bitrate %d", bitrate);
         }
         if (!mic_on && !want_recording) {
+            if (mic_checked) ota_note_mic_idle();
             xEventGroupSetBits(events, IDLE_BIT);
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
@@ -313,8 +340,9 @@ static void audio_task(void *arg)
             ESP_LOGW(TAG, "i2s read: %s (got %u)", esp_err_to_name(rd), (unsigned)got);
             continue;
         }
-        esp_pm_lock_acquire(fast);
+        if (got == sizeof pcm && varies(pcm)) mic_checked = true;
         if (!want_recording) {
+            if (!mic_checked && check_frames++ < MIC_CHECK_FRAMES) continue;
             if (r.session) {
                 drain(&r);
                 close_chunk(&r, true);
@@ -325,7 +353,7 @@ static void audio_task(void *arg)
             gpio_set_level(PIN_MIC_EN, 0);
             mic_on = false;
             ESP_LOGI(TAG, "mic off");
-            esp_pm_lock_release(fast);
+            cpu_fast(false);
             continue;
         }
         if (!r.session) {
@@ -335,9 +363,16 @@ static void audio_task(void *arg)
         }
         int64_t t0 = esp_timer_get_time();
         int64_t v0 = vad_us, e0 = r.enc_us;
+        uint32_t k0 = r.kept;
         record(&r, pcm, &vad_us, &vad_max_us);
-        dsp_us += esp_timer_get_time() - t0 - (vad_us - v0) - (r.enc_us - e0);
-        esp_pm_lock_release(fast);
+        int64_t t1 = esp_timer_get_time();
+        dsp_us += t1 - t0 - (vad_us - v0) - (r.enc_us - e0);
+        if (t1 - t0 > FRAME_BUDGET_US || overflows != seen_overflows) {
+            seen_overflows = overflows;
+            overruns++;
+            boost_until = t1 + BOOST_US;
+        }
+        cpu_fast(r.kept != k0 || t1 < boost_until);
     }
 }
 

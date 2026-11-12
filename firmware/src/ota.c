@@ -15,14 +15,16 @@
 
 static const char *TAG = "ota";
 static bool pending, audio_ok, hub_ok;
+static volatile bool mic_idle_ok;
 static int64_t boot_ms;
 
 static void confirm_if_healthy(void)
 {
-    if (!pending || !audio_ok || !hub_ok) return;
+    if (!pending || !hub_ok || !(audio_ok || mic_idle_ok)) return;
     if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
         pending = false;
-        ESP_LOGI(TAG, "firmware %s confirmed: audio and hub are working", esp_app_get_description()->version);
+        ESP_LOGI(TAG, "firmware %s confirmed: hub and %s are working", esp_app_get_description()->version,
+                 audio_ok ? "audio" : "mic (recording off)");
     }
 }
 
@@ -42,16 +44,26 @@ void ota_note_audio(void)
     confirm_if_healthy();
 }
 
+void ota_note_mic_idle(void)
+{
+    mic_idle_ok = true;
+}
+
 void ota_note_hub(void)
 {
     hub_ok = true;
     confirm_if_healthy();
 }
 
-void ota_tick(void)
+bool ota_rollback_due(void)
 {
-    if (!pending || esp_log_timestamp() - boot_ms < VERIFY_WINDOW_MS) return;
-    ESP_LOGE(TAG, "health check failed (audio %d, hub %d), rolling back", audio_ok, hub_ok);
+    confirm_if_healthy();
+    return pending && esp_log_timestamp() - boot_ms >= VERIFY_WINDOW_MS;
+}
+
+void ota_roll_back(void)
+{
+    ESP_LOGE(TAG, "health check failed (hub %d, audio %d, mic with recording off %d), rolling back", hub_ok, audio_ok, mic_idle_ok);
     esp_ota_mark_app_invalid_rollback_and_reboot();
 }
 

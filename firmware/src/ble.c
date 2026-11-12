@@ -65,6 +65,22 @@ EXT_RAM_BSS_ATTR static uint8_t rx_frame[RX_MAX], rx_in[RX_IN];
 static size_t rx_len;
 static volatile uint32_t fast_until;
 static bool started;
+static volatile uint32_t fast_ms, fast_since, tx_bytes;
+static volatile bool at_fast;
+
+static void note_itvl(uint16_t itvl)
+{
+    uint32_t now = esp_log_timestamp();
+    if (at_fast) fast_ms += now - fast_since;
+    fast_since = now;
+    at_fast = itvl && itvl <= FAST_ITVL_MAX;
+}
+
+static void note_conn(uint16_t handle)
+{
+    struct ble_gap_conn_desc d;
+    note_itvl(ble_gap_conn_find(handle, &d) == 0 ? d.conn_itvl : 0);
+}
 
 static bool fast_type(uint8_t type)
 {
@@ -223,12 +239,14 @@ static int gap_event(struct ble_gap_event *e, void *arg)
             return 0;
         }
         conn = e->connect.conn_handle;
+        note_conn(conn);
         rx_len = 0;
         update_security();
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "disconnect: reason 0x%x", e->disconnect.reason);
         conn = BLE_HS_CONN_HANDLE_NONE;
+        note_itvl(0);
         secure = subscribed = false;
         passkey = -1;
         advertise();
@@ -265,8 +283,10 @@ static int gap_event(struct ble_gap_event *e, void *arg)
         return 0;
     case BLE_GAP_EVENT_CONN_UPDATE: {
         struct ble_gap_conn_desc d;
-        if (ble_gap_conn_find(e->conn_update.conn_handle, &d) == 0)
+        if (ble_gap_conn_find(e->conn_update.conn_handle, &d) == 0) {
+            note_itvl(d.conn_itvl);
             ESP_LOGI(TAG, "connection interval %u x 1.25 ms, latency %u", d.conn_itvl, d.conn_latency);
+        }
         return 0;
     }
     }
@@ -296,7 +316,10 @@ static bool notify(const uint8_t *p, size_t n)
     while (ble_ready()) {
         struct os_mbuf *om = ble_hs_mbuf_from_flat(p, n);
         int rc = om ? ble_gatts_notify_custom(conn, tx_handle, om) : BLE_HS_ENOMEM;
-        if (rc == 0) return true;
+        if (rc == 0) {
+            tx_bytes += n;
+            return true;
+        }
         if (rc != BLE_HS_ENOMEM) {
             ESP_LOGW(TAG, "notify failed: %d", rc);
             return false;
@@ -483,6 +506,7 @@ void ble_stop(void)
     int rc = nimble_port_stop();
     if (rc == 0) nimble_port_deinit();
     conn = BLE_HS_CONN_HANDLE_NONE;
+    note_itvl(0);
     secure = subscribed = false;
     passkey = -1;
     ESP_LOGI(TAG, "stopped: %d", rc);
@@ -492,4 +516,10 @@ int ble_passkey(void)
 
 {
     return passkey;
+}
+
+void ble_get_stats(ble_stats_t *out)
+{
+    out->fast_s = (fast_ms + (at_fast ? esp_log_timestamp() - fast_since : 0)) / 1000;
+    out->tx_bytes = tx_bytes;
 }

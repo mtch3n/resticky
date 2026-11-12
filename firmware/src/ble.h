@@ -24,3 +24,9 @@ void ble_tick(bool busy);
 void ble_stop(void);
 bool ble_resume(void);
 
+typedef struct {
+    uint32_t fast_s, tx_bytes;
+} ble_stats_t;
+
+void ble_get_stats(ble_stats_t *out);
+

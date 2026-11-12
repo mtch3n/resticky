@@ -53,6 +53,23 @@ static void ram_area(void)
     CMD(0x4F, (EPD_H - 1) & 0xFF, (EPD_H - 1) >> 8);
 }
 
+static bool wake(void)
+{
+    gpio_set_level(PIN_EPD_RST, 0);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    gpio_set_level(PIN_EPD_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    CMD(0x12);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    if (!wait_idle("soft reset")) return false;
+    CMD(0x18, 0x80);
+    CMD(0x0C, 0xAE, 0xC7, 0xC3, 0xC0, 0x80);
+    CMD(0x01, (EPD_H - 1) & 0xFF, (EPD_H - 1) >> 8, 0x02);
+    CMD(0x3C, 0x01);
+    ram_area();
+    return true;
+}
+
 bool epd_init(void)
 {
     gpio_config_t out = {
@@ -83,33 +100,20 @@ bool epd_init(void)
     };
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &spi));
 
-    gpio_set_level(PIN_EPD_RST, 0);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    gpio_set_level(PIN_EPD_RST, 1);
-    vTaskDelay(pdMS_TO_TICKS(30));
-    ESP_LOGI(TAG, "BUSY idle level after reset: %d (1 means SSD2677)", gpio_get_level(PIN_EPD_BUSY));
-
-    CMD(0x12);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    if (!wait_idle("soft reset")) return false;
-    CMD(0x18, 0x80);
-    CMD(0x0C, 0xAE, 0xC7, 0xC3, 0xC0, 0x80);
-    CMD(0x01, (EPD_H - 1) & 0xFF, (EPD_H - 1) >> 8, 0x02);
-    CMD(0x3C, 0x01);
-    ram_area();
+    if (!wake()) return false;
     CMD(0x46, 0xF7);
     wait_idle("clear bw ram");
     CMD(0x47, 0xF7);
     wait_idle("clear red ram");
+    CMD(0x10, 0x01);
     return true;
 }
 
-void epd_refresh(const uint8_t *fb, bool full)
+void epd_refresh(const uint8_t *fb, const uint8_t *shown, bool full)
 {
-    if (full) {
-        ram_area();
-        cmd(0x26, fb, EPD_FB_SIZE);
-    }
+    if (!wake()) return;
+    ram_area();
+    cmd(0x26, full ? fb : shown, EPD_FB_SIZE);
     ram_area();
     cmd(0x24, fb, EPD_FB_SIZE);
     CMD(0x21, 0x00, 0x00);
@@ -118,6 +122,5 @@ void epd_refresh(const uint8_t *fb, bool full)
     CMD(0x22, full ? 0xF4 : 0xFC);
     CMD(0x20);
     wait_idle(full ? "full refresh" : "partial refresh");
-    ram_area();
-    cmd(0x26, fb, EPD_FB_SIZE);
+    CMD(0x10, 0x01);
 }

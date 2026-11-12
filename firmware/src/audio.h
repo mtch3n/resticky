@@ -43,7 +43,7 @@ void audio_set_bitrate(int bits_per_s);
 
 typedef struct {
     int filter_pm, opus_pm, vad_pm, opus_max_us, keep_pm;
-    uint32_t overflows, early_chunks, lost_chunks;
+    uint32_t overflows, early_chunks, lost_chunks, overruns;
 } audio_load_t;
 
 void audio_get_load(audio_load_t *out);

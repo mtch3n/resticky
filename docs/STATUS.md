@@ -1,6 +1,6 @@
 # Status and resume notes
 
-Last update: 2026-11-11. Read this file first when you resume the project.
+Last update: 2026-11-12. Read this file first when you resume the project.
 
 ## Project in one sentence
 
@@ -103,6 +103,20 @@ low power and storage use that we can profile.
   - Look at on the device: the log lines `light sleep: woke after N s (M night checks)`,
     `ble: ready` after the wake (BLE starts again), `touch: wake: ok`, and the boot report for
     `sleep_step=11` to `19` (a hang or crash in light sleep; 16 = during the sleep).
+- Firmware 0.15.4 (2026-11-12, built, not flashed, not measured): power and loss visibility.
+  - BLE asks for the fast interval while audio chunks wait in the outbox, and for the slow interval when
+    the outbox is empty. Health: `ble_fast_s`, `ble_tx_bytes`.
+  - E-paper: the SSD1677 goes into deep sleep after each refresh; each refresh does a reset and the init
+    again and writes both RAM planes (old image from `shown_fb`). Look at on the device: partial refreshes
+    show no ghost and no wrong pixels; the log gives `soft reset: N ms` before each refresh.
+  - Audio: the CPU stays at 80 MHz in silence (filter and VAD); 240 MHz only while it encodes speech, and
+    10 s after a frame that took more than 15 ms. Health: `audio_overruns` (must stay 0 or near 0),
+    `overflows` must stay 0.
+  - OTA confirm: hub check-in AND (an audio chunk OR recording off with a working mic). A muted device no
+    longer rolls back a good update.
+  - Shutdown save: restart, deep sleep, power off, update restart and rollback require "audio stopped and
+    queue on flash", try again one time, then record the loss in NVS. Health: `shutdown_lost`, also
+    `shutdown_lost=<n>` in `boot`. Health now also has `dropped_chunks`.
 
 
 ## Android app facts (layer 4, Wi-Fi part, 2026-11-10)
