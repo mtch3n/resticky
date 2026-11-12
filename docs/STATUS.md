@@ -50,6 +50,14 @@ low power and storage use that we can profile.
   partial `0x22 = FC`, panel stays powered. Full about 1.55 s, partial about 0.47 s.
 - Fonts: `firmware/tools/gen_text_fonts.py` makes hinted 1-bit Montserrat (SemiBold body, Bold titles)
   with FreeType. Anti-aliasing is off.
+- Chinese text (0.15.6): `cjk_18` is a 1-bit Noto Sans CJK SC Medium font at 18 px (OFL, license in
+  `firmware/src/cjk_18-OFL.txt`). It has 6950 characters: GB2312 level 1 (common Simplified), Big5 level 1
+  (common Traditional), a list of Cantonese characters, CJK punctuation and full-width forms. It is the LVGL
+  fallback of all text fonts and of `hand_28` and `hand_40`. A character that no font has shows as a box.
+  The font adds 344 KB to the app (2794533 to 3138941 bytes, 74.8 % of the 4 MB slot). Make it again with
+  `uv run firmware/tools/gen_text_fonts.py <Montserrat dir> mockups/assets/fonts /usr/share/fonts/noto-cjk firmware/src`.
+- The device cuts hub text that is too long for its buffer at a UTF-8 character boundary. A to-do has
+  96 bytes (32 Chinese characters), a title 64 bytes, an agenda title 49 bytes.
 - Each refresh uploads the panel frame to the hub: `GET /api/screen?device=a1b2c3d4e5f6` (a PNG).
 - Wi-Fi: up to 5 saved networks over USB serial: `wifi <ssid>|<password>`, `wifi-forget <ssid>`. Opening
   the serial port restarts the device.
